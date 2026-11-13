@@ -6,7 +6,8 @@ edits; at a save, changed words make it 待复核 with 「仍然成立」, an em
 pasted: found; deleted: 「段落已被删掉」), and a link 待复核 at opening is left alone; a save never posts to the ledger;
 「仍然成立」, 「关联」 and 撤回关联 each post one act. Every body the editor sent is then applied, in order, to a real
 project through `latex_edit`, so the positions are checked against the server's own reading and `evidence.toml` is
-shown to change only by the clicks. Also the file search of the link panel and the hooks on a file's page and 论文正文.
+shown to change only by the clicks. The reload after a save that emptied a passage: text typed while it is out,
+and a failed or stale answer (review of B1f). Also the file search of the link panel and the hooks on a file's page and 论文正文.
 Every test names its scenario."""
 
 from __future__ import annotations
@@ -534,3 +535,151 @@ def test_a_linked_paragraph_cut_and_pasted_elsewhere_is_found_there_after_the_sa
     assert (root / PATH).read_bytes().decode() == after_text
     assert evidence.evidence_path(root).read_bytes() == ledger
     assert latex_edit.evidence_of_draft(root, PATH)["links"] == after["links"]
+
+
+# -- review of B1f: the reload after a save that emptied a passage ---------------------------------------------------
+
+_RELOAD = r"""
+const out = {}, P = window.ROLatex._passages;
+const seen = () => P().map((p) => ({state: p.state, local: p.local, from: p.from, to: p.to,
+  text: p.from == null ? null : V.state.doc.sliceString(p.from, p.to), candidates: p.candidates.map((c) => ({text: c.text, still: !!c.still}))}));
+const status = () => byClass('latex-tools').children[2].textContent;
+// the side as rendered now: its counts and the 待复核 entries listed under them
+const waitingNow = () => { const c = all.filter((e) => e.classList.contains('latex-counts')).pop();
+  return [c.textContent].concat(c.children.map((k) => k.textContent || k).filter((x) => x.trim())); };
+const sent = [];
+let rev = FILE.revision, n = 0;
+evidenceAnswer = () => EV;
+L.open(FILE.path); await tick();
+gets.shift().res(FILE); await tick(); await tick(); await tick();
+const V = viewsMade[0], doc = () => V.state.doc.toString();
+const save = async () => {
+  button('保存').fire('click'); await tick();
+  const p = posts.shift(); rev = 'r' + (++n); p.res({revision: rev, changed: true, previous: 'x'}); sent.push(p);
+  await tick(); await tick(); await tick();
+};
+const answer = (text) => Object.assign({}, ANSWERS[text], {revision: rev});
+// A reworded and saved: 待复核 in this editor, its new words offered with 仍然成立
+const pa = P().find((p) => doc().slice(p.from, p.to) === A);
+V.dispatch({changes: {from: pa.from, insert: 'Not '}});
+await save();
+out.afterReword = seen();
+// B cut and pasted lower; the save's reload is held while text is typed at the top
+const at = doc().indexOf(B);
+V.dispatch({changes: {from: at, to: at + B.length + 2}});
+V.dispatch({changes: {from: doc().length, insert: '\n' + B + '\n'}});
+const pasted = doc();
+let release; evidenceAnswer = () => new Promise((r) => { release = r; });
+await save();
+V.dispatch({changes: {from: 0, insert: 'TYPED '}});
+out.whileOut = {saveDisabled: button('保存').disabled, posts: posts.length};
+all.filter((e) => e.classList.contains('latex-waiting') && e.textContent === A).pop().fire('click'); await tick();
+button('仍然成立').fire('click'); await tick();
+out.whileOut.clicked = {posts: posts.length, status: status()};
+release(answer(pasted)); await tick(); await tick(); await tick(); await tick();
+out.afterReload = seen();
+out.afterReloadStatus = status();
+out.saveEnabled = !button('保存').disabled;
+// the typing saved (nothing emptied: no reload), then 仍然成立 on A writes A's new words
+evidenceAnswer = () => answer(doc());
+const asked = evidenceGets.length;
+await save();
+out.thirdSaveAsked = evidenceGets.length - asked;
+out.afterThird = seen();
+all.filter((e) => e.classList.contains('latex-waiting') && e.textContent === A).pop().fire('click'); await tick();
+button('仍然成立').fire('click'); await tick();
+const re = posts.shift(); re.res({act: 'reanchor'}); sent.push(re); await tick(); await tick(); await tick();
+button('关闭').fire('click');
+// C deleted, and the reload fails: 段落已被删掉 here, not found
+const pc = P().find((p) => doc().slice(p.from, p.to) === C);
+V.dispatch({changes: {from: pc.from, to: pc.to}});
+evidenceAnswer = () => Promise.reject({state: 'none'});
+await save();
+out.afterFailed = seen().filter((p) => p.text === '');
+out.failedSide = waitingNow();
+// D deleted, and the file changed elsewhere again: the answer is for another revision, twice; still 段落已被删掉
+const pd = P().find((p) => doc().slice(p.from, p.to) === D);
+V.dispatch({changes: {from: pd.from, to: pd.to}});
+evidenceAnswer = () => ({revision: 'elsewhere', links: []});
+const asked2 = evidenceGets.length;
+await save();
+out.mismatchAsked = evidenceGets.length - asked2;
+out.afterMismatch = seen().filter((p) => p.text === '');
+out.mismatchSide = waitingNow();
+out.sent = sent.map((p) => ({url: p.url, body: p.body}));
+out.leftover = posts.length;
+console.log(JSON.stringify(out));
+"""
+
+
+def test_text_typed_while_the_saves_reload_is_out_moves_a_waiting_passage_and_a_failed_reload_never_reads_found(tmp_path):
+    """Review of B1f. A passage this editor put under 待复核 keeps its place when text is typed while the reload after
+    a save is out (its range and its 「仍然成立」 candidate are A's new words, not the text the typing pushed into the
+    old range), and 仍然成立 is refused until that reload is in. A deleted passage whose reload fails, or whose answer is
+    for another revision, reads 「段落已被删掉」 and is counted 待复核, not found. Every body is then applied to a real
+    project: the one reanchor names A's new words, and the saves write nothing to the ledger."""
+    if NODE is None:
+        pytest.skip("node is not installed")
+    a, b, c, d = "Alpha is 显著 here.", "Beta para text.", "Gamma line.", "Delta line."
+    text = f"Intro.\n\n{a}\n\n{b}\n\n{c}\n\n{d}\n\nEnd.\n"
+    root = tmp_path / "project"
+    root.mkdir()
+    project.init_project(root)
+    (root / "figures").mkdir()
+    (root / "figures/f1.png").write_bytes(b"png")
+    _put(root, text)
+    for q in (a, b, c, d):
+        latex_edit.evidence_act(root, "link", {"path": PATH, "revision": _sha(root), "from": text.index(q),
+                                               "to": text.index(q) + len(q), "file": "figures/f1.png"})
+    opened, ev = latex_edit.read_tex(root, PATH), latex_edit.evidence_of_draft(root, PATH)
+    # the server's answers, read from copies holding the texts the editor will save
+    pasted = f"Intro.\n\nNot {a}\n\n{c}\n\n{d}\n\nEnd.\n\n{b}\n"
+    answers = {}
+    for i, saved in enumerate((pasted, "TYPED " + pasted)):
+        twin = tmp_path / f"twin{i}"
+        shutil.copytree(root, twin)
+        _put(twin, saved)
+        answers[saved] = latex_edit.evidence_of_draft(twin, PATH)
+    prelude = _DRIVER.split("const out = {};")[0] % {"cm": json.dumps(str(WEBAPP / "vendor" / "codemirror.js")),
+                                                     "latex": json.dumps(str(WEBAPP / "latex.js"))}
+    script = (prelude + "(async () => {\nconst FILE = " + json.dumps(opened) + ", EV = " + json.dumps(ev)
+              + ", ANSWERS = " + json.dumps(answers) + ", A = " + json.dumps(a) + ", B = " + json.dumps(b)
+              + ", C = " + json.dumps(c) + ", D = " + json.dumps(d) + ";\n" + _RELOAD
+              + "\n})().catch((err) => { console.log(JSON.stringify({error: String(err && err.stack || err)})); });")
+    got = subprocess.run([NODE, "-"], input=script, capture_output=True, text=True, check=True, timeout=60).stdout
+    out = json.loads(got.strip().splitlines()[-1])
+    assert "error" not in out, out.get("error")
+    new_a = "Not " + a
+    assert [(x["state"], x["local"], x["text"]) for x in out["afterReword"]][0] == ("changed", True, new_a)
+    # while the reload is out: no save, and 仍然成立 refused without a post
+    assert out["whileOut"] == {"saveDisabled": True, "posts": 0, "clicked": {"posts": 0, "status": "先保存，再改依据文件"}}
+    # after it: A where its words are now (the typing moved it), its candidate those words; B found where it was pasted
+    for seen in (out["afterReload"], out["afterThird"]):
+        assert seen[0]["text"] == new_a and seen[0]["candidates"] == [{"text": new_a, "still": True}]
+        assert [(x["state"], x["text"]) for x in seen[1:]] == [("found", b), ("found", c), ("found", d)]
+    assert out["afterReloadStatus"] == "尚未保存" and out["saveEnabled"] is True
+    assert out["thirdSaveAsked"] == 0   # nothing emptied, no reload
+    # a failed reload, and one answered for another revision (asked again once): 段落已被删掉, counted 待复核
+    assert [(x["state"], x["local"]) for x in out["afterFailed"]] == [("deleted", False)]
+    assert out["failedSide"] == ["4 段有依据文件", "2 段待复核"]   # A still 待复核 here, C deleted
+    assert out["mismatchAsked"] == 2
+    assert [x["state"] for x in out["afterMismatch"]] == ["deleted", "deleted"]
+    assert out["mismatchSide"] == ["4 段有依据文件", "3 段待复核"]
+    assert out["leftover"] == 0
+    # every body, in order, on the real project: the saves leave the ledger as it was, the reanchor names A's new words
+    ledger = evidence.evidence_path(root).read_bytes()
+    for item in out["sent"]:
+        if item["url"] == "/api/latex/save":
+            before = evidence.evidence_path(root).read_bytes()
+            latex_edit.save_tex(root, dict(item["body"], revision=_sha(root)))
+            assert evidence.evidence_path(root).read_bytes() == before
+        else:
+            body = dict(item["body"], revision=_sha(root))
+            body.pop("project")
+            on_disk = (root / PATH).read_bytes().decode()
+            assert on_disk[body["from"]:body["to"]] == new_a
+            latex_edit.evidence_act(root, "reanchor", body)
+    assert evidence.evidence_path(root).read_bytes() != ledger
+    assert (root / PATH).read_bytes().decode() == f"TYPED Intro.\n\nNot {a}\n\n\n\n\n\nEnd.\n\n{b}\n"
+    states = {x["quote"]: x["state"] for x in latex_edit.evidence_of_draft(root, PATH)["links"]}
+    assert states[new_a] == "found" and states[b] == "found"

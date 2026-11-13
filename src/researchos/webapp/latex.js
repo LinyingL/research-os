@@ -352,11 +352,13 @@
     me.savedDoc = doc; me.revision = r.revision; me.pending = me.sinceSent; me.sinceSent = null;
     clearNotice(me);   // a conflict's notice and folded text are over once a save goes through
     const emptied = checkPassages(me);
-    me.busy = false; me.ui.save.disabled = false;
     if (r.changed && r.previous) me.lastSave = { revision: r.revision, previous: r.previous };
     me.ui.undo.classList.toggle("hidden", !me.lastSave);
+    // a cut passage pasted elsewhere is found there by the server; the save stays busy until its answer is in, so no
+    // passage act runs on a list about to be replaced
+    if (emptied) { await loadPassages(me, true); if (ed !== me) return; }
+    me.busy = false; me.ui.save.disabled = false;
     setStatus(me.ui.status, "", dirty() ? t("尚未保存") : t("已保存"));
-    if (emptied) await loadPassages(me, true);   // a cut passage pasted elsewhere is found there by the server
   }
 
   // 409: the file changed elsewhere. What the editor holds stays in it and, folded, under the notice; 载入新版本 reads the
@@ -511,8 +513,6 @@
   // `keepLocal` (after a click wrote an entry) a passage this editor put under 待复核 at a save stays so, unless its
   // link has a new entry since (`last`).
   async function loadPassages(me, keepLocal, retried) {
-    const local = new Map();
-    if (keepLocal) passagesOf(me).forEach((p) => { if (p.local) p.links.forEach((l) => local.set(l.link, { last: l.last, p: p })); });
     let data;
     try {
       data = await apiGet("/api/latex/evidence?path=" + encodeURIComponent(me.path));
@@ -522,6 +522,9 @@
     }
     if (ed !== me) return;
     if (data.revision !== me.revision) { if (!retried && !dirty()) await loadPassages(me, keepLocal, true); return; }
+    // read when the answer is in: text typed while the request was out has moved the local passages since
+    const local = new Map();
+    if (keepLocal) passagesOf(me).forEach((p) => { if (p.local) p.links.forEach((l) => local.set(l.link, { last: l.last, p: p })); });
     const conv = positions(me.savedDoc, me.sep), pending = me.pending;
     const here = (k, assoc) => k == null ? null : pending.mapPos(conv.toEditor(k), assoc);
     const groups = new Map(), list = [];
@@ -552,15 +555,16 @@
 
   // At a save (22.2 "While editing"): a passage found when the editor opened whose words changed is 待复核
   // 「依据已变化」, its new words the first candidate with 「仍然成立」. A link 待复核 at opening is never touched.
-  // A passage whose range is now empty may have been cut and pasted elsewhere: it is not called deleted here; true is
-  // returned, and the caller has the server find it again in the saved text (found, 待复核 or 「段落已被删掉」 is
-  // the server's answer). Nothing is written: only a click writes the ledger.
+  // A passage whose range is now empty may have been cut and pasted elsewhere: true is returned, and the caller has
+  // the server find it again in the saved text (found, 待复核 or 「段落已被删掉」 is the server's answer). Until that
+  // answer applies (it may fail, or the file may have changed again) the passage reads 「段落已被删掉」, never found;
+  // it is not local, so the server's answer replaces it. Nothing is written: only a click writes the ledger.
   function checkPassages(me) {
     const doc = me.view.state.doc;
     let moved = false, emptied = false;
     const list = passagesOf(me).map((p) => {
       if (p.opened !== "found" || p.from == null) return p;
-      if (p.to <= p.from) { emptied = true; return p.local ? Object.assign({}, p, { local: false }) : p; }
+      if (p.to <= p.from) { emptied = true; return Object.assign({}, p, { state: "deleted", local: false, candidates: [] }); }
       const now = doc.sliceString(p.from, p.to, "\n");
       const state = words(now) === words(p.quote) ? "found" : "changed";
       if (state === p.state && state !== "changed") return p;
