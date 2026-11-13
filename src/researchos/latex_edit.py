@@ -461,8 +461,11 @@ def _anchor_of(text: str, start: Any, end: Any) -> dict[str, Any]:
     if not quote.strip() or len(quote) > evidence.MAX_QUOTE:
         raise _refuse("invalid", f"A passage is 1 to {evidence.MAX_QUOTE} characters of text",
                       f"一段正文最多 {evidence.MAX_QUOTE} 个字符，不能是空白")
-    return {"quote": quote, "prefix": norm[max(0, at[0] - evidence.CONTEXT):at[0]],
-            "suffix": norm[at[1]:at[1] + evidence.CONTEXT], "offset": at[0]}
+    # The context stops at a page break or another line separator the ledger cannot store (text pasted from a PDF);
+    # one inside the passage itself is refused by `evidence`, with a sentence saying so.
+    prefix = re.split(f"[{evidence.LINE_SEPARATORS}]", norm[max(0, at[0] - evidence.CONTEXT):at[0]])[-1]
+    suffix = re.split(f"[{evidence.LINE_SEPARATORS}]", norm[at[1]:at[1] + evidence.CONTEXT])[0]
+    return {"quote": quote, "prefix": prefix, "suffix": suffix, "offset": at[0]}
 
 
 def _evidence_call(fn: Any) -> dict[str, Any]:
@@ -541,17 +544,24 @@ def evidence_of_draft(root: str | Path, rel: Any, lang: str = "zh") -> dict[str,
 def passages_supported(root: str | Path, file: Any, lang: str = "zh") -> dict[str, Any]:
     """以它为依据的段落: every standing link whose supporting file is `file` (a path or a node id), with its draft, the
     section the passage is in, its first 80 characters and its state (`draft_missing` when the draft cannot be read
-    now). Writes nothing."""
+    now). A file is matched by its path as a Mac volume compares it, whatever prefix a link names it with. Writes
+    nothing."""
     root = workspace._root(root)  # noqa: SLF001
     try:
         node = notes.normalize_node(file)
+        node = notes.normalize_node(notes.node_path(node) or node)
     except ValueError as exc:
         raise _refuse("invalid", str(exc), "无法识别这个文件") from exc
+
+    def key(name: Any) -> Any:
+        rel = notes.node_path(name) if isinstance(name, str) else None
+        return name if rel is None else ("file", files_ingest.fold(rel))
+
     links, decision = evidence.links_now(root)
     texts: dict[str, tuple[str, evidence.Paragraphs] | None] = {}
     out = []
     for item in links.values():
-        if item["file"] != node:
+        if key(item["file"]) != key(node):
             continue
         draft = item["draft"]
         if draft not in texts:

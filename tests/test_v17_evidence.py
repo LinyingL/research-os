@@ -9,6 +9,7 @@ import hashlib
 import http.client
 import json
 import threading
+import time
 import tomllib
 from pathlib import Path
 
@@ -158,6 +159,44 @@ def test_a_passage_whose_every_character_was_deleted_is_deleted_not_changed():
     assert first["prefix"] == "" and evidence.resolve(first, text.replace("第一段。", " "))["state"] == "deleted"
 
 
+def test_a_paragraph_deleted_with_its_blank_line_or_a_line_with_its_line_ending_is_deleted():
+    """Review of B1d: deleting as an editor does takes blank space of the context with the passage; it is still
+    「段落已被删掉」, not 「依据已变化」 with unrelated paragraphs offered."""
+    text = "\\section{结果}\n系数为正，结果显著。\n\n这一段讲别的东西，和数据有关。\n\n\\section{数据}\n我们用 BIS 的数据。\n"
+    paragraph = _anchor(text, "这一段讲别的东西，和数据有关。")
+    found = evidence.resolve(paragraph, text.replace("这一段讲别的东西，和数据有关。\n\n", ""))
+    assert found == {"state": "deleted", "start": text.index("\n\n这一段"), "end": text.index("这一段"), "candidates": []}
+    line = _anchor(text, "系数为正，结果显著。")
+    assert evidence.resolve(line, text.replace("系数为正，结果显著。\n", ""))["state"] == "deleted"
+    last = _anchor(text, "我们用 BIS 的数据。")
+    assert last["suffix"] == "\n" and evidence.resolve(last, text.replace("我们用 BIS 的数据。\n", ""))["state"] == "deleted"
+    assert evidence.resolve(line, text.replace("系数为正，结果显著。", "另一句话。"))["state"] == "changed"
+
+
+def test_finding_a_passage_in_a_large_repetitive_generated_table_takes_well_under_a_second():
+    """Review of B1d: a prefix found 60,000 times and a suffix that has gone once cost 17 s per link on a GET."""
+    row = "1.23 & 4.56 & 7.89 \\\\ \\hline\n"
+    text = row * 60_000
+    anchor = {"quote": "a row that has gone", "prefix": (row * 3)[-32:], "suffix": "a suffix that has gone too",
+              "offset": 10}
+    began = time.monotonic()
+    assert evidence.resolve(anchor, text)["state"] == "changed"
+    assert time.monotonic() - began < 2
+
+
+def test_no_candidate_is_longer_than_a_passage_may_be():
+    """Review of B1d: the text between a surviving prefix and a far later suffix could run to megabytes, and 「是这段」
+    on it would be refused anyway."""
+    filler = "填充文字。" * (evidence.MAX_QUOTE // 4)
+    text = "前文开头。旧的句子。" + filler + "后文结尾。"
+    anchor = {"quote": "已经改掉的句子", "prefix": "前文开头。", "suffix": "后文结尾。", "offset": 5}
+    found = evidence.resolve(anchor, text)
+    assert found["state"] == "changed"
+    assert all(len(c["text"]) <= evidence.MAX_QUOTE for c in found["candidates"])
+    near = evidence.resolve(anchor, "前文开头。新的句子。后文结尾。")
+    assert near["candidates"][0]["text"] == "新的句子。"
+
+
 # -- acts -------------------------------------------------------------------------------------------------------------
 
 
@@ -254,6 +293,36 @@ def test_the_passages_a_file_supports_name_their_draft_section_and_first_80_char
         ("引言", "第二段 $x^2$ 结束。", "found"), ("数据", "我们用 BIS 的数据。", "found")]
     (root / "paper/main.tex").unlink()
     assert {p["state"] for p in latex_edit.passages_supported(root, "figures/f1.png")["passages"]} == {"draft_missing"}
+
+
+def test_a_supporting_file_is_stored_under_one_name_and_found_by_it_whatever_it_was_called(root):
+    """Review of B1d: `figures/f1.png`, `file:…` and `dataset:…` named one file three ways and 以它为依据的段落 listed one
+    link of three; a wrong-case spelling passed on a Mac volume; a claim or attempt id was written unchecked."""
+    _put(root, "paper/main.tex", DRAFT)
+    for name in ("figures/f1.png", "file:figures/f1.png", "dataset:figures/f1.png"):
+        _link(root, "paper/main.tex", "很慢。", file=name)
+    assert {e.get("file") for e in evidence.load(root).ledger.entries} == {"figure:figures/f1.png"}
+    for name in ("Figures/F1.PNG", "figures/F1.png", "claim:does-not-exist", "attempt:bogus"):
+        _refused("no_such_file", lambda: _link(root, "paper/main.tex", "很慢。", file=name))
+    for name in ("figures/f1.png", "file:figures/f1.png", "dataset:figures/f1.png"):
+        got = latex_edit.passages_supported(root, name)
+        assert got["file"] == "figure:figures/f1.png" and len(got["passages"]) == 3
+
+
+def test_a_long_note_an_unencodable_note_and_a_page_break_in_the_passage_are_refused_with_a_reason(root):
+    """Review of B1d: these came back as 409 「关联没有写入」 with no reason. A page break next to the passage only
+    shortens its context."""
+    _put(root, "paper/main.tex", "前文\f正文一段。\u2028后文\n分页\f符号\n")
+    error = _refused("note_too_long", lambda: _link(root, "paper/main.tex", "正文一段。", note="字" * 2001))
+    assert error.status == 400 and "2000" in error.message_zh
+    assert _refused("invalid_request", lambda: _link(root, "paper/main.tex", "正文一段。", note="\ud800")).status == 400
+    error = _refused("line_separator", lambda: _link(root, "paper/main.tex", "分页\f符号"))
+    assert error.status == 400 and "分页符" in error.message_zh
+    assert not evidence.evidence_path(root).exists()
+    _link(root, "paper/main.tex", "正文一段。", note="字" * 2000)
+    anchor = evidence.load(root).ledger.entries[0].data["anchor"]
+    assert (anchor["prefix"], anchor["suffix"]) == ("", "")
+    assert _links(root)[0]["state"] == "found"
 
 
 # -- trust, who writes, reading ---------------------------------------------------------------------------------------
@@ -357,3 +426,31 @@ def test_the_endpoints_link_list_withdraw_and_refuse_another_project(served):
     status, done = _call(port, "POST", "/api/latex/evidence/withdraw", {"project": str(root), "link": made["link"]})
     assert status == 200 and done["act"] == "withdraw"
     assert (root / "paper/main.tex").read_text() == DRAFT
+
+
+def test_the_endpoints_reanchor_and_undo(served):
+    """Review of B1d: 「是这段」 and 撤销 through the HTTP routes, and a refusal with its reason."""
+    port, root = served
+    revision = _put(root, "paper/main.tex", DRAFT)
+    start, end = _range(root, "paper/main.tex", "第二段 $x^2$ 结束。")
+    body = {"project": str(root), "path": "paper/main.tex", "revision": revision, "from": start, "to": end,
+            "file": "figures/f1.png"}
+    status, made = _call(port, "POST", "/api/latex/evidence/link", body)
+    assert status == 200
+    status, refused = _call(port, "POST", "/api/latex/evidence/link", {**body, "note": "x" * 2001},
+                            {"X-ResearchOS-Lang": "en"})
+    assert status == 400 and refused["message"] == "A note is at most 2,000 characters"
+    revision = _put(root, "paper/main.tex", DRAFT.replace("$x^2$", "$x^3$"))
+    status, listed = _call(port, "GET", "/api/latex/evidence?path=paper/main.tex")
+    (shown,) = listed["links"]
+    assert shown["state"] == "changed"
+    candidate = shown["candidates"][0]
+    status, moved = _call(port, "POST", "/api/latex/evidence/reanchor", {
+        "project": str(root), "link": made["link"], "path": "paper/main.tex", "revision": revision,
+        "from": candidate["from"], "to": candidate["to"]})
+    assert status == 200 and moved["act"] == "reanchor"
+    assert _call(port, "GET", "/api/latex/evidence?path=paper/main.tex")[1]["links"][0]["state"] == "found"
+    status, undone = _call(port, "POST", "/api/latex/evidence/undo",
+                           {"project": str(root), "link": made["link"], "undoes": moved["entry"]})
+    assert status == 200 and undone["act"] == "undone"
+    assert _call(port, "GET", "/api/latex/evidence?path=paper/main.tex")[1]["links"][0]["state"] == "changed"

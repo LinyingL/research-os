@@ -38,6 +38,8 @@ writes the ledger, and nothing here ever writes the `.tex`.
 
 from __future__ import annotations
 
+import bisect
+import os
 import re
 import secrets
 from collections import Counter
@@ -88,7 +90,13 @@ MESSAGES = {
     "withdrawn": ("这条关联已经撤回", "This link has been withdrawn"),
     "invalid_request": ("无法识别这次关联", "This link cannot be read"),
     "not_written": ("关联没有写入", "The link was not written"),
+    "note_too_long": (f"备注最多 {MAX_NOTE} 个字符", f"A note is at most {MAX_NOTE:,} characters"),
+    "line_separator": ("这段文字里有分页符或特殊的换行字符，无法记录；请选一段不含它们的文字，或先在正文里删掉它们",
+                       "This passage contains a page break or a special line separator, which cannot be recorded; "
+                       "select text without one, or remove it from the draft first"),
 }
+#: The characters besides \n that the ledger engine refuses in every string (`webapp.mapedit`'s line boundaries).
+LINE_SEPARATORS = "\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
 _ROLE_REFUSAL = {"member": "member", "none": "not_in_team", "unknown": "team_unreadable"}
 _STATUS = {"member": 403, "not_in_team": 403, "team_unreadable": 409, "untrusted": 409, "no_such_file": 404,
            "no_such_link": 404, "withdrawn": 409, "not_written": 409}
@@ -275,15 +283,40 @@ def _occurrences(text: str, quote: str) -> list[int]:
 
 def _between(text: str, prefix: str, suffix: str, offset: int) -> tuple[int, int] | None:
     """The stretch between the anchor's prefix and suffix, when both are still there (an empty prefix is the start of
-    the text, an empty suffix its end); of several, the one nearest `offset`."""
+    the text, an empty suffix its end); of several, the one nearest `offset`. The suffix's places are listed once, so
+    a prefix that recurs thousands of times (a generated table) costs a search each, not a scan of the text each."""
     starts = [0] if not prefix else [i + len(prefix) for i in _occurrences(text, prefix)]
+    ends = None if not suffix else _occurrences(text, suffix)
     best = None
     for start in starts:
-        end = len(text) if not suffix else text.find(suffix, start)
-        if end == -1:
-            continue
+        if ends is None:
+            end = len(text)
+        else:
+            k = bisect.bisect_left(ends, start)
+            if k == len(ends):
+                continue
+            end = ends[k]
         if best is None or abs(start - offset) < abs(best[0] - offset):
             best = (start, end)
+    return best
+
+
+_BLANK = re.compile(r"\s*")
+
+
+def _deleted(text: str, prefix: str, suffix: str, offset: int) -> tuple[int, int] | None:
+    """Where the passage was, when every character of it is gone: the prefix (less its trailing blank space) followed,
+    with nothing but blank space between, by the suffix (less its leading blank space), nearest `offset`. Deleting a
+    paragraph with one of its blank lines, or a line with its line ending, takes blank space of the context with it."""
+    head, tail = prefix.rstrip(), suffix.lstrip()
+    if not head and not tail:
+        return None
+    best = None
+    for start in [0] if not head else [i + len(head) for i in _occurrences(text, head)]:
+        gap = _BLANK.match(text, start).end()
+        if (text.startswith(tail, gap) if tail else gap == len(text)) and (
+                best is None or abs(start - offset) < abs(best[0] - offset)):
+            best = (start, gap)
     return best
 
 
@@ -292,10 +325,11 @@ def resolve(anchor: Mapping[str, Any], text: str, paragraphs: Paragraphs | None 
 
     - `found` -- the quote occurs once, or of several the one whose prefix and suffix match (then the nearest
       `offset`);
-    - `deleted` -- it does not occur, and nothing but blank space is left between its prefix and suffix
-      (「段落已被删掉」);
+    - `deleted` -- it does not occur, and nothing but blank space is left between its prefix and suffix, each less
+      its blank space next to the passage (「段落已被删掉」);
     - `changed` -- it does not occur (待复核 「依据已变化」), with up to three candidates `{start, end, text}`, best
-      first: the text between the same prefix and suffix, then the most similar paragraphs.
+      first: the text between the same prefix and suffix, then the most similar paragraphs; none longer than a
+      passage may be (`MAX_QUOTE`), since 「是这段」 on it would be refused.
 
     Pure: it reads nothing and writes nothing."""
     quote, prefix, suffix, offset = anchor["quote"], anchor["prefix"], anchor["suffix"], anchor["offset"]
@@ -305,19 +339,24 @@ def resolve(anchor: Mapping[str, Any], text: str, paragraphs: Paragraphs | None 
                    and text[i + len(quote):i + len(quote) + len(suffix)] == suffix]
         at = min(fitting or hits, key=lambda i: abs(i - offset))
         return {"state": "found", "start": at, "end": at + len(quote), "candidates": []}
+    gone = _deleted(text, prefix, suffix, offset)
+    if gone is not None:
+        return {"state": "deleted", "start": gone[0], "end": gone[1], "candidates": []}
     candidates: list[dict[str, Any]] = []
     between = _between(text, prefix, suffix, offset) if (prefix or suffix) else None
     if between is not None:
         start, end = between
         stretch = text[start:end]
-        if not stretch.strip():
-            return {"state": "deleted", "start": start, "end": end, "candidates": []}
         lead = len(stretch) - len(stretch.lstrip())
-        candidates.append({"start": start + lead, "end": start + lead + len(stretch.strip()), "text": stretch.strip()})
+        if len(stretch.strip()) <= MAX_QUOTE:
+            candidates.append({"start": start + lead, "end": start + lead + len(stretch.strip()),
+                               "text": stretch.strip()})
     wanted = _tokens(quote)
     size = sum(wanted.values())
     scored = []
     for start, end, tokens in (paragraphs or Paragraphs(text)).spans():
+        if end - start > MAX_QUOTE:
+            continue
         shared = sum((wanted & tokens).values())
         if shared and size:
             scored.append((2 * shared / (size + sum(tokens.values())), -abs(start - offset), start, end))
@@ -342,16 +381,32 @@ def _may_write(root: Path) -> None:
 
 
 def _file_of_project(root: Path, node: str) -> bool:
+    """Whether the file node names a file of the project, every component spelt as its folder lists it (a Mac volume
+    ignores case and Unicode normalisation, so `Figures/F1.PNG` would pass as another name of `figures/f1.png`, as
+    `latex_edit.checked_path` refuses for drafts). A node that is not a file is not judged here."""
     rel = notes.node_path(node)
     if rel is None:
-        return True  # a node that is not a file (a claim, an attempt) is named as the index names it
+        return True
     if any(part.startswith(".") for part in rel.split("/")):
         return False
     target = root / rel
     try:
-        return target.resolve().is_relative_to(root.resolve()) and target.is_file()
+        if not (target.resolve().is_relative_to(root.resolve()) and target.is_file()):
+            return False
+        folder = root
+        for part in rel.split("/"):
+            if part not in os.listdir(folder):
+                return False
+            folder = folder / part
+        return True
     except OSError:
         return False
+
+
+def _check_anchor(anchor: Mapping[str, Any]) -> None:
+    _validate_anchor(anchor)
+    if any(ch in LINE_SEPARATORS for ch in anchor["quote"] + anchor["prefix"] + anchor["suffix"]):
+        raise EvidenceRefused("line_separator", "the passage holds a line separator the ledger cannot store")
 
 
 def _write(root: Path, plan: Callable[[dict[str, dict[str, Any]], LedgerLoad], dict[str, Any]], *, expected_id: Any,
@@ -384,19 +439,28 @@ def _standing(links: dict[str, dict[str, Any]], loaded: LedgerLoad, link: Any) -
 def add_link(project_root: str | Path, draft: str, file: str, anchor: Mapping[str, Any], note: str | None = None, *,
              via: str, expected_id: Any = READ_NOW, timeout: float | None = None,
              now: Callable[[], datetime] | None = None) -> dict[str, Any]:
-    """关联依据文件: a new link (`pl-…`) from the passage `anchor` of `draft` to `file` (a project-relative path or a
-    node id, stored as `notes.normalize_node` names it)."""
+    """关联依据文件: a new link (`pl-…`) from the passage `anchor` of `draft` to `file`, a file of the project named by
+    its path or a file node id, and stored under one name only: the path as spelt on disk, with the prefix
+    `notes.normalize_node` classifies it under (so `file:x.png` and `x.png` are one supporting file). A node that is not
+    a file (a claim, an attempt) is refused: nothing here can tell yet whether the index holds it."""
     root = Path(project_root)
     try:
         draft, node = clean_tex_draft(draft), notes.normalize_node(file)
         _validate_anchor(anchor)
         if note is not None and not isinstance(note, str):
             raise ValueError("a note is text")
-    except ValueError as exc:
+        if note is not None:
+            note.encode("utf-8")
+    except (ValueError, UnicodeEncodeError) as exc:
         raise EvidenceRefused("invalid_request", str(exc)) from exc
+    _check_anchor(anchor)
     note = " ".join(note.split()) or None if note is not None else None
-    if not _file_of_project(root, node):
+    if note is not None and len(note) > MAX_NOTE:
+        raise EvidenceRefused("note_too_long", f"a note is at most {MAX_NOTE} characters")
+    rel = notes.node_path(node)
+    if rel is None or not _file_of_project(root, node):
         raise EvidenceRefused("no_such_file", f"{node} is not a file of the project")
+    node = notes.normalize_node(rel)
     fields = {"act": LINK, "link": "pl-" + secrets.token_hex(16), "draft": draft, "file": node, "note": note,
               "via": via, "anchor": dict(anchor)}
     return _write(root, lambda _links, _loaded: fields, expected_id=expected_id, timeout=timeout, now=now)
@@ -410,6 +474,7 @@ def reanchor(project_root: str | Path, link: str, draft: str, anchor: Mapping[st
         _validate_anchor(anchor)
     except ValueError as exc:
         raise EvidenceRefused("invalid_request", str(exc)) from exc
+    _check_anchor(anchor)
 
     def plan(links: dict[str, dict[str, Any]], loaded: LedgerLoad) -> dict[str, Any]:
         if _standing(links, loaded, link)["draft"] != draft:
