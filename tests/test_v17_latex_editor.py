@@ -315,7 +315,11 @@ const gets = [], posts = [];
 // the draft's passages (22.2) are answered at once by `evidenceAnswer`; every other read waits in `gets`
 global.evidenceAnswer = () => ({revision: null, links: []});
 const evidenceGets = [];
+// the export's settings line (22.4) is answered at once by `exportAnswer`
+global.exportAnswer = () => ({main: null, mains: [], engine: null, engines: [], last: null});
+const exportGets = [];
 global.apiGet = (url) => url.startsWith('/api/latex/evidence?') ? (evidenceGets.push(url), Promise.resolve(evidenceAnswer(url)))
+  : url.startsWith('/api/latex/export?') ? (exportGets.push(url), Promise.resolve(exportAnswer(url)))
   : new Promise((res, rej) => gets.push({url, res, rej}));
 global.apiPost = (url, body) => new Promise((res, rej) => posts.push({url, body: JSON.parse(JSON.stringify(body)), res, rej}));
 eval(fs.readFileSync(%(latex)s, 'utf8'));

@@ -506,6 +506,9 @@ Endpoints (all GET unless noted):
                             or 替换 / 另存为). A person's only: no agent
                             endpoint runs TeX. `/api/latex/export/stop` kills
                             the running one.
+    GET  /api/latex/export -- `?path=<.tex>`: the export's settings line
+                            (main file, engine, the last exported PDF).
+                            Reads only.
     The save and the undo are, with the attempt table, the Markdown under `research/`
     and an agent's run, the only writes of a researcher's own files (18.1's
     list, extended by 22.1): a `.tex` the person saves in the editor, through
@@ -4234,6 +4237,14 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 rel = (query.get("path") or [""])[0]
                 links = (query.get("links") or ["1"])[0] != "0"
                 payload = self._workspace_api(lambda: latex_edit.read_tex(served.root, rel, self._lang(), links))
+                self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/latex/export":
+                # 22.4: the export's settings line -- main file, engine, the last exported PDF. Runs nothing.
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                rel = (query.get("path") or [""])[0]
+                payload = self._workspace_api(lambda: latex_export.choices(served.root, rel))
                 self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
             elif path in ("/api/latex/evidence", "/api/latex/supports", "/api/latex/files"):
                 # 22.2: a draft's links found again in its current text, or the passages a file supports. Reads only:

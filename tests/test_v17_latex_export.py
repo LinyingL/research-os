@@ -558,3 +558,46 @@ def test_a_project_switched_during_the_run_gets_no_pdf(root, tmp_path, monkeypat
         thread.join(timeout=5)
     assert status == 409 and refused["state"] == "workspace_project_changed"
     assert not (root / "paper/main.pdf").exists() and papers.exports(root) == []
+
+
+# -- the page's settings line (B2b) -------------------------------------------------------------------------------------
+
+
+def test_the_settings_line_reads_the_main_file_the_engine_and_the_last_pdf_and_writes_nothing(root):
+    """22.4: what 「导出 PDF」 would use is shown before it runs: the main file (none while the person has to choose), the
+    engine kept or preset (XeLaTeX for ctex), and 「导出的 PDF」 once there is one; reading it changes no
+    setting and no file."""
+    _put(root, "paper/shared.tex", "Shared text.\n")
+    for name, cls in (("a", "ctexart"), ("b", "article")):
+        _put(root, f"paper/{name}.tex", f"\\documentclass{{{cls}}}\n\\begin{{document}}\n\\input{{shared}}\n\\end{{document}}\n")
+    before, kept = _listing(root), settings.read_settings()
+    seen = latex_export.choices(root, "paper/shared.tex")
+    assert seen == {"main": None, "mains": ["paper/a.tex", "paper/b.tex"], "engine": None,
+                    "engines": ["pdflatex", "xelatex", "lualatex"], "last": None}
+    seen = latex_export.choices(root, "paper/a.tex")
+    assert seen["main"] == "paper/a.tex" and seen["engine"] == "xelatex" and seen["last"] is None
+    assert _listing(root) == before and settings.read_settings() == kept
+    assert _export(root, "paper/shared.tex", main="paper/b.tex", engine="xelatex")["exported"]
+    seen = latex_export.choices(root, "paper/shared.tex")
+    assert seen["main"] == "paper/b.tex" and seen["engine"] == "xelatex" and seen["last"]["pdf"] == "paper/b.pdf"
+    (root / "paper/b.pdf").unlink()
+    assert latex_export.choices(root, "paper/shared.tex")["last"] is None   # a PDF no longer there is not listed
+    with pytest.raises(WorkspaceError):
+        latex_export.choices(root, "../x.tex")
+
+
+def test_the_settings_line_endpoint_answers_for_the_open_project_only(served):
+    port, root, _scans = served
+    _simple(root, "\\begin{document}x\\end{document}")
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+    try:
+        conn.request("GET", "/api/latex/export?path=paper/main.tex")
+        resp = conn.getresponse()
+        answer = json.loads(resp.read())
+        conn.request("GET", "/api/latex/export?path=paper/main.tex&project=/elsewhere")
+        other = conn.getresponse()
+        other.read()
+    finally:
+        conn.close()
+    assert resp.status == 200 and answer["main"] == "paper/main.tex" and answer["engine"] == "pdflatex"
+    assert other.status == 409

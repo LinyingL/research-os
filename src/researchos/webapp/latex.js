@@ -27,6 +27,9 @@
 // becomes 待复核 with 「仍然成立」 beside it -- a save never writes the ledger; only
 // a click does, through POST /api/latex/evidence/<link|reanchor|withdraw>. Also
 // 以它为依据的段落 on a file's page and the counts on 论文正文's rows (node.js).
+//
+// Export to PDF (22.4, B2b): 「导出 PDF」, a quiet button beside 保存 and on a .tex draft's own page (`exporter`), with the
+// settings line GET /api/latex/export answers, POST /api/latex/export and /api/latex/export/stop, and the result.
 (function () {
   "use strict";
 
@@ -167,7 +170,8 @@
   function section() { return fromView && fromView !== "latex" ? fromView : "workspace"; }
   function back() { activateView(section()); }
 
-  // `at`: {link} -- open the draft at that passage (以它为依据的段落's 「在编辑器里打开」).
+  // `at`: {link} -- open the draft at that passage (以它为依据的段落's 「在编辑器里打开」); {line} -- at that line (an
+  // export error's file:line, 22.4).
   async function open(path, at) {
     if (!path || !mayClose()) return;
     if (currentView !== "latex") fromView = currentView || "workspace";
@@ -203,13 +207,14 @@
     const status = mk("span", "notice-status");
     status.setAttribute("role", "status");
     const undoLink = mkButton(t("撤销"), "ws-text-link hidden", () => undoAct(ed));   // the last 关联/撤回关联/是这段 (18.3)
-    tools.append(save, undo, status, undoLink);
+    const exported = exporter(file.path, () => saveFirst(me));   // 22.4: 导出 PDF, quiet, at the toolbar's end
+    tools.append(save, undo, status, undoLink, exported.button);
     head.append(mk("div", "node-path mono", file.path), tools);
     const readOnly = mk("p", "node-sub latex-read-only" + (file.read_only ? "" : " hidden"), file.read_only_message || "");
     const notice = mk("div", "latex-notice hidden"), box = mk("div", "latex-editor"), side = mk("aside", "latex-side");
     const body = mk("div", "latex-body");
     body.append(box, side);
-    page.append(backBar(), head, readOnly, notice, body);
+    page.append(backBar(), head, exported.block, readOnly, notice, body);
     host.replaceChildren(page);
     const me = { path: file.path, CM: CM, ui: { save: save, undo: undo, status: status, notice: notice, box: box, side: side, undoLink: undoLink },
       lastKey: 0, busy: false, lastSave: null, afterComposing: null, target: at || null, panel: null };
@@ -218,6 +223,7 @@
     box.appendChild(me.ui.linkButton);
     ed = me;
     load(me, file);
+    if (at && at.line) { me.target = null; goToLine(me, at.line); }   // an export error's file:line (22.4)
     box.addEventListener("keydown", () => { me.lastKey = Date.now(); }, true);
     box.addEventListener("compositionend", () => {
       const later = me.afterComposing; me.afterComposing = null;
@@ -785,6 +791,129 @@
     side.replaceChildren(...parts);
   }
 
+  // -- export to PDF (22.4, B2b) ------------------------------------------------------------------------------------
+
+  const ENGINE_NAMES = { pdflatex: "pdfLaTeX", xelatex: "XeLaTeX", lualatex: "LuaLaTeX" };
+  // The last export's answer, {path, r}: a page drawn again (the scan after an export redraws a file's page) shows it again.
+  let lastShown = null;
+
+  // 22.4 "Before running": the editor's unsaved text is saved first; a save refused, still running or overtaken by
+  // typing stops the export.
+  async function saveFirst(me) {
+    if (ed === me && dirty() && !me.busy) await saveNow();
+    return ed === me && !me.busy && !dirty();
+  }
+
+  function goToLine(me, n) {
+    const doc = me.view.state.doc, line = doc.line(Math.min(Math.max(1, n), doc.lines));
+    me.view.dispatch({ selection: { anchor: line.from }, scrollIntoView: true });
+    if (typeof me.view.focus === "function") me.view.focus();
+  }
+  // An error's file:line: the open draft moves to the line; another file opens in the editor there.
+  function openAt(path, n) { if (ed && ed.path === path && ed.view) goToLine(ed, n); else open(path, { line: n }); }
+
+  // 「导出 PDF」 for the draft `path` (22.4, 22.7): `button`, the quiet button, for the editor's toolbar or a .tex page's
+  // actions, and `block`: the settings line (主文件, the engine as a quiet choice, 导出的 PDF), the running state with
+  // 「停止」, and the result -- 已导出 with 打开 PDF and 在 Finder 中显示, the question of the main file or of 替换 / 另存为, or
+  // 导出没有成功 as an error with TeX's file:line errors (a link into the editor where the server's validator passed the path)
+  // and the log under 详情; characters the fonts lack as a warning. `before` (the editor's save) runs first.
+  function exporter(path, before) {
+    const button = mkButton(t("导出 PDF"), "btn btn-small", () => run({}));
+    const settingsLine = mk("div", "latex-export-line node-sub hidden"), result = mk("div", "latex-export-result");
+    const block = mk("div", "latex-export");
+    block.append(settingsLine, result);
+    const engine = mk("select", "ws-input latex-engine");
+    engine.setAttribute("aria-label", t("排版引擎"));
+    Object.keys(ENGINE_NAMES).forEach((k) => { const o = mk("option", null, ENGINE_NAMES[k]); o.value = k; engine.appendChild(o); });
+    let running = false, kept = null, chosen = null;   // kept: the engine the server would use; chosen: the person's change
+    engine.addEventListener("change", () => { chosen = engine.value; });
+    const row = (...kids) => { const r = mk("div", "latex-export-line"); r.append(...kids); return r; };
+    const opener = (label, pdf, reveal, status) => mkButton(label, "ws-text-link", async () => {
+      try { await apiPost("/api/open", { path: pdf, reveal: reveal }); setStatus(status, "", ""); } catch (err) {
+        setStatus(status, "err", reveal ? t("无法在 Finder 中显示") : t("无法打开"), err);
+      }
+    });
+    const settings = () => apiGet("/api/latex/export?path=" + encodeURIComponent(path)).then((seen) => {
+      const parts = [];
+      if (seen.main) parts.push(mk("span", null, t("主文件")), mk("span", "mono", seen.main));
+      if (seen.engine) {
+        kept = seen.engine;
+        if (!chosen) engine.value = seen.engine;
+        parts.push(mk("span", null, t("排版引擎")), engine);
+      }
+      if (seen.last) {
+        const status = mk("span", "notice-status");
+        parts.push(mk("span", null, t("导出的 PDF")), mk("span", "mono", seen.last.pdf), opener(t("打开 PDF"), seen.last.pdf, false, status), status);
+      }
+      settingsLine.replaceChildren(...parts);
+      settingsLine.classList.toggle("hidden", !parts.length);
+    }, () => settingsLine.classList.add("hidden"));
+
+    function show(r) {
+      const parts = [], status = mk("span", "notice-status");
+      if (r.ask === "main") {
+        parts.push(mk("p", "node-sub", r.message ? t("找不到包含这个文件的主文件（带 {command} 的 .tex）。", { command: "\\documentclass" })
+          : t("有几个主文件包含这个文件。导出哪一个？")));
+        parts.push(row(...(r.mains || []).map((m) => mkButton(m, "ws-text-link mono", () => run({ main: m })))));
+      } else if (r.ask === "replace") {
+        parts.push(mk("p", "node-sub", t("{file} 不是上次导出的文件，要替换它吗？", { file: r.file })));
+        parts.push(row(mkButton(t("替换"), "btn btn-small", () => run({ main: r.main, pdf: "replace" })),
+          mkButton(t("另存为 {file}", { file: r.save_as }), "btn btn-small", () => run({ main: r.main, pdf: "save_as" }))));
+      } else if (r.exported) {
+        parts.push(row(mk("span", null, t("已导出 {pdf}", { pdf: r.pdf })), opener(t("打开 PDF"), r.pdf, false, status),
+          opener(t("在 Finder 中显示"), r.pdf, true, status), status));
+      } else {
+        const stopped = r.stopped === "stopped";
+        parts.push(mk("p", stopped ? "node-sub" : "latex-export-failed",
+          stopped ? t("已停止导出。") : r.stopped === "timeout" && r.message ? r.message : t("导出没有成功")));
+        const errors = mk("ul", "latex-export-errors");
+        (r.errors || []).forEach((e) => {
+          const li = mk("li", null), where = e.file + ":" + e.line;
+          li.append(e.path ? mkButton(where, "ws-text-link mono", () => openAt(e.path, e.line)) : mk("span", "mono", where), " ", mk("span", null, e.text));
+          errors.appendChild(li);
+        });
+        if (errors.children.length) parts.push(errors);
+      }
+      if (r.missing_message) parts.push(mk("p", "latex-export-warn", r.missing_message));
+      (r.notes || []).forEach((note) => parts.push(mk("p", "node-sub", note)));
+      if (r.log && !r.exported && !r.ask) {
+        const fold = mk("details", "dc-fold"), pre = mk("pre", "latex-held");
+        pre.textContent = r.log;
+        fold.append(mk("summary", null, t("详情")), pre);
+        parts.push(fold);
+      }
+      result.replaceChildren(...parts);
+      lastShown = { path: path, r: r };
+    }
+
+    async function run(extra) {
+      if (running) return;
+      running = true; button.disabled = true;
+      try {
+        if (before && !(await before())) { result.replaceChildren(mk("p", "notice-status err", t("文稿没有保存，所以没有导出。"))); return; }
+        const using = chosen || kept;
+        const stop = mkButton(t("停止"), "ws-text-link", () => { stop.disabled = true; apiPost("/api/latex/export/stop", {}).catch(() => { stop.disabled = false; }); });
+        result.replaceChildren(row(mk("span", "notice-status", using ? t("正在用 {engine} 导出…", { engine: ENGINE_NAMES[using] }) : t("正在导出…")), stop));
+        let r;
+        try {
+          r = await apiPost("/api/latex/export", Object.assign({ project: state.currentPath, path: path }, chosen ? { engine: chosen } : {}, extra));
+        } catch (err) {
+          const s = mk("div", "notice-status");
+          setStatus(s, "err", t("导出没有成功"), err);
+          result.replaceChildren(s);
+          return;
+        }
+        if (r.engine) chosen = null;   // the server keeps the person's engine for this main file from now on
+        show(r);
+        settings();
+      } finally { running = false; button.disabled = false; }
+    }
+
+    settings();
+    if (lastShown && lastShown.path === path) show(lastShown.r);
+    return { button: button, block: block };
+  }
+
   // -- the pages outside the editor (22.2 "What is shown") ------------------------------------------------------
 
   function pageState(state) {
@@ -849,13 +978,13 @@
   }
 
   // A project switch or the editor's view dropped: nothing of the previous project stays open.
-  function reset() { discard(); fromView = null; }
+  function reset() { discard(); fromView = null; lastShown = null; }
 
   if (typeof window.addEventListener === "function") window.addEventListener("focus", () => { checkRevision(); });
 
   window.ROLatex = Object.freeze({
     loadEditorLibs: loadEditorLibs, open: open, isDirty: dirty, mayClose: mayClose, section: section, reset: reset,
-    renderSupported: renderSupported, paperCounts: paperCounts, refresh: refresh,
+    renderSupported: renderSupported, paperCounts: paperCounts, refresh: refresh, exporter: exporter,
     _vendorScripts: VENDOR_SCRIPTS, _passages: () => (ed && ed.view ? passagesOf(ed) : null),
     _pure: Object.freeze({ cpLength: cpLength, serverEdits: serverEdits, breakFilter: breakFilter, includeMatches: includeMatches, positions: positions }),
   });

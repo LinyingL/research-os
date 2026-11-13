@@ -393,6 +393,26 @@ def _chosen(key: str, item: str, value: Any, allowed: list[str] | tuple[str, ...
     return kept.get(item) if kept.get(item) in allowed else None
 
 
+def choices(root: str | Path, path: Any) -> dict[str, Any]:
+    """The export's settings line (22.4), read without running or writing anything: the main file (None while the
+    person has to choose), the main files to choose from, the engine (the one kept, else the preset) and the main
+    file's last export when its PDF is still there (「导出的 PDF」)."""
+    root = workspace._root(root)  # noqa: SLF001
+    rel = latex_edit.checked_path(root, path)
+    pid = workspace._require_write(root)  # noqa: SLF001
+    mains = latex_edit.main_files(root, rel)
+    options = mains or latex_edit.every_main(root)
+    main = _chosen(MAIN_SETTING, f"{pid}/{rel}", None, options) or (mains[0] if len(mains) == 1 else None)
+    answer: dict[str, Any] = {"main": main, "mains": options, "engine": None, "engines": list(ENGINES), "last": None}
+    if main is not None:
+        _known, text_of = latex_edit.tex_reader(root)
+        answer["engine"] = (_chosen(ENGINE_SETTING, f"{pid}/{main}", None, ENGINES)
+                            or preset_engine(_closure(root, latex_edit.checked_path(root, main), text_of), text_of))
+        done = [e for e in papers.exports(root) if e["main"] == main and (root / e["pdf"]).is_file()]
+        answer["last"] = {"pdf": done[-1]["pdf"], "at": done[-1]["at"]} if done else None
+    return answer
+
+
 def export(root: str | Path, body: Any, lang: str = "zh", *, guard: Callable[[], Any] | None = None,
            timeout: float = TIMEOUT_S) -> dict[str, Any]:
     """「导出 PDF」 (22.4) for `{path, main?, engine?, pdf?}`: an answer that exports, asks (`ask`: `main` with the

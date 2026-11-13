@@ -82,6 +82,8 @@ CLAY_SELECTORS: dict[str, str] = {
     ".ws-run-group.ws-oob li": OUT_OF_BOUNDS + ": its lines",
     ".ws-step.bad .ws-step-kind": ERROR + ": a step of a run that failed",
     ".ws-step.bad .ws-step-text": ERROR + ": its words",
+    # the LaTeX editor (DESIGN.md 22.7)
+    ".latex-export-failed": ERROR + ": 导出没有成功, an export to PDF that failed (22.4)",
 }
 
 #: The scripts' own uses: a tone named "clay" that the page draws as `tone-clay` (a state word, a frame, a card) -- each line that

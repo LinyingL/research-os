@@ -1901,6 +1901,22 @@
     "在编辑器里打开": "Open in the editor",
     "已撤销": "Undone",
     "选中的文字在新版本里找不到了，请重新选择": "The selected words are not in the new version; select them again",
+    // Export to PDF (DESIGN.md 22.4, 22.6; task V17 B2b)
+    "导出 PDF": "Export PDF",
+    "导出的 PDF": "Exported PDF",
+    "主文件": "Main file",
+    "排版引擎": "Typesetting engine",
+    "正在用 {engine} 导出…": "Exporting with {engine}…",
+    "正在导出…": "Exporting…",
+    "文稿没有保存，所以没有导出。": "The draft was not saved, so it was not exported.",
+    "导出没有成功": "The export did not succeed",
+    "已停止导出。": "The export was stopped.",
+    "已导出 {pdf}": "Exported {pdf}",
+    "{file} 不是上次导出的文件，要替换它吗？": "{file} is not the last export. Replace it?",
+    "替换": "Replace",
+    "另存为 {file}": "Save as {file}",
+    "找不到包含这个文件的主文件（带 {command} 的 .tex）。": "No main file (a .tex with {command}) includes this file.",
+    "有几个主文件包含这个文件。导出哪一个？": "Several main files include this file. Which one should be exported?",
 
   };
 

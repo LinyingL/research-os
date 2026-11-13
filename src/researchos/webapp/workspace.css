@@ -378,3 +378,11 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-candidate { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: .3rem; }
 .latex-counts { margin: 0; }
 .latex-excerpt { color: var(--ink-soft); }
+/* 导出 PDF (DESIGN.md 22.4, 22.7): a failed export in clay, a character the fonts lack in ochre, the rest ink */
+.latex-export { display: flex; flex-direction: column; align-items: flex-start; gap: .3rem; font-size: .86rem; }
+.latex-export:empty, .latex-export-result:empty { display: none; }
+.latex-export-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .9rem; margin: 0; }
+.latex-engine { width: auto; padding: .1rem .3rem; font-size: .8rem; }
+.latex-export-failed { margin: 0; color: var(--clay); font-weight: 600; }
+.latex-export-warn { margin: 0; border-left: 2px solid var(--ochre); padding-left: .6rem; }
+.latex-export-errors { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .2rem; }

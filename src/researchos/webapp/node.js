@@ -441,10 +441,12 @@
     if (marks.childElementCount) head.appendChild(marks);
     const actions = mk("div", "node-actions");
     const status = mk("div", "notice-status");
+    let exporter = null;   // 22.4: 导出 PDF on a .tex draft's own page, its settings line and result under the head
     if (page.path && page.exists) {
       actions.appendChild(mkButton(t("查看内容"), "ws-text-link", () => openFilePanel(page.path, page.type === "script" ? "script" : undefined)));
       // 22.1: a .tex draft opens in the LaTeX editor, beside 查看内容 (the editor's server validator decides what it may open)
       if (/\.tex$/.test(page.path) && window.ROLatex) actions.appendChild(mkButton(t("编辑"), "ws-text-link", () => ROLatex.open(page.path)));
+      if (/\.tex$/.test(page.path) && window.ROLatex) { exporter = ROLatex.exporter(page.path); actions.appendChild(exporter.button); }   // 22.4
       actions.appendChild(mkButton(t("打开"), "btn btn-small", () => openFile(page.path, false, status)));
       actions.appendChild(mkButton(t("在 Finder 中显示"), "btn btn-small", () => openFile(page.path, true, status)));
     }
@@ -470,6 +472,7 @@
     }
     if (actions.childElementCount) head.append(actions, status);
     host.appendChild(head);
+    if (exporter) host.appendChild(exporter.block);
     renderDetails(host, page);
   }
 
