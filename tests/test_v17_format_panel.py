@@ -183,7 +183,7 @@ def pure() -> dict:
     return json.loads(done.stdout)
 
 
-CROSSING = {"refused": "选中的文字跨过了括号或环境的边界，不能整段加格式。请重新选择。"}
+CROSSING = {"refused": "选中的文字有一部分在别的格式里，不能整段加格式。请只选同一种格式里的文字。"}   # review: said by what is shown
 
 
 # -- 文字: 加粗, 斜体, 下划线 ------------------------------------------------------------------------------------------
@@ -196,7 +196,7 @@ def test_a_selection_is_wrapped_and_the_same_command_unwraps_it_like_word(pure):
     assert s["unwrapText"]["text"] == "a «bold» b"
     assert s["unwrapWhole"]["text"] == "a «bold» b"
     assert s["unwrapAtCursor"]["text"] == "a bo|ld b"
-    assert s["emptyInserts"]["text"] == "a \\underline{|} b"
+    assert s["emptyInserts"]["text"] == "a \\uline{|} b"                  # review: \uline breaks across lines (ulem)
     assert s["otherCommandWraps"]["text"] == "a \\textbf{\\textit{«bold»}} b"
     assert s["nestedWrap"]["text"] == "\\textbf{a \\textit{«b»} c}"
     assert s["inCaption"]["text"] == "\\caption{a \\textbf{«b»} c}"
@@ -209,10 +209,11 @@ def test_a_selection_that_crosses_a_brace_a_name_an_environment_a_formula_or_a_c
     for case in ("acrossBraces", "acrossArgument", "acrossCommandName", "acrossEnvironment", "acrossFormula", "intoComment",
                  "escapedBrace"):
         assert s[case] == CROSSING or "refused" in s[case], case
-    for case in ("acrossBraces", "acrossArgument", "acrossEnvironment", "escapedBrace"):
+    for case in ("acrossBraces", "acrossArgument", "acrossEnvironment"):
         assert s[case] == CROSSING, case
-    assert s["intoComment"] == {"refused": "光标在注释或原样照排的文字里，这里不能用格式与插入。"}
-    assert s["acrossCommandName"] == {"refused": "光标在命令 \\textbf 的名字里。请把光标移开。"}
+    assert s["escapedBrace"] == {"refused": "光标在 LaTeX 命令里。请把光标移开。"}   # review: between \\ and what it escapes
+    assert s["intoComment"] == {"refused": "光标在注释或原样照排的文字里，这里不能用格式工具。"}
+    assert s["acrossCommandName"] == {"refused": "光标在 LaTeX 命令里。请把光标移开。"}
     assert s["acrossFormula"] == {"refused": "光标在公式里。请把光标移到公式外面。"}
     assert s["acrossParagraphs"] == {"refused": "选中的文字跨了段落，不能整段加这个格式。"}
 
@@ -222,9 +223,9 @@ def test_where_a_style_makes_no_sense_it_says_why_in_a_quiet_sentence(pure):
     s = pure["style"]
     assert s["inFormula"] == {"refused": "光标在公式里。请把光标移到公式外面。"}
     assert s["inPreamble"] == {"refused": "光标在导言区里。请把光标放到正文里。"}
-    assert s["afterDocument"] == {"refused": "光标在文稿结尾（\\end{document}）之后。请把光标放到正文里。"}
-    assert s["inLabel"] == {"refused": "光标在 \\label 的参数里，这里不能用这个工具。"}
-    assert s["inCite"] == {"refused": "光标在 \\cite 的参数里，这里不能用这个工具。"}
+    assert s["afterDocument"] == {"refused": "光标在正文结束之后。请把光标放到正文里。"}   # review: no command named (22.12 B1)
+    assert s["inLabel"] == {"refused": "这里不能用这个工具。"}
+    assert s["inCite"] == {"refused": "这里不能用这个工具。"}
 
 
 # -- 字体 and 字号 -------------------------------------------------------------------------------------------------
@@ -292,14 +293,15 @@ def test_chapter_is_only_for_a_class_with_chapters_and_a_heading_with_a_blank_li
     assert h["blankRefused"] == {"refused": "标题里不能有空行：选中的文字跨了段落。"}
     assert h["structuralRefused"] == {"refused": "这一行是命令或环境，不能变成标题。"}
     assert h["inListRefused"] == {"refused": "光标在列表里，不能把这一段变成标题。"}
-    assert h["inArgumentRefused"] == {"refused": "光标在 \\textbf 的参数里，这里不能用这个工具。"}
+    assert h["inArgumentRefused"] == {"refused": "这里不能用这个工具。"}
 
 
 @needs_node
 def test_the_chapter_classes_and_the_packages_are_read_from_the_preamble_outside_comments(pure):
     ctexbook, demo, beamer, report, empty = pure["facts"]
     assert ctexbook == {"cls": "ctexbook", "chapters": True, "ctex": True, "graphicx": False, "booktabs": True,
-                        "amsmath": True, "url": False, "graphicspath": ["fig/", "../img/"]}   # amsmath and url: A2
+                        "amsmath": True, "url": False, "graphicspath": ["fig/", "../img/"],   # amsmath and url: A2
+                        "ulem": False, "cjkUnderline": False, "cjk": True}                    # 下划线's packages: review
     assert demo["graphicx"] is True and demo["chapters"] is False and demo["ctex"] is False
     assert beamer["graphicx"] is True
     assert report["chapters"] is True and report["ctex"] is True and report["graphicx"] is True   # tikz loads graphicx
@@ -322,8 +324,8 @@ def test_a_figure_goes_on_lines_of_its_own_and_the_cursor_lands_where_the_text_g
     assert f["labelUnique"]["text"].count("\\label{fig:a-2}") == 1
     assert f["crlf"]["file"] == "Text\r\n" + FIGURE.replace("\n", "\r\n") + "\r\nnext"
     assert f["atEnd"]["text"] == "Text\n" + FIGURE + "\n|"
-    assert f["inArgument"] == {"refused": "光标在 \\caption 的参数里，这里不能用这个工具。"}
-    assert f["inTabular"] == {"refused": "光标在 tabular 环境里，这里不能用这个工具。"}
+    assert f["inArgument"] == {"refused": "图注里不能用这个工具。"}
+    assert f["inTabular"] == {"refused": "光标在并排的小块或分栏里，这里不能插入图片或表格。"}   # review: a float there is lost
 
 
 @needs_node
@@ -367,9 +369,9 @@ def test_a_table_has_its_header_rule_only_with_a_header_and_booktabs_only_where_
 @needs_node
 def test_formulas_lists_footnotes_and_citations_are_typed_as_their_commands(pure):
     m, li = pure["math"], pure["list"]
-    assert m["inlineWrap"]["text"] == "a $«x+y»$ b" and m["inlineEmpty"]["text"] == "a $|$ b"
+    assert m["inlineWrap"]["text"] == "a $«x+y»$ b" and m["inlineEmpty"]["text"] == "a \\(|\\) b"   # review: an empty "$$" opened a displayed formula
     assert m["displayWrap"]["text"] == "a \n\\begin{equation}\nx+y|\n\\end{equation}\n b"
-    assert m["displayEmpty"]["text"] == "Text\n\\begin{equation}\n|\n\\end{equation}"
+    assert m["displayEmpty"]["text"] == "Text\n\\begin{equation}\n|\\end{equation}"   # review: no blank line in it
     assert m["displayAcross"] == {"refused": "选中的文字跨了段落，不能整段加这个格式。"}
     assert li["wrapLines"]["text"] == "\\begin{itemize}\n  \\item one\n  \\item two\n  \\item three|\n\\end{itemize}\nafter"
     assert li["wrapPartOfLine"]["text"] == "\\begin{enumerate}\n  \\item alpha|\n\\end{enumerate}\nbeta"
@@ -383,7 +385,7 @@ def test_formulas_lists_footnotes_and_citations_are_typed_as_their_commands(pure
 
 @needs_node
 def test_a_caption_is_escaped_so_it_cannot_break_the_file(pure):
-    assert pure["escape"] == "50\\% of \\$x \\& y\\_1 \\{a\\} \\~{}\\^{}\\textbackslash{} \\# two"
+    assert pure["escape"] == "50\\% of \\$x \\& y\\_1 \\{a\\} \\textasciitilde{}\\textasciicircum{}\\textbackslash{} \\# two"   # review: as typing escapes
 
 
 # -- the panel on the page ---------------------------------------------------------------------------------------
@@ -584,7 +586,7 @@ def test_a_tool_is_one_transaction_of_the_editor_undone_by_cmd_z_saved_as_typed_
 def test_cmd_b_cmd_i_and_cmd_u_run_the_tools_before_codemirrors_own_bindings(panel):
     assert panel["modI"] >= 2 and panel["modU"] >= 2          # ours first, CodeMirror's after
     # each wraps the one before's text, which stays selected: Mod-i, then Mod-u, then Mod-b
-    assert panel["afterKeys"] == "Some \\textbf{text} here.\n\\textit{\\underline{\\textbf{Second}}} line.\n"
+    assert panel["afterKeys"] == "Some \\textbf{text} here.\n\\textit{\\uline{\\textbf{Second}}} line.\n"
 
 
 @needs_node
@@ -592,9 +594,9 @@ def test_the_selects_apply_a_font_a_size_and_a_level_and_show_what_the_cursor_is
     assert panel["afterFont"].startswith("Some \\textbf{text} \\texttt{here}.") and panel["fontShown"] == "texttt"
     assert panel["afterSize"].startswith("Some \\textbf{text} \\texttt{{\\large here}}.")   # the font's text stayed selected
     assert panel["afterHeading"]["doc"].startswith(       # the paragraph's two lines are its text
-        "\\chapter{Some \\textbf{text} \\texttt{{\\large here}}.\n\\textit{\\underline{\\textbf{Second}}} line.}\n")
+        "\\chapter{Some \\textbf{text} \\texttt{{\\large here}}.\n\\textit{\\uline{\\textbf{Second}}} line.}\n")
     assert panel["afterHeading"]["level"] == "chapter"
-    assert panel["refused"]["hidden"] is False and panel["refused"]["text"].startswith("选中的文字跨过了括号")
+    assert panel["refused"]["hidden"] is False and panel["refused"]["text"].startswith("选中的文字有一部分在别的格式里")
     assert panel["refused"]["doc"] == panel["afterHeading"]["doc"]
 
 
@@ -766,7 +768,7 @@ const build = (start, chinese) => {
   const cursor = (word, end) => { const at = st.doc.toString().indexOf(word); if (at < 0) throw new Error('no ' + word); st = st.update({selection: {anchor: at + (end ? word.length : 0)}}).state; };
   select('BOLD'); apply(P.styleSpec(st, 'textbf'));
   select('ITALIC'); apply(P.styleSpec(st, 'textit'));
-  select('UNDER'); apply(P.styleSpec(st, 'underline'));
+  select('UNDER'); apply(P.styleSpec(st, 'underline', {engine: chinese ? 'xelatex' : 'pdflatex', cjk: chinese, isMain: true}));
   cursor('EMPTY'); apply(P.styleSpec(st, 'textbf'));
   st = st.update({changes: {from: st.selection.main.head, insert: 'typed'}}).state;
   select('SANS'); apply(P.fontSpec(st, 'textsf'));
@@ -824,11 +826,13 @@ def built() -> dict:
 @needs_node
 def test_the_documents_built_by_the_tools_hold_every_insertion(built):
     xe, pdf = built["xe"], built["pdf"]
+    # review: 下划线 is \uline (ulem), or \CJKunderline (xeCJKfntef) in a XeLaTeX document with Chinese, its package added
+    assert "\\usepackage{xeCJKfntef}" in xe and "\\usepackage[normalem]{ulem}" in pdf
     for doc in (xe, pdf):
-        for piece in ("\\textbf{BOLD}", "\\textit{ITALIC}", "\\underline{UNDER}", "\\textbf{typed}", "\\textsf{SANS}", "\\texttt{MONO}",
+        for piece in ("\\textbf{BOLD}", "\\textit{ITALIC}", ("\\CJKunderline{UNDER}" if doc is xe else "\\uline{UNDER}"), "\\textbf{typed}", "\\textsf{SANS}", "\\texttt{MONO}",
                       "{\\small SMALL}", "{\\Large LARGE}", "\\section{Section heading}", "\\subsection{Sub heading}",
                       "\\subsubsection{Subsub heading}", "\\usepackage{graphicx}", "\\usepackage{booktabs}", "\\toprule\ncell& & \\\\\n\\midrule",
-                      "$x^2$", "\\begin{equation}\nE = mc^2\n\\end{equation}", "$y$", "\\begin{itemize}\n  \\item first item\n  \\item second item\n\\end{itemize}",
+                      "$x^2$", "\\begin{equation}\nE = mc^2\n\\end{equation}", "\\(y\\)", "\\begin{itemize}\n  \\item first item\n  \\item second item\n\\end{itemize}",
                       "\\begin{enumerate}\n  \\item one\n\\end{enumerate}", "\\footnote{A note.}", "\\cite{knuth1984,lamport1994}",
                       "\\caption{A plot \\& 50\\% of it}"):
             assert piece in doc, piece

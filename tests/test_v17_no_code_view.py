@@ -154,7 +154,7 @@ const fill = (tpl, zh) => {
   para(zh ? '甲乙 丙丁 戊己 庚辛 壬癸。' : 'Alpha beta gamma delta epsilon.');
   word(zh ? '丙丁' : 'beta'); run('bold', (s) => P.styleSpec(s, 'textbf'));
   word(zh ? '戊己' : 'gamma'); run('italic', (s) => P.styleSpec(s, 'textit'));
-  word(zh ? '庚辛' : 'delta'); run('underline', (s) => P.styleSpec(s, 'underline'));
+  word(zh ? '庚辛' : 'delta'); run('underline', (s) => P.styleSpec(s, 'underline', {engine: zh ? 'xelatex' : 'pdflatex', cjk: zh, isMain: true}));
   word(zh ? '壬癸' : 'epsilon'); run('font', (s) => P.fontSpec(s, zh ? 'heiti' : 'textsf'));
   word(zh ? '甲乙' : 'Alpha'); run('size', (s) => P.sizeSpec(s, 'large'));
   para(zh ? '方法与数据' : 'Methods and data'); word(zh ? '方法与数据' : 'Methods and data', 2); sel(st.selection.main.head); run('section', (s) => P.headingSpec(s, 'section', false));
@@ -253,7 +253,7 @@ def test_the_corpus_is_every_tool_of_steps_a_a2_and_a3_applied_to_both_templates
     assert shown["fails"] == {"zh": [], "en": []}
     zh, en = shown["corpus"]["zh"], shown["corpus"]["en"]
     for doc in (zh, en):
-        for written in ("\\textbf{", "\\textit{", "\\underline{", "{\\large ", "\\section{", "\\subsection{", "\\begin{center}", "\\begin{flushright}",
+        for written in ("\\textbf{", "\\textit{", "\\CJKunderline{" if doc is zh else "\\uline{", "{\\large ", "\\section{", "\\subsection{", "\\begin{center}", "\\begin{flushright}",
                         "\\begin{quote}", "$x+y$", "\\begin{equation}", "\\begin{itemize}", "\\begin{enumerate}", "\\footnote{", "\\cite{smith2020,lee2019}",
                         "\\begin{figure}", "\\begin{table}", "\\ref{fig:plot}", "\\url{https://example.org}", "\\clearpage", "\\tableofcontents",
                         "geometry", "twocolumn", "\\pagestyle{plain}", "hyperref", "\\setlength{\\parindent}{2em}", "parskip", "\\counterwithin"):
@@ -657,7 +657,9 @@ inside(side(), (e) => e.attrs && e.attrs.role === 'tab' && e.textContent === '�
 view().dispatch({selection: {anchor: doc().indexOf('here.') + 5}});
 inside(side(), (e) => e.tag === 'button' && e.textContent === '行内')[0].fire('click');
 out.formulaTool = {code: sw().attrs['aria-pressed'], around: doc().slice(view().state.selection.main.head - 1, view().state.selection.main.head + 1)};
-// the edit view will not take back a text it cannot show (the formula is not written yet): it says why, stays in the code
+// the edit view will not take back a text it cannot show (a brace typed in the code and not closed): it says why, stays
+// in the code (the tool's own empty formula, \\(\\), is one it can show)
+view().dispatch({changes: {from: doc().indexOf('Some text'), insert: '{'}});
 sw().fire('click');
 out.unsureBack = {code: sw().attrs['aria-pressed'], why: shownWords(inside(side(), (e) => e.classList.contains('latex-code-why'))[0])};
 // a file the edit view cannot show safely, or one only viewed: opened as code, the switch on and disabled, saying why
@@ -733,8 +735,8 @@ def test_document_details_read_and_write_the_title_author_and_date_in_the_preamb
 
 @needs_node
 def test_a_formula_from_the_tool_is_written_in_show_code_and_an_unsure_text_stays_there(page):
-    assert page["formulaTool"] == {"code": "true", "around": "$$"}
-    assert page["unsureBack"] == {"code": "true", "why": ["这个文件里有没结束的环境或公式，只能显示代码。"]}   # "$$", empty
+    assert page["formulaTool"] == {"code": "true", "around": "(\\"}                  # \\(|\\): review, "$$" opened a display
+    assert page["unsureBack"] == {"code": "true", "why": ["这个文件里有没配对的括号，只能显示代码。"]}   # "{" typed in the code
 
 
 @needs_node

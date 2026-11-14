@@ -406,6 +406,7 @@ def writes() -> dict:
 
 
 A = "\\documentclass{article}\n\\usepackage{amsmath}\n"
+A_A4 = A.replace("{article}", "[a4paper]{article}")   # review: geometry or hyperref added to a class naming no paper keeps it A4
 FULL = ("\\documentclass[a4paper,12pt]{article}\n\\usepackage[margin=2cm]{geometry} % page\n\\usepackage{setspace}\n\\onehalfspacing\n"
         "\\setlength{\\parindent}{0pt}\n\\usepackage[skip=0.5\\baselineskip,indent]{parskip}\n\\pagestyle{plain}\n"
         "\\usepackage[hidelinks]{hyperref}\n\\title{T}\n")
@@ -414,12 +415,12 @@ FULL = ("\\documentclass[a4paper,12pt]{article}\n\\usepackage[margin=2cm]{geomet
 @needs_node
 def test_a_new_setting_goes_on_a_line_of_its_own_after_the_last_usepackage_or_into_the_class_options(writes):
     add = writes["add"]
-    assert add["margin"]["pre"] == A + "\\usepackage[margin=2.5cm]{geometry}\n"
-    assert add["custom"]["pre"] == A + "\\usepackage[top=2cm,bottom=2.5cm,left=3cm,right=1.75cm]{geometry}\n"
+    assert add["margin"]["pre"] == A_A4 + "\\usepackage[margin=2.5cm]{geometry}\n"
+    assert add["custom"]["pre"] == A_A4 + "\\usepackage[top=2cm,bottom=2.5cm,left=3cm,right=1.75cm]{geometry}\n"
     assert add["columns"]["pre"] == "\\documentclass[twocolumn]{article}\n\\usepackage{amsmath}\n"
     assert add["plain"]["pre"] == A + "\\pagestyle{plain}\n"
     assert add["empty"]["pre"] == A + "\\usepackage{nopageno}\n"
-    assert add["hyperref"]["pre"] == A + "\\usepackage[hidelinks]{hyperref}\n"
+    assert add["hyperref"]["pre"] == A_A4 + "\\usepackage[hidelinks]{hyperref}\n"
     assert add["size"]["pre"] == "\\documentclass[11pt]{article}\n\\usepackage{amsmath}\n"
     assert add["spacing"]["pre"] == A + "\\usepackage{setspace}\n\\setstretch{1.5}\n"
     assert add["spacingCustom"]["pre"] == A + "\\usepackage{setspace}\n\\setstretch{1.4}\n"
@@ -443,9 +444,9 @@ def test_ctex_takes_its_own_line_spread_and_chinese_sizes(writes):
 @needs_node
 def test_hyperref_is_loaded_last_but_before_a_package_that_must_follow_it(writes):
     add = writes["add"]
-    assert add["beforeHyperref"]["pre"] == ("\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage[margin=3cm]{geometry}\n"
+    assert add["beforeHyperref"]["pre"] == ("\\documentclass[a4paper]{article}\n\\usepackage{amsmath}\n\\usepackage[margin=3cm]{geometry}\n"
                                             "\\usepackage[hidelinks]{hyperref}\n")
-    assert add["hyperrefBeforeCleveref"]["pre"] == ("\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage[hidelinks]{hyperref}\n"
+    assert add["hyperrefBeforeCleveref"]["pre"] == ("\\documentclass[a4paper]{article}\n\\usepackage{amsmath}\n\\usepackage[hidelinks]{hyperref}\n"
                                                     "\\usepackage{cleveref}\n")
 
 
@@ -481,8 +482,9 @@ def test_back_to_default_removes_only_what_the_tool_would_have_written(writes):
     assert rm["pagestyle"]["pre"] == FULL.replace("\\pagestyle{plain}\n", "")
     assert rm["hyperref"]["pre"] == FULL.replace("\\usepackage[hidelinks]{hyperref}\n", "")
     assert rm["columns"]["pre"] == "\\documentclass{article}\n"
-    assert rm["marginKeepsPaper"]["pre"] == "\\documentclass{article}\n\\usepackage[a4paper]{geometry}\n"
-    assert rm["marginGeometryCommand"]["pre"] == "\\documentclass{article}\n\\usepackage{geometry}\n"
+    # review: geometry with more than margins would keep its own margins, not the class's: 默认 is refused there
+    assert rm["marginKeepsPaper"] == {"refused": "geometry 宏包还有别的设置，页边距回不到文档类的默认。请选一个页边距。"}
+    assert rm["marginGeometryCommand"]["pre"] == "\\documentclass{article}\n"                # its bare \usepackage{geometry} goes too
     assert rm["marginUsedInBody"]["pre"] == "\\documentclass{article}\n\\usepackage{geometry}\n"   # \newgeometry still needs it
     assert rm["hyperrefShared"]["pre"] == "\\documentclass{article}\n\\usepackage{amsmath}\n"
     assert rm["hyperrefNeeded"] == {"refused": "文稿用到了 \\href，它需要 hyperref，不能关掉超链接。"}
@@ -645,7 +647,7 @@ def test_block_quote_page_break_and_contents_are_typed_as_their_commands(para):
     assert para["quote"][1] == "One te|xt\n"
     assert para["quote"][2] == {"refused": "光标在公式里。请把光标移到公式外面。"}
     assert para["page"][0] == "Text\n\\clearpage\n|more"
-    assert para["page"][1]["refused"].startswith("光标在 \\caption 的参数里")
+    assert para["page"][1]["refused"] == "图注里不能用这个工具。"                  # review: said by what is shown
     toc = para["toc"]
     assert toc[0] == "\\documentclass{article}\n\\begin{document}\n\\maketitle\n\\tableofcontents|\nText\n\\end{document}"
     assert toc[1] == "\\documentclass{article}\n\\begin{document}\nText\n\\tableofcontents\n|\\end{document}"
@@ -656,7 +658,7 @@ def test_block_quote_page_break_and_contents_are_typed_as_their_commands(para):
 @needs_node
 def test_a_cross_reference_and_a_web_address_are_typed_as_their_commands(para):
     assert para["ref"][0] == "See \\ref{fig:a}|" and para["ref"][1] == "See x\\eqref{eq:a}|"
-    assert para["ref"][2]["refused"].startswith("光标在 \\cite 的参数里")
+    assert para["ref"][2]["refused"] == "这里不能用这个工具。"
     url = para["url"]
     assert url[0] == "See \\url{https://a.org/x?a=1#b}|"
     assert url[1] == "See \\url{https://a.org}| now"                           # the selected address becomes the link
@@ -892,7 +894,7 @@ def test_heading_numbers_and_captions_on_the_page_say_what_a_document_cannot_tak
     assert within["secnum"]["labels"][2] == "不编号：图表按章或节编号时不能选"
     after = n["after"]
     assert "\\setcounter{secnumdepth}{0}\n" in after["pre"] and "counterwithin" not in after["pre"]
-    assert after["secnum"]["value"] == "none" and after["secnum"]["note"] == ["不编号时，\\ref 引用章节印不出编号。"]
+    assert after["secnum"]["value"] == "none" and after["secnum"]["note"] == ["不编号时，交叉引用章节印不出编号。"]
     assert after["capnum"]["off"] == ["within"] and after["capnum"]["labels"][1] == "按章或节编号（图 2-3）：章节不编号时不能选"
     assert after["steps"] == 3                                                       # one undo step each
     c = panel["ctex"]

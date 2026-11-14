@@ -398,7 +398,7 @@ const said = () => [byClass('latex-words').textContent, byClass('latex-save-stat
 out.opened = said();
 const main = byClass('latex-main'), body = byClass('latex-body'), side = byClass('latex-side');
 out.columns = {body: body.children.map((c) => c.className), main: main.children.map((c) => c.className.split(' ')[0]),
-  side: side.children.map((c) => c.className || c.textContent), hint: side.children.slice(1).map((c) => c.textContent)};
+  side: side.children.map((c) => c.className || c.textContent), hint: side.children[1].children.map((c) => c.textContent)};   // under the panel, in its own box (review)
 V.dispatch({changes: {from: TEXT.indexOf('words'), insert: 'more '}});
 out.typed = said();
 timers[timers.length - 1]();                                            // a moment after typing stops

@@ -202,8 +202,13 @@ def format_facts(root: Path, rel: str, mains: list[str]) -> dict[str, Any]:
     if main:
         _known, text_of = tex_reader(root, [main])
         text = text_of(main)
-        at = text.find("\\begin{document}")
-        preamble = (text if at < 0 else text[:at])[:PREAMBLE_LIMIT]
+        # the first \\begin{document} outside a comment (positions kept), as TeX reads it
+        at = "\n".join(line if (cut := uncommented(line)) == line else cut + " " * (len(line) - len(cut))
+                        for line in text.split("\n")).find("\\begin{document}")
+        whole = text if at < 0 else text[:at]
+        preamble = whole[:PREAMBLE_LIMIT]
+        if len(whole) > PREAMBLE_LIMIT:
+            facts["cut"] = True   # 版式 cannot read all of it: the page says so rather than show defaults
         if main != rel:
             facts["preamble"] = preamble
         facts["local"] = local_styles(root, main, preamble)
@@ -1103,17 +1108,22 @@ def insertables(root: str | Path, rel: Any, what: Any) -> dict[str, Any]:
             own = _own_paper(root, rel)
         except (WorkspaceError, OSError, ValueError):
             own = {files_ingest.fold(rel)}
-        images, walked = [], 0
+        images, walked, cut = [], 0, False
         for path, _category in files_ingest.iter_files(root):
             walked += 1
             if walked > _FILE_WALK_LIMIT or len(images) > INSERT_LIMIT:
+                cut = True   # the list is not the whole project: `more` says so, and the page says to search
                 break
             if path.lower().endswith(IMAGE_SUFFIXES) and files_ingest.fold(path) not in own:
-                images.append({"path": path, "thumb": kind_rows.thumbnail(root, path)})
-        return {"images": images[:INSERT_LIMIT], "more": len(images) > INSERT_LIMIT}
+                # a file only in the cloud has no thumbnail: the asset route refuses it (409) and nothing is downloaded
+                thumb = kind_rows.thumbnail(root, path) and not paths.is_dataless(root / path)
+                images.append({"path": path, "thumb": bool(thumb)})
+        return {"images": images[:INSERT_LIMIT], "more": cut or len(images) > INSERT_LIMIT}
     if what == "bib":
-        bibs = [path for path, _c in itertools.islice(files_ingest.iter_files(root), _FILE_WALK_LIMIT)
-                if path.lower().endswith(".bib")][:BIB_FILE_LIMIT]
+        walk = list(itertools.islice(files_ingest.iter_files(root), _FILE_WALK_LIMIT + 1))
+        bibs = [path for path, _c in walk[:_FILE_WALK_LIMIT] if path.lower().endswith(".bib")]
+        cut = len(walk) > _FILE_WALK_LIMIT or len(bibs) > BIB_FILE_LIMIT
+        bibs = bibs[:BIB_FILE_LIMIT]
         _known, text_of = tex_reader(root, bibs)
         entries: list[dict[str, Any]] = []
         seen: set[str] = set()
@@ -1126,7 +1136,7 @@ def insertables(root: str | Path, rel: Any, what: Any) -> dict[str, Any]:
                 entries.append({"key": key, "author": _bib_text(entry.fields.get("author"), 120),
                                 "year": _bib_text(entry.fields.get("year"), 12),
                                 "title": _bib_text(entry.fields.get("title"), 160), "file": bib})
-        return {"files": bibs, "entries": entries[:INSERT_LIMIT], "more": len(entries) > INSERT_LIMIT}
+        return {"files": bibs, "entries": entries[:INSERT_LIMIT], "more": cut or len(entries) > INSERT_LIMIT}
     if what == "labels":
         from researchos import latex_export   # it imports this module
 
