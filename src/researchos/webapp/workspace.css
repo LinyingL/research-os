@@ -366,10 +366,9 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-editor .cm-scroller { font-family: var(--font-mono); font-size: .86rem; line-height: 1.7; }
 .latex-editor .cm-content { padding: .8rem 0; caret-color: var(--ink); }
 .latex-editor .cm-line { position: relative; padding: 0 2.4rem 0 1rem; }
-/* 22.1 like Word (B3b): running text in the sans, commands shown as written in the mono, headings in the serif; formulas
-   by KaTeX, one it cannot typeset as written; cite and ref quiet chips; list items indented with their bullet or number. */
+/* 22.1 like Word (B3b; B1 of 22.12: no code is ever shown): running text in the sans, headings in the serif; formulas by
+   KaTeX, one it cannot typeset a quiet 公式; cite and ref quiet chips; list items indented with their bullet or number. */
 .latex-editor .cm-content.latex-word { font-family: var(--font-sans); font-size: .95rem; }
-.latex-word .latex-cmd { font-family: var(--font-mono); font-size: .82rem; }
 .latex-word .latex-h { font-family: var(--font-serif); font-weight: 600; }
 .latex-h4, .latex-h5 { font-size: 1rem; }
 .latex-b { font-weight: 600; } .latex-i { font-style: italic; } .latex-u { text-decoration: underline; }
@@ -379,13 +378,11 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 /* an equation's number follows it: KaTeX sets it at the right edge, over the formula's last characters when the column is
    narrow. In the flow, the formula and its number are centred together, so the formula sits half a number to the left. */
 .latex-math-display .katex-display > .katex > .katex-html > .katex-tag { position: static; margin-left: 1.2em; }
-.latex-math-raw { font-family: var(--font-mono); font-size: .82rem; color: var(--ink); }
 .latex-item { display: inline-block; min-width: 1.4em; color: var(--ink-soft); }
 .latex-bullet::before { content: ""; display: inline-block; width: .32em; height: .32em; border-radius: 50%; background: var(--ink-soft); vertical-align: middle; }
 .latex-editor .cm-line.latex-li-1 { padding-left: 2.2rem; } .latex-editor .cm-line.latex-li-2 { padding-left: 3.4rem; }
 .latex-editor .cm-line.latex-li-3 { padding-left: 4.6rem; } .latex-editor .cm-line.latex-li-4 { padding-left: 5.8rem; }
 .latex-preamble { display: flex; align-items: center; width: 100%; padding: .1rem 1rem; background: none; border: 0; text-align: left; font-family: var(--font-sans); font-size: .8rem; color: var(--ink-soft); cursor: pointer; }
-.latex-source[aria-pressed="true"] { color: var(--ink); text-decoration: underline; }
 .latex-include { margin-left: .6rem; font-family: var(--font-sans); font-size: .78rem; color: var(--ink-soft); }
 /* 22.2, 22.7: a found passage dotted in ink, one 待复核 in ochre; the count of its files quiet, in the margin */
 .latex-passage { text-decoration: underline dotted var(--ink); text-underline-offset: 3px; cursor: pointer; }
@@ -498,3 +495,39 @@ div.latex-graphic { display: flex; flex-direction: column; margin: .2rem 0; }
 .latex-graphic-name { font-family: var(--font-mono); font-size: .76rem; }
 .latex-graphic-thumb { max-width: 100%; max-height: 14rem; object-fit: contain; background: var(--paper); border: 1px solid var(--line); }
 span.latex-graphic .latex-graphic-thumb { max-height: 4rem; }
+/* The edit view shows no LaTeX code (DESIGN.md 22.1, 22.12 B1; the researcher, 2026-11-14): 「显示代码」 heads the right
+   column as a switch (aria-pressed), words with an ink edge when on, never a glyph; what is hidden is replaced by quiet
+   words, chips and blocks in the palette's tokens. */
+.latex-switch-row { display: flex; align-items: center; gap: .5rem; }
+.latex-switch { font: inherit; font-size: .84rem; color: var(--ink-soft); background: var(--paper); border: 1px solid var(--line-strong); border-radius: 3px; padding: .15rem .6rem; cursor: pointer; }
+.latex-switch[aria-pressed="true"] { color: var(--ink); border-color: var(--ink); }
+.latex-switch:disabled { cursor: default; }
+.latex-code-why, .latex-context p { margin: 0; }
+.latex-context { display: flex; flex-direction: column; gap: .3rem; width: 100%; }
+.latex-note { display: flex; flex-direction: column; gap: .3rem; width: 100%; }
+.latex-note-text { min-height: 4rem; resize: vertical; font: inherit; font-size: .84rem; }
+.latex-chip-unit, .latex-chip-url { font-style: normal; }
+.latex-chip-block { display: block; margin: .3rem 1rem; padding: .3rem .6rem; text-align: center; }
+.latex-math-tag { font-family: var(--font-sans); font-size: .78rem; color: var(--gray); border: 1px dashed var(--line-strong); border-radius: 3px; padding: 0 .3em; }
+div.latex-math-tag { display: block; width: fit-content; margin: .2rem auto; }
+.latex-note-mark { font-family: var(--font-sans); font-size: .7em; color: var(--ink-soft); cursor: pointer; padding: 0 .1em; }
+.latex-line-mark { display: flex; align-items: center; gap: .6rem; padding: .3rem 1rem; font-family: var(--font-sans); font-size: .76rem; color: var(--gray); }
+.latex-line-mark::after { content: ""; flex: 1; border-top: 1px dashed var(--line); }
+.latex-preamble-block .latex-preamble { cursor: pointer; }
+.latex-verbatim { font-family: var(--font-mono); font-size: .82rem; color: var(--ink); }
+pre.latex-verbatim { margin: .3rem 1rem; padding: .4rem .6rem; background: var(--paper-alt); white-space: pre-wrap; }
+.latex-br { display: block; height: 0; }
+.latex-figure-part { display: inline; }   /* its images a block of their own, 「图 N：」 in the caption's line */
+.latex-figure-part .latex-graphic { display: flex; flex-direction: column; align-items: center; margin: .2rem 0; }
+.latex-figure-part .latex-graphic-thumb { max-height: 14rem; }
+.latex-figure-part .latex-caption-word { display: inline; }
+.latex-editor .cm-content.latex-word .cm-line.latex-figure-line { text-align: center; font-size: .9em; color: var(--ink-soft); }
+.latex-editor .cm-content.latex-word .cm-line.latex-align-c { text-align: center; }
+.latex-editor .cm-content.latex-word .cm-line.latex-align-r { text-align: right; }
+.latex-editor .cm-content.latex-word .cm-line.latex-quote-line, .latex-editor .cm-content.latex-word .cm-line.latex-env-line { padding-left: 2.6rem; padding-right: 2.6rem; }
+.latex-env-head { display: block; font-family: var(--font-sans); font-size: .8rem; font-weight: 600; color: var(--ink-soft); }
+span.latex-abstract-head { display: block; }
+.latex-term { font-weight: 600; margin-right: .3em; }
+.latex-short { font-family: var(--font-sans); font-size: .76rem; font-weight: 400; color: var(--gray); margin-left: .5em; }
+.latex-sc { font-variant: small-caps; } .latex-sup { vertical-align: super; font-size: .75em; } .latex-sub { vertical-align: sub; font-size: .75em; }
+.latex-boxed { border: 1px solid var(--line-strong); padding: 0 .2em; } .latex-strike { text-decoration: line-through; }

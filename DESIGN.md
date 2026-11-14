@@ -7323,7 +7323,7 @@ for nothing. `~/paperleaf` (an unfinished, never-run prototype) is not reused.
 The parts: 22.1 the editor; 22.2 passages and their supporting files; 22.3 the
 kinds of evidence; 22.4 export to PDF; 22.5 a team; 22.6 words; 22.7
 presentation; 22.8 batches and acceptance; 22.9 what the review changed; 22.10
-正文 in the sidebar; 22.11 新建文稿; 22.12 格式与插入.
+正文 in the sidebar; 22.11 新建文稿; 22.12 格式与插入, the page, and the edit view that shows no code (B1).
 
 ### 22.0 Rulings that need the researcher's word
 
@@ -7463,67 +7463,82 @@ presentation; 22.8 batches and acceptance; 22.9 what the review changed; 22.10
   PDF (22.4); nothing else. The server's docstring and 18.1's list of writes
   say so.
 
-**Like Word** (batch B3, needs KaTeX). The text stays the file's LaTeX source;
-only how it looks changes. Where the selection does not touch them:
+**Like Word** (batch B3, needs KaTeX; **the rule rewritten by B1 of 22.12**). The text stays the file's LaTeX
+source; only how it looks changes. The researcher, 2026-11-14: **"我的想法是，编辑的时候是看不到latex代码的，右侧的选项
+打开才能看到代码"**. Asked how, they chose: (1) a 「显示代码」 switch in the right column -- on, the **whole file** is its
+LaTeX code, edited as plain text as before; off, back to the edit view, with **no code anywhere**; (2) formulas are
+typeset in the edit view and **changed only in the code** (not editable there, no formula popup). This replaces the
+earlier rule -- "a construct shows its source as soon as the selection touches it" and "everything else is shown as
+written" -- which B3 and 22.12 B had followed.
 
-- `\section`, `\subsection`, `\subsubsection`, `\chapter`, `\paragraph` and
-  their starred forms are headings in the serif face, the command and braces
-  hidden; `\textbf`, `\textit`, `\emph`, `\underline` are bold, italic,
-  underlined;
-- `$…$`, `\(…\)`, `\[…\]`, `$$…$$` and `equation`, `align`, `gather`,
-  `multline` (starred too) are typeset by KaTeX; one KaTeX cannot typeset is
-  shown as written in the mono face, uncoloured — the PDF is the judge;
-- `\cite` and its forms (`ingest/latex.py:43-50`) are a quiet chip with the
-  key, and author and year when a `.bib` of the project has it; `\ref`,
-  `\eqref`, `\label` a quiet chip with the label;
-- `\includegraphics{…}` is a line with the file's name and, for a png, jpeg,
-  gif or webp the asset route serves, its thumbnail (21.5);
-- `itemize` and `enumerate` items are indented with a bullet or number, the
-  `\item` hidden; `\footnote{…}` a small mark that opens its text in place;
-- comments are in the quiet gray; **the preamble** is folded under
-  「导言区（已折叠，点开）」, said in words with no chevron, and opens as source
-  under 「收起导言区」 *(22.12 B: the folded line names the class and counts the
-  packages, 「导言区：文档类 article，6 个宏包（已折叠，点开）」)*;
-- *(22.12 B, the researcher, 2026-11-14: "我觉得很简陋…还需要优化UI")* **the
-  text is a page**: a centred column of a page's measure (46rem) on the paper,
-  the desk's tone around it, the body at 1rem in the body face with a line
-  height of 1.8, headings in the serif with space above; `\begin{document}`
-  and `\end{document}` are quiet label lines 「正文开始」 / 「正文结束」;
-  `\maketitle` is the title block read from the preamble; an `abstract`'s
-  `\begin` and `\end` are a small heading 「摘要」 over its lines, indented;
-  a `tabular` (alone, or the one in a `table` float, with its caption) is a
-  read-only grid and a `figure` its files with the caption under them;
-  `{\heiti …}`, `{\large …}`, `\textsf`, `\texttt`, `\textrm` are drawn in
-  their face or size, the switch hidden; under the text a quiet status line
-  counts the body's words and says whether it is saved (22.12 B has the rules);
-- **everything else is shown as written**, in the mono face for the command
-  only: a tabular the reader doubts (22.12 B), `\newcommand`, any macro the
-  editor does not know. The editor never guesses what an unknown command means.
+**The edit view** (everything but 显示代码). No LaTeX markup is ever visible, wherever the cursor or the selection
+is; nothing drawn depends on the selection. Every construct the reader knows hides its markup with replace
+decorations, and every hidden range is an **atomic range**: the cursor never stops inside one (where two touch with
+nothing to type between, they are one). What each construct is shown as:
 
-A construct shows its source as soon as the selection touches it. 「显示源码」
-(a text link) turns all of it off for the file. The ranges come from a
-LaTeX range reader written for this (CodeMirror has no LaTeX syntax tree):
-braces, environments, math delimiters, comments and `\verb`, read again only
-over the changed region; the decorations live in a state field, since
-CodeMirror refuses line-crossing replacements from a view plugin. **Typing
-stays under 16 ms a key on a 3,000-line file with 300 formulas.**
+- **inline styles** (`\textbf`, `\textit`, `\emph`, `\underline`, `\textsf`, `\texttt`, `\textrm`, ctex's
+  `{\heiti …}` and the size groups, and the wrappers whose last argument is words: `\textsc`, `\mbox`, `\textcolor` …):
+  the markup hidden, the words styled and editable in place;
+- **headings**: the markup hidden (a short title `[…]` said after it in quiet words), the words editable in the
+  heading's style;
+- **lists**: `\begin`/`\end` hidden, each `\item` a bullet, a number or a description's term; the items' words
+  editable;
+- **quote, center, flushleft, flushright, abstract** and the other environments of running text: the markers hidden,
+  the lines styled (an abstract under a quiet 「摘要」, a theorem under its title);
+- **figures**: the images (21.5's thumbnails) and 「图 N：」 before the caption, whose words are editable; the rest
+  hidden and atomic. A figure the reader doubts (subfigures, no caption) is one unit, its caption's words in a chip;
+- **tables**: a read-only preview with 「表 N：caption」, the table **one atomic unit** (selected and deleted whole; its
+  cells changed in 显示代码, which the right column says, with a link that turns the code on at the table); one the
+  grid reader doubts is a chip 「表格：caption」;
+- **formulas** (`$…$`, `\(…\)`, `\[…\]`, `equation`, `align`, `gather` …): typeset by KaTeX (HTML only, so no TeX
+  reaches the page's text), each **one atomic unit**; one KaTeX cannot typeset, or before KaTeX has loaded, a quiet
+  「公式」 -- never the code. A click selects it, and the right column says 「公式要在「显示代码」里改。」 with the link;
+- `\cite` a chip with author and year from the project's `.bib`, else the key; `\ref` and its like 「第 N 节」, 「图 N」,
+  「表 N」 where the number is known cheaply (a main file; 22.12 B1), else 「引用：key」; `\label` hidden; `\footnote` a small
+  superscript number whose words are shown, and changed, in the right column; `\url` and `\href` a chip with the address
+  or the link's words; `\maketitle` the title block; `\begin{document}` and `\end{document}` the quiet labels 「正文开始」
+  and 「正文结束」; `\newpage`, `\clearpage` a quiet 「分页」 line; `\tableofcontents` 「目录（导出时生成）」;
+- **the preamble** (all before `\begin{document}` in a main file) is not shown: one quiet line 「导言区：文档类 article，
+  6 个宏包」, **not expandable** -- 版式 edits it (22.12, with 文档信息 for `\title`, `\author`, `\date`), 显示代码 shows it;
+- **comments** are hidden entirely (a line or a paragraph of them leaves no trace) and never lost: only a deletion
+  that spans them removes them;
+- **escapes and accents** (`\%`, `\&`, `~`, `\'e`, `\LaTeX{}` …) are their characters, each one unit; `\\` a line break;
+- **anything the reader does not know** (an unknown command or environment, `\verb`, verbatim, tikz, a definition in
+  the body): one atomic quiet chip, 「LaTeX 内容」 or, for a command whose arguments are plain words, those words read-only
+  -- never the command's name. A researcher's words are never hidden without being shown somewhere: verbatim text is
+  shown as it is, in its own quiet block;
+- **line structure**: a paragraph's single line breaks are spaces (none between two CJK characters), a blank line
+  separates paragraphs.
 
-Typing is typing source. The tools -- 加粗, 斜体, 标题, 公式, 引用 (a search
-over the project's `.bib` keys; with no `.bib`, it says so) and the rest -- are
-the right column's 「格式与插入」 (22.12; the toolbar first promised here was
-never built), each the same as typing the command; ⌘B / ⌘I / ⌘U do the first
-three. **Return follows Word**, by where the cursor is:
-- in running text: a new paragraph (a blank line, then the cursor);
-- in a heading's argument: the cursor leaves the braces and a new paragraph
-  starts after the heading;
-- inside any other command's argument (`\textbf`, `\caption`, `\href`, …):
-  a plain newline, never a blank line, which would break the PDF;
-- in a list: a new `\item `; on an empty item, the item is removed and the
-  cursor leaves the list;
-- in a formula, an environment shown as written, or 显示源码: a plain
-  newline.
-⇧Return is a plain newline. IME composition is respected as in
-`workspace.js:668-675`.
+**Typing and pasting** are plain text and keep the source literal: `% $ & # _ { } ~ ^ \` are written escaped (`\%`, `\$`,
+`\&`, `\#`, `\_`, `\{`, `\}`, `\textasciitilde{}`, `\textasciicircum{}`, `\textbackslash{}`); words typed at the edge of what is
+hidden go where the cursor shows them (after a bullet, inside the list, never before `\documentclass`); a letter never
+runs into a command's name (`{}` keeps them apart). Pasted rich text is its plain text, escaped; its line breaks are
+new paragraphs, spaces in a heading, a style or a caption, and new items in a list. An input method's composition is
+left as typed. **Deleting** across hidden markup leaves balanced, meaningful LaTeX: what a range covers whole is
+deleted whole; a construct covered in part keeps its markup round what remains (or loses it with its last word); the
+document's own markup always stays; an edit that would still leave the source unbalanced is refused with a quiet
+sentence. Hidden comments, labels and atomic units in a deleted range go with it, asking nothing (⌘Z restores them).
+**Return** makes a new paragraph; in a list a new `\item` (an empty item leaves the list); in a heading the heading ends
+there and the words after the cursor start the paragraph; inside a style the style is closed before the break and
+opened again after it; in a caption it is refused. **⇧Return** is a line break `\\`, only in a paragraph with words
+before it. **Backspace** at the start of a heading turns it into body text, joined with the paragraph before when that
+is running text; at the start of a style it deletes the character before the style; an empty style goes whole. Cut and
+copy give the plain text as shown. Undo: one step per typing burst or tool use; switching 显示代码 is no step.
+
+**显示代码** (Show code) is the switch at the top of the right column, off by default, per file while Research OS runs;
+switching keeps the cursor's place (in the edit view, at the edge of what is hidden). There typing and pasting are raw,
+Return and ⇧Return a plain newline. A file the edit view cannot show safely -- a read-only file (22.1's cases), one the
+reader is unsure of (unbalanced braces, an environment or a formula not closed, a list with no item, a conditional in
+the body) -- opens as code, the switch on and disabled, with one sentence why; a text that becomes unsure in the code
+stays there, saying why. The ranges come from the LaTeX range reader (braces, environments, math, comments, `\verb`,
+one-character commands), read again whole on each change; the decorations live in a state field and are drawn again
+only where a change reaches. **Typing stays under 16 ms a key on a 3,000-line file with 300 formulas.**
+
+The tools -- 加粗, 斜体, 标题, 公式, 引用 (a search over the project's `.bib` keys; with no `.bib`, it says so) and the rest --
+are the right column's 「格式与插入」 (22.12; the toolbar first promised here was never built), each the same as typing
+the command, acting on the visible words; ⌘B / ⌘I / ⌘U do the first three. 公式 puts its formula in 显示代码 with the
+cursor in it. 22.12 B1 has the details, the measures and the tests.
 
 ### 22.2 Passages and their supporting files
 
@@ -7836,12 +7851,11 @@ New 13.4 rows, one English each, for the researcher to approve (22.0.2):
 | 撤销这次保存 | Undo this save |
 | 导出 PDF | Export PDF |
 | 导出的 PDF | Exported PDF |
-| 导言区（已折叠，点开） | Preamble (folded, click to open) |
-| 收起导言区 | Fold the preamble |
+| 导言区 (B1: one line, never opened in the edit view; 「导言区（已折叠，点开）」 and 「收起导言区」 retired) | Preamble |
 | 撤销这次关联 | Undo this link |
 | 撤销这次撤回 | Undo this withdrawal |
 | 撤销“是这段” / 撤销“仍然成立” | Undo “This is the passage” / Undo “Still holds” (a reanchor's undo, named after what its status said, never 确认, the link's word) |
-| 显示源码 | Show source |
+| 显示代码 (B1, 2026-11-14; was 显示源码 "Show source") | Show code |
 | 依据关系 | Supporting-file links (the proposal's kind, 22.5) |
 | 待批准 | Awaiting approval (it had no English before B4) |
 | 正文 (the sidebar's item and page, 22.10) | Manuscript |
@@ -7855,8 +7869,10 @@ emoji, arrow or glyph.
 
 ### 22.7 Presentation (amends 21.8's list)
 
-- The editor page: 「保存」 primary; 导出 PDF quiet; 撤销这次保存, 显示源码,
-  载入新版本 and 返回 text links.
+- The editor page: 「保存」 primary; 导出 PDF quiet; 撤销这次保存, 载入新版本 and 返回 text links.
+  「显示代码」 (B1) is no longer in the header: it is a switch at the top of the right column, above the tabs -- a quiet
+  word button with `aria-pressed`, an ink edge when on, never a glyph; disabled and on, with its sentence, for a file the
+  edit view cannot show.
 - The link panel: 「确认关联」 primary (22.0.5). The passage panel: no primary; 「是这段」 and
   「仍然成立」 quiet buttons, 撤回关联 a text link.
 - The export result: 打开 PDF and 在 Finder 中显示 text links; 「导出没有成功」
@@ -7875,13 +7891,17 @@ emoji, arrow or glyph.
   after a colon.
 - The page (22.12 B): the header, the notices and the status line sit in the
   text's column, aligned with the page (46rem, centred; the full width while
-  显示源码 shows the source); 保存 stays the editor's one primary, 导出 PDF quiet,
-  显示源码 a text link. The status line is quiet small gray words, no button; the
+  显示代码 shows the code); 保存 stays the editor's one primary, 导出 PDF quiet.
+  The status line is quiet small gray words, no button; the
   page's blocks (label lines, the title block, 摘要, a table, a figure) are words
   and rules in the palette's tokens, never a glyph. The right column stays at
   the top beside the text, its groups apart by space and a hairline, 「选中一段文字，
   可以关联依据文件。」 under the panel; at the shell's 900 px it narrows (to 14rem)
   before anything scrolls sideways.
+- The edit view (22.12 B1): what stands for hidden code -- chips, the 「公式」 word, the 「分页」 and 目录 lines, the
+  preamble's line -- is quiet words in the palette's tokens, never a glyph. Under the switch, the right column's hint
+  (「表格内容要在「显示代码」里改。」 and the like) is a quiet sentence with a text link; a footnote's words a plain text
+  field; 文档信息 in 版式 plain fields and a select. No new primary anywhere: 保存 stays the one.
 
 ### 22.8 Batches and acceptance
 
@@ -7899,7 +7919,7 @@ The order puts the researcher's purpose — 改正文, 将某段话关联文件 
   the build folder, the PDF in the document folder and its replacement rule,
   `[[export]]`, the result and errors.
 - **B3 — Like Word** (needs KaTeX): the decorations, the range reader, the
-  toolbar, Return by context, 导言区, 显示源码; the claims column span and
+  toolbar, Return by context, 导言区, 显示源码 (显示代码 since 22.12 B1); the claims column span and
   人工声明的依据文件 on a claim (22.3).
 - **B4 — A team**: the `passage_evidence` proposal, 待批准, approval and
   reconciliation.
@@ -8126,10 +8146,9 @@ page's look (at the end of this section).
   **「格式」** and **「版式」** (`role="tab"`, `aria-selected`): 「格式」 acts where
   the cursor is, 「版式」 on the whole document (below). The panel is there whenever a file is
   open. It is disabled, its reason above the groups, in a read-only file
-  (「这个文件只能查看，不能用格式与插入。」) and while 「显示源码」 shows the source
-  (「正在显示源码。关掉「显示源码」后可以用格式与插入。」): 显示源码 turns "like
-  Word" off for the file (22.1), and the panel is part of it. ⌘B / ⌘I / ⌘U do
-  nothing then.
+  (「这个文件只能查看，不能用格式与插入。」). *(B1:)* 「显示代码」 heads the column, above the tabs; while it shows
+  the code, 「格式」's tools are off with 「正在显示代码。关掉「显示代码」后可以用格式工具。」 and ⌘B / ⌘I / ⌘U do
+  nothing, while 「版式」 keeps working: it edits the preamble, code or not.
 - **One rule for every tool.** It is exactly the same as typing its command:
   one transaction of the editor's own (`view.dispatch`), so ⌘Z undoes it as
   one step, the save sends it as typed edits (22.1), the passages are carried
@@ -8304,8 +8323,8 @@ They live in the **main file's preamble**. In a chapter file 「版式」 says
 「版式在主文件 {main} 里设置。」 with 「打开 {main}」 (a text link that opens the main
 file; unsaved text asks first, as every other way of leaving the file does) and
 shows the main file's settings, none changeable. With no main file:
-「没有找到主文件。版式在主文件的导言区里设置。」 A read-only main file and 显示源码
-turn the tab off with the panel's own reasons; a beamer class with
+「没有找到主文件。版式在主文件的导言区里设置。」 A read-only main file turns the tab off with the panel's own
+reason (显示代码 does not: B1); a beamer class with
 「幻灯片（beamer）不用这些版式设置。」.
 
 - **Read before write.** The preamble is read with its comments masked: the
@@ -8322,7 +8341,7 @@ turn the tab off with the panel's own reasons; a beamer class with
   `\pagestyle{empty}` or the nopageno package; 超链接 as hyperref loaded.
 - **The person's own.** A setting written in a form 版式 does not take is shown
   as 「自定义」, disabled, with 「导言区第 {n} 行已有自己写的设置」 and 「看这一行」 (a
-  text link: the cursor goes to that line, which opens the folded preamble; in a
+  text link: 显示代码 turns on and the cursor goes to that line (B1: lines are the code's); in a
   chapter it opens the main file there) -- never guessed, never written a second
   time: inside a macro (`\newcommand`, `\def`, `\AtBeginDocument{…}`: anything in
   braces); inside a condition (`\if…` to its `\fi`; `\newif` and the
@@ -8433,7 +8452,7 @@ turn the tab off with the panel's own reasons; a beamer class with
   setting with the other options kept, ctex's sizes and line spread, CRLF, ⌘Z;
   the paragraph tools and labels, on the page and in the engine alike; the tab on
   the page (a chapter read-only with its link, a main file's choices as one
-  unsaved undoable step, 自定义's fields, 看这一行, 显示源码, a read-only main);
+  unsaved undoable step, 自定义's fields, 看这一行 (in 显示代码, B1), 显示代码 leaving it on, a read-only main);
   and real compiles by latexmk: every value of every setting on a ctexart
   (XeLaTeX) and an article (pdfLaTeX) document (six combinations so each value
   appears at least once, and all on at once), every paragraph tool applied, each
@@ -8586,7 +8605,7 @@ after seeing the plan):
   main file, tables with and without a header and booktabs, lists, citations,
   CRLF files); the panel on the page (its tabs, pickers, one primary at a time,
   ⌘B / ⌘I / ⌘U before CodeMirror's own, ⌘Z, the save, read-only and
-  显示源码); the engine's facts and lists; and a real compile by latexmk of a
+  显示代码); the engine's facts and lists; and a real compile by latexmk of a
   ctexrep (XeLaTeX) and an article (pdfLaTeX) document with every insertion
   applied, a png figure and a bibliography: a PDF, no error.
 
@@ -8595,20 +8614,23 @@ new English paper made by 新建文稿: the editor showed `\begin{document}`,
 `\maketitle`, `\begin{abstract}`, `\end{abstract}` and `\end{document}` as raw
 grey mono lines across a very wide empty box, with an empty right column. Now,
 in Word view (22.1), only where the selection does not touch a construct (it
-shows its source as soon as it does), never in the preamble or 显示源码:
+shows its source as soon as it does), never in the preamble or 显示源码 -- *amended the same day by B1 (below): the
+blocks are drawn wherever the selection is, never as their source; what this block calls "shown as written" is now a
+quiet chip with words (B1's list), 显示源码 is 「显示代码」 in the right column, and the folded 导言区 is one line that never
+opens:*
 
 - **A page.** The text is a centred column of a page's measure (`--latex-measure`,
   46rem) on the paper (`--paper`) with a hairline either side and generous
   padding, the desk's tone (`--paper-alt`) around it; the body at 1rem in the
   body face (the sans), line height 1.8 (times 行距's stretch, A2); headings in
   the serif with space above (`latex-hline`, kept while the heading shows its
-  source, so nothing jumps). 显示源码 keeps the full-width mono source. The
-  header (the file's path, cut short with its whole path on hover; 保存, 导出 PDF,
-  显示源码), the notices and the status line are in the text's column, aligned
+  source, so nothing jumps). 显示代码 (B1) keeps the full-width mono code. The
+  header (the file's path, cut short with its whole path on hover; 保存, 导出 PDF), the notices and the status line
+  are in the text's column, aligned
   with the page; the right column is beside them from the top.
 - **Document scaffolding** -- each a block that replaces its whole lines, so it is
-  drawn only when its command stands alone on its lines (else as written); a
-  click on it puts the cursor on its first line, which shows the source:
+  drawn as a block when its command stands alone on its lines (else, B1, in its line); a click on it selects it
+  whole (B1; the title block opens 版式's 文档信息):
   - `\begin{document}` and `\end{document}`: a thin quiet label line,
     「正文开始」 / 「正文结束」 (small, gray, sans, a hairline after the words);
   - `\maketitle`: the title block read from the open file's own preamble
@@ -8624,10 +8646,9 @@ shows its source as soon as it does), never in the preamble or 显示源码:
   - an `abstract`: its `\begin` line a small centred heading 「摘要」 (small caps,
     quiet), its `\end` line a little space, its own lines indented a little, as
     the PDF sets them (the indent stays while a line is edited);
-  - the folded 导言区: 「导言区：文档类 {cls}，{n} 个宏包（已折叠，点开）」, the class
-    and the packages counted from the preamble (`\usepackage{a,b}` is two),
-    still a word button with no chevron; with no class read, 22.1's
-    「导言区（已折叠，点开）」.
+  - the 导言区 line: 「导言区：文档类 {cls}，{n} 个宏包」 (B1: "（已折叠，点开）" dropped, since it never opens), the class
+    and the packages counted from the preamble (`\usepackage{a,b}` is two), with 「正文开始」 under it, one block with
+    `\begin{document}`'s line; with no class read, 「导言区」. A click opens 「版式」.
 - **Tables.** A `tabular` (also `tabular*` and `tabularx`) on lines of its own, or
   a `table` float holding exactly one, is a read-only grid: rows split on an
   unescaped `\\` (`\\*` and `\\[2pt]` too), cells on an `&` outside braces,
@@ -8691,8 +8712,8 @@ shows its source as soon as it does), never in the preamble or 显示源码:
 - **Words** (13.4 rows): 正文开始 Start of the text; 正文结束 End of the text;
   （没有设置标题） (No title set); 日期：导出当天 Date: the day of the export; 表：
   Table:; 图： Figure:; {n} 字 {n} words; 正在保存 Saving; 有未保存的改动 Unsaved
-  changes; 导言区：文档类 {cls}，{n} 个宏包（已折叠，点开） Preamble: class {cls}, {n}
-  packages (folded, click to open). 摘要 keeps its English, Abstract.
+  changes; 导言区：文档类 {cls}，{n} 个宏包 Preamble: class {cls}, {n} packages (B1: the folded words dropped). 摘要
+  keeps its English, Abstract.
 - **Tests** (`tests/test_v17_page_look.py`, under node on the vendored CodeMirror
   and KaTeX and on the stand-in page): the new English paper as a page; each
   block shown untouched and as source when touched; the preamble open; the title
@@ -8706,3 +8727,81 @@ shows its source as soon as it does), never in the preamble or 显示源码:
   line and a tabular test now expect 22.12 B, and its "a move that changes nothing
   keeps the decorations" moves inside running text (the line of `\end{document}`
   now shows its source when touched).
+
+**The edit view shows no code (B1; the researcher, 2026-11-14: "我的想法是，编辑的时候是看不到latex代码的，右侧的选项打开才能
+看到代码").** Asked how, the researcher chose a 「显示代码」 switch in the right column for the whole file, and formulas
+typeset in the edit view and changed only in the code. 22.1 states the rule; how it is built:
+
+- **Pieces.** `viewPieces` turns the reader's ranges into atoms (one replace each: a formula, a table, a chip, a comment,
+  an escape, the 导言区 line, 正文结束), the hidden markup of what keeps its words editable (a style's or a heading's
+  command and braces, a list's `\begin`/`\end` and `\item`, a text environment's markers, a figure round its caption,
+  plain braces), marks and line classes. Outermost first: nothing is drawn inside an atom. A marker alone on its line
+  hides the line break before it, so the lines round it keep their places. Every replace, and a bridge over the place
+  where two touch with nothing to type between, is an atomic range (`EditorView.atomicRanges`), so the cursor never
+  stops inside. Each piece says what typing at its edges means: at a bullet's start the words go after it; at the end of
+  a list's `\begin` to its first item; at the end of an `\end` back inside; at the start of the 导言区 line to the body.
+- **The reader** (`readLatex`) now also returns the pairs of braces it reads as text, the one-character commands and the
+  ties, and `bad`: what TeX would stop at (a brace or an environment unmatched, crossing a brace, a formula not closed).
+  `unsureWhy` adds a list with no item and a conditional in the body (`\if…`, `\makeatletter`, `\csname` …). A text with
+  any of these opens as code; the edit view draws such a text whole on each change (its pairs are not trusted far away).
+- **Numbers, cheaply** (`numbersOf`): in a main file only, counting from its own text -- figures and tables continuous,
+  by chapter (`\chapter`'s classes, `2.3`) or as 版式 writes them by section (`2-3`); sections to the class's own depth
+  (`1.2`); footnotes; and what each `\label` names (a float after its caption, a numbered heading). Anything after an
+  `\input` or `\appendix`, a form not read here (titlesec, `\ctexset`, `secnumdepth`, `\numberwithin`), an equation, an
+  enumerate item: unknown, said 「引用：key」, 「图：」, 「注」. A chapter file's numbers are its main file's: unknown there.
+- **Citations**: a moment after a file with a `\cite` opens, `GET /api/latex/insert?what=bib` (22.12 A's read) gives the
+  entries; each chip says the first author's surname (two: both; more: 「… 等」, "et al.") and the year, else the key.
+- **Typing** (`userEdit`, a transaction filter on the edit view's own `input.*` and `delete.*` events; the tools'
+  `input.format`, Return's and Backspace's own steps, undo and redo pass untouched): escapes, the place words go, the
+  `{}` after a command's name, then -- for anything that touched hidden markup, moved, or broke lines -- the whole
+  result read again: one TeX would stop at is refused (「这样改会让 LaTeX 的结构不完整，没有改。」), said under the switch.
+- **Deleting** (`protect`): the range is widened to whole pieces; then, construct by construct, one it covers whole goes;
+  one it covers in part keeps its markup -- the pieces that hide it, whole -- round what remains, or with nothing typed
+  in its place and all its words gone, goes whole (a style, a heading, a list, an environment; never a caption, nor the
+  document, the preamble or what follows `\end{document}`); what one construct keeps no other's deletion takes.
+- **The right column**, under the switch: 「表格内容要在「显示代码」里改。」, 「公式要在「显示代码」里改。」 or 「这部分要在「显示代码」里改。」
+  with 「在「显示代码」里改」 (a text link: the code on, the cursor at the construct's start) when the cursor stands beside
+  or has selected one; a footnote's words in a plain field, read unescaped and written escaped as typing is, one run of
+  ⌘Z (a footnote holding commands says it is changed in the code); a refusal of what was typed, until the cursor moves.
+- **文档信息** (版式's first group): 标题, 作者 (fields) and 日期 (今天 `\today` -- also no `\date`, which prints the same --,
+  不显示 `\date{}`, 自定义 with its words), read from the main file's preamble and written there as one undoable step, a new
+  line after the last of them or after the last `\usepackage`. Written twice, in a macro or a condition, or holding a
+  command (`\thanks`, `\and`, `\\`): the person's own, disabled, with 「导言区第 {n} 行已有自己写的设置」 and 看这一行. A chapter
+  shows its main file's, unchangeable. A click on the title block opens 版式 at 标题; one on the 导言区 line opens 版式.
+- **Tools in the edit view**: each still writes the same LaTeX (22.12); a cursor a tool leaves in what is hidden moves to
+  its edge; 表格 leaves the cursor beside the new table (the column says where its cells are filled in); 公式 inserts its
+  formula, turns 显示代码 on with the cursor in it (with words selected it asks for none: they would be its code).
+  显示代码 turns 「格式」 off and leaves 「版式」 on.
+- *Chosen while building:* an empty item and an unknown no-argument command (`\mystery`) are 「LaTeX 内容」 chips; a
+  `\noindent`, a size or font switch, `\vspace` and their like are hidden (no words); `\href`'s address is not shown,
+  its words are; Return at a heading's start makes an empty paragraph above it, as Word does; `comment` environments are
+  hidden as comments; `thebibliography` is one chip (its items are not drawn); the drag of text inside the edit view is
+  off (dropped text from elsewhere is pasted plain), as are CodeMirror's own moving of lines (⌥↑ ⌥↓) and commenting
+  them out (⌘/), which would move or hide what the edit view does not show; two authors read 「A 和 B」.
+- *Not done in B1:* a heading's short title is shown, not editable, in the edit view; a description list's term and a
+  theorem's title are read-only; tables and figures with subfigures are changed in the code; the first-line indent of
+  22.12 B is still left; this was tested under node and a stand-in page, not yet in the app's window with a real paper.
+- **Measured** (`tests/test_v17_no_code_view.py`): over three papers -- the Chinese and English templates of 新建文稿 with
+  every tool of A, A2 and A3 applied, and a hand-written paper with comments, unknown macros, tikz, verbatim, align,
+  citations, footnotes, lists, tables and figures -- no markup character in what the edit view shows of the source and
+  none in its widgets but the researcher's own `\%`; every arrow-key stop (208, 430 and 528) outside what is hidden, and
+  a letter typed at each one shown and leaving the text sure; 2,328 seeded deletions and replacements (three quarters
+  between such stops, a quarter anywhere): none left the text unsure, none lost a word outside its range, none showed
+  markup, 44 refused with a sentence; the three papers and 30 of the fuzzed results compiled by latexmk (XeLaTeX and
+  pdfLaTeX), no TeX error. Typing, per key, through the filter on 22.1's 3,000-line file with figures, tables, lists,
+  comments and 468 formulas: median 3.3 ms, p95 5.1 ms (a `%` 5.1 / 6.5 ms; Return 3.5 / 4.5; Backspace 3.3 / 4.9);
+  opening it 44 ms; on the 2 MB file, median 23 ms. 2,000 random edits of the hand-written paper (two seeds), each drawn
+  again only where it reached, drew the same as drawing the paper whole.
+- **Words** (13.4 rows; 22.6): 显示代码 Show code (显示源码 retired); 导言区 Preamble; LaTeX 内容 LaTeX content; 文档信息
+  Document details; 公式 (the quiet word) Formula; 注 Note; 链接 Link; {a} 和 {b} {a} and {b}; 引入 {file} Brings in {file}; 导出当天的日期 The date of the
+  export; 目录（导出时生成） Table of contents (made at export); 图目录 / 表目录（导出时生成） List of figures / tables (made at
+  export); 参考文献（导出时生成） References (made at export); 附录 Appendix; 证明 Proof; 图 {n} / 表 {n} Figure {n} / Table
+  {n}; 第 {n} 节 / 第 {n} 章 Section {n} / Chapter {n}; 引用：{key} Reference: {key}; {author} 等 {author} et al.; 在「显示代码」里改
+  Change it in “Show code”; and the sentences under the switch, each with its English in `i18n.js`.
+- **Tests** changed on purpose: `test_v17_latex_word.py` (the touch rule's tests now say nothing depends on the cursor;
+  a formula KaTeX cannot typeset is 「公式」; unknown commands are chips; the preamble is one line; Return is the edit
+  view's; typing is timed through the filter), `test_v17_page_look.py` (the blocks wherever the cursor is; a doubted
+  table a chip; a figure's caption editable; a click selects or opens 文档信息), `test_v17_editor_fixes.py` (the
+  until-focused rule is gone), `test_v17_format_panel.py` and `test_v17_layout_settings.py` (the switch is 「显示代码」
+  in the column; 版式 stays on in the code; 文档信息 is the first group), `test_v17_latex_passages.py` (the edit view's
+  own pieces set aside when the underlines are counted).

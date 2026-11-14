@@ -512,13 +512,13 @@ out.withLink = primaries();
 button('保存').fire('click'); await tick();
 out.saved = posts.length ? posts[0].body.edits.length > 0 : false;
 posts.shift().res({revision: 'r2', changed: true, previous: 'r1'}); await tick(); await tick();
-// 显示源码 turns the panel off with its reason, and on again
-button('显示源码').fire('click');
+// 显示代码 (22.1, B1) turns the 格式 tab off with its reason, and on again
+button('显示代码').fire('click');
 const reason = inside(side(), (e) => e.classList.contains('latex-format-reason'))[0];
 out.source = {reason: reason.textContent, hidden: hidden(reason), disabled: tool('加粗').disabled && selects()[0].disabled && tool('图片').disabled};
 const before = doc(); bound('Mod-b').length; [].concat(...view().state.facet(real.keymap)).find((b) => b.key === 'Mod-b').run(view());
 out.source.keyDid = doc() !== before;
-button('显示源码').fire('click');
+button('显示代码').fire('click');
 out.sourceOff = {hidden: hidden(reason), disabled: tool('加粗').disabled};
 // a ctexart main file open: the Chinese fonts, no 衬线 (XeLaTeX), no 章; graphicx and booktabs added to it
 await openFile('paper/main.tex', '\\documentclass{ctexart}\n\\begin{document}\n正文\n\\end{document}\n',
@@ -635,8 +635,8 @@ def test_one_primary_at_a_time_the_link_panel_closes_an_open_picker(panel):
 
 
 @needs_node
-def test_show_source_and_a_read_only_file_disable_the_panel_with_a_reason(panel):
-    assert panel["source"] == {"reason": "正在显示源码。关掉「显示源码」后可以用格式与插入。", "hidden": False, "disabled": True,
+def test_show_code_and_a_read_only_file_disable_the_panel_with_a_reason(panel):
+    assert panel["source"] == {"reason": "正在显示代码。关掉「显示代码」后可以用格式工具。", "hidden": False, "disabled": True,
                                "keyDid": False}
     assert panel["sourceOff"] == {"hidden": True, "disabled": False}
     assert panel["readOnly"] == {"reason": "这个文件只能查看，不能用格式与插入。", "hidden": False, "allOff": True}

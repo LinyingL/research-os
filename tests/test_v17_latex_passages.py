@@ -332,7 +332,8 @@ for (const d of V.state.facet(real.EditorView.decorations)) {
   if (typeof d === 'function') continue;   // the include links' plugin, which needs a real view
   d.between(0, V.state.doc.length, (from, to, value) => {
     const w = value.spec.widget;
-    drawn.push(w ? {at: from, count: w.toDOM().textContent, cls: w.toDOM().className} : {from, to, cls: value.spec.class});
+    const got = w ? {at: from, count: w.toDOM().textContent, cls: w.toDOM().className} : {from, to, cls: value.spec.class};
+    if (/latex-(passage|count)/.test(got.cls || '')) drawn.push(got);   // the edit view's own pieces (B1: a line break shown as a space) aside
   });
 }
 out.drawn = drawn;

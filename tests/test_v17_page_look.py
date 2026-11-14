@@ -1,9 +1,9 @@
 """DESIGN.md 22.12 B (task V17, step B; the researcher, 2026-11-14: "我觉得很简陋…还需要优化UI"): the LaTeX editor as a
 clean writing page. Like Word, the text is a centred column of a page's measure; \\begin{document} and \\end{document}
-are quiet label lines, \\maketitle the title block read from the preamble, an abstract's \\begin and \\end a small
-heading over indented lines, a table a read-only grid with its caption, a figure its files and caption, {\\heiti …} and
-{\\large …} drawn in their face and size -- each only where the selection does not touch it, never in the preamble or
-显示源码, and anything the reader doubts shown as written. A status line under the text counts the body's words and says
+are quiet label lines, \\maketitle the title block read from the preamble, an abstract's \\begin a small heading over
+indented lines, a table a read-only grid with its caption, a figure its files and caption, {\\heiti …} and {\\large …}
+drawn in their face and size -- wherever the selection is (B1 of 22.12, the same day: the edit view shows no code;
+tests/test_v17_no_code_view.py), never in 显示代码, and anything the reader doubts a quiet chip, never its code. A status line under the text counts the body's words and says
 whether it is saved. Run under node on the vendored CodeMirror and KaTeX (the decorations, the word count, the 16 ms a
 key) and on the stand-in page of test_v17_latex_editor (the status line, the columns); the style sheet read as written.
 Every test names its scenario."""
@@ -58,8 +58,8 @@ out.title = {
 
 // -- tables --
 const body = (s) => '\\documentclass{article}\n\\begin{document}\nBefore.\n' + s + '\nAfter.\n\\end{document}\n';
-const tableOf = (s) => { const d = body(s); const got = drawn(make(d, d.indexOf('After.') + 1)); const b = got.find((x) => x.block && x.shape && x.shape.startsWith('div.latex-table-preview'));
-  return b ? b.shape : got.filter((x) => x.cls === 'latex-cmd').map((x) => x.text).join(' '); };
+const tableOf = (s) => { const d = body(s); const got = drawn(make(d, d.indexOf('After.') + 1)); const b = got.find((x) => x.shape && x.shape.startsWith('div.latex-table-preview'));
+  return b ? b.shape : got.filter((x) => x.shape && x.shape.includes('latex-chip')).map((x) => x.shape).join(' '); };
 const T = (rows, spec) => '\\begin{tabular}{' + (spec || 'lcr') + '}\n' + rows + '\n\\end{tabular}';
 out.tables = {
   booktabs: tableOf('\\begin{table}[htbp]\n\\centering\n\\caption{Main \\emph{results}}\n\\label{tab:main}\n' + T('\\toprule\nA & B & C \\\\\n\\midrule\n1 & \\textbf{2} & $3$ \\\\\n\\bottomrule') + '\n\\end{table}'),
@@ -82,14 +82,15 @@ out.tableTouchedCaption = drawn(make(tdoc, tdoc.indexOf('\\caption'))).filter((x
 out.grid = P.tabularGrid('{l|c}\n\\toprule\na & b \\\\\n\\bottomrule\n', 0);
 
 // -- figures and a bare \includegraphics --
-const figureOf = (s) => { const d = body(s); const b = drawn(make(d, d.indexOf('After.') + 1)).find((x) => x.block && x.shape.startsWith('div.latex-figure-preview')); return b ? b.shape : null; };
+// a figure with one caption (B1): its images and 「图 N：」, then the caption's own words, editable, then what follows hidden
+const figureOf = (s) => { const d = body(s); return drawn(make(d, d.indexOf('After.') + 1)).filter((x) => x.from > d.indexOf('Before.') && x.from < d.indexOf('After.'))
+  .map((x) => x.shape || (x.cls ? x.text + '=' + x.cls : x.text ? 'hidden' : null)).filter(Boolean); };
 out.figures = {
   one: figureOf('\\begin{figure}[htbp]\n\\centering\n\\includegraphics[width=\\linewidth]{figs/plot.png}\n\\caption{A \\textit{plot}}\n\\label{fig:p}\n\\end{figure}'),
+  two: figureOf('\\begin{figure}\n\\includegraphics{a.png}\n\\includegraphics{b.pdf}\n\\caption{Two}\n\\end{figure}'),
+  sub: figureOf('\\begin{figure}\n\\begin{subfigure}{.5\\linewidth}\n\\includegraphics{a.png}\n\\end{subfigure}\n\\caption{Sub}\n\\end{figure}'),
+  none: figureOf('\\begin{figure}\n\\includegraphics{a.png}\n\\end{figure}'),
 };
-const fdoc = body('\\begin{figure}\n\\includegraphics{a.png}\n\\includegraphics{b.pdf}\n\\caption{Two}\n\\end{figure}');
-out.figures.two = drawn(make(fdoc, fdoc.indexOf('After.'))).filter((x) => x.block && x.shape.startsWith('div.latex-figure')).map((x) => x.shape);
-const sdoc = body('\\begin{figure}\n\\begin{subfigure}{.5\\linewidth}\n\\includegraphics{a.png}\n\\end{subfigure}\n\\end{figure}');
-out.figures.sub = drawn(make(sdoc, sdoc.indexOf('After.'))).filter((x) => x.block && x.shape.startsWith('div.latex-figure')).length;
 const gdoc = body('See \\includegraphics[width=2cm]{figs/a.png} here.');
 out.graphic = {away: drawn(make(gdoc, gdoc.indexOf('After.'))).filter((x) => x.text.startsWith('\\includegraphics')).map((x) => [x.shape, x.block]),
   touched: drawn(make(gdoc, gdoc.indexOf('figs'))).filter((x) => x.text.startsWith('\\includegraphics')).map((x) => [x.text, x.cls])};
@@ -105,15 +106,22 @@ out.groups.touched = drawn(make(G, G.indexOf('楷'))).filter((x) => ['楷', '{\\
 out.groups.preamble = drawn(make(G, G.indexOf('不在') + 1)).filter((x) => x.from < G.indexOf('\\begin{document}')).map((x) => [x.from, x.shape]);
 out.groups.read = P.readLatex(G).groups.map((g) => [g.name, G.slice(g.from, g.to)]);
 
-// -- a click on a block puts the cursor on its first line (CodeMirror's own would put it after the block) --
+// -- a click on the title block opens 文档信息 (B1: the editor's hook); on a table it selects the table whole --
 const mk0 = global.mk;
 global.mk = (tag, cls, text) => { const e = mk0(tag, cls, text); e.addEventListener = (ev, fn) => { (e.on = e.on || {})[ev] = fn; }; return e; };
+let titleHits = 0; F.hooks.title = () => { titleHits += 1; };
 let titleWidget = null;
 make(PAPER, at(PAPER, 'Start writing')).field(F.field).deco.between(0, PAPER.length, (a, b, v) => { if (v.spec.widget && String(v.spec.widget.key).includes('My Paper')) titleWidget = {w: v.spec.widget, a}; });
 const sent = [], fakeView = {posAtDOM: () => titleWidget.a, dispatch: (spec) => sent.push(spec), focus: () => sent.push('focus')};
 const titleEl = titleWidget.w.toDOM(fakeView);
 titleEl.on.mousedown({button: 0, preventDefault: () => sent.push('prevented')});
-out.click = {sent, at: titleWidget.a, line: PAPER.slice(titleWidget.a).split('\n')[0], ignored: titleWidget.w.ignoreEvent()};
+out.click = {sent, at: titleWidget.a, line: PAPER.slice(titleWidget.a).split('\n')[0], ignored: titleWidget.w.ignoreEvent(), titled: titleHits};
+F.hooks.title = null;
+let tableW = null; const tdoc2 = body('\\begin{table}\n\\caption{C}\n' + T('a & b & c \\\\') + '\n\\end{table}');
+const tst = make(tdoc2, 0); tst.field(F.field).deco.between(0, tdoc2.length, (a, b, v) => { if (v.spec.kind === 'table') tableW = {w: v.spec.widget, a, b}; });
+const tsent = [], tview = {state: tst, posAtDOM: () => tableW.a, dispatch: (spec) => tsent.push(spec), focus() {}};
+tableW.w.toDOM(tview).on.mousedown({button: 0, preventDefault() {}});
+out.tableClick = {sent: tsent, from: tableW.a, to: tableW.b};
 global.mk = mk0;
 
 // -- the word count --
@@ -179,12 +187,13 @@ const ms = (t0) => Number(process.hrtime.bigint() - t0) / 1e6, stats = (xs) => {
 const typing = (at, n, key) => {
   let st = CM.EditorState.create({doc: text, extensions: [P.wordExtensions(CM)], selection: {anchor: at}});
   const shown = (s) => { const l = s.doc.lineAt(s.selection.main.head), from = s.doc.line(Math.max(1, l.number - 60)).from, to = s.doc.line(Math.min(s.doc.lines, l.number + 60)).to, got = []; s.field(F.field).deco.between(from, to, (a, b, v) => { if (v.spec.widget) got.push({a, b, w: v.spec.widget}); }); return got; };
-  for (let k = 0; k < 20; k++) st = st.update({changes: {from: st.selection.main.head, insert: 'w'}, selection: {anchor: st.selection.main.head + 1}}).state;
+  // typed as the edit view types (B1: through its filter), so a key never lands in hidden markup
+  for (let k = 0; k < 20; k++) st = st.update({changes: {from: st.selection.main.head, insert: 'w'}, selection: {anchor: st.selection.main.head + 1}, userEvent: 'input.type'}).state;
   const keys = [];
   let drawnAnew = 0;
   for (let k = 0; k < n; k++) {
     const head = st.selection.main.head, before = shown(st), t0 = process.hrtime.bigint();
-    const tr = st.update({changes: {from: head, insert: key(k)}, selection: {anchor: head + 1}});
+    const tr = st.update({changes: {from: head, insert: key(k)}, selection: {anchor: head + 1}, userEvent: 'input.type'});
     st = tr.state;
     st.field(F.field);
     let spent = ms(t0);
@@ -220,58 +229,47 @@ def _blocks(drawn: list[dict]) -> list[str]:
 def test_the_new_english_paper_reads_as_a_page_with_its_title_block_abstract_heading_and_body_labels(look):
     away = look["paper"]["away"]
     assert _blocks(away) == [
-        'button.latex-preamble"导言区：文档类 article，4 个宏包（已折叠，点开）"',   # fontenc, amsmath, graphicx, booktabs
-        'div.latex-doc-mark"正文开始"',
-        'div.latex-titleblock[div.latex-title[span"My Paper"],div.latex-title-date"日期：导出当天"]',   # \author{} left out
-        'div.latex-abstract-head"摘要"',
-        'div.latex-abstract-end',
+        # B1: the preamble and \\begin{document} are one quiet line (fontenc, amsmath, graphicx, booktabs), never opened here
+        'div.latex-preamble-block[button.latex-preamble"导言区：文档类 article，4 个宏包",div.latex-doc-mark"正文开始"]',
+        'div.latex-titleblock[div.latex-title[span"My Paper"],div.latex-title-date"日期：导出当天"]',   # \\author{} left out
         'div.latex-doc-mark"正文结束"',
     ]
+    assert [d["shape"] for d in away if d["shape"] and "摘要" in d["shape"]] == ['span.latex-abstract-head"摘要"']
     abstract = [d for d in away if d["cls"] == "latex-abstract-line"]
     assert len(abstract) == 1                                         # "Write the abstract here." indented
-    assert [d["text"] for d in away if d["cls"] == "latex-hline"] == [""]   # space above \section{Introduction}
+    assert [d["text"] for d in away if d["cls"] == "latex-hline"] == [""]   # space above \\section{Introduction}
     assert not [d for d in away if d["cls"] == "latex-cmd"]           # no raw grey mono line left in the body
 
 
 @needs_node
-@pytest.mark.parametrize("case,source", [("docBegin", "\\begin{document}"), ("title", "\\maketitle"), ("absBegin", "\\begin{abstract}"),
-                                         ("absEnd", "\\end{abstract}"), ("docEnd", "\\end{document}")])
-def test_a_block_the_selection_touches_shows_its_source_and_the_others_stay_drawn(look, case, source):
-    got = look["paper"][case]
-    assert [d["text"] for d in got if d["cls"] == "latex-cmd"] == [source]
-    assert len(_blocks(got)) == 5                                     # the fold and the four others
+@pytest.mark.parametrize("case", ["docBegin", "title", "absBegin", "absEnd", "docEnd", "preambleOpen"])
+def test_the_page_is_drawn_the_same_wherever_the_selection_is(look, case):
+    assert look["paper"][case] == look["paper"]["away"]               # B1: a block never shows its code
 
 
 @needs_node
-def test_with_the_preamble_open_its_lines_are_source_and_the_body_keeps_its_blocks(look):
-    got = look["paper"]["preambleOpen"]
-    pre = PAPER.index("\\begin{document}")
-    assert [d["shape"] for d in got if d["from"] < pre] == ['button.latex-preamble"收起导言区"']   # the preamble's own lines: source
-    assert _blocks(got)[0] == 'button.latex-preamble"收起导言区"'
-    assert 'div.latex-titleblock[div.latex-title[span"My Paper"],div.latex-title-date"日期：导出当天"]' in _blocks(got)
-
-
-@needs_node
-def test_a_click_on_a_block_puts_the_cursor_on_its_first_line_so_its_source_shows(look):
+def test_a_click_on_the_title_block_opens_document_details_and_one_on_a_table_selects_it_whole(look):
     c = look["click"]
-    assert c["sent"] == ["prevented", {"selection": {"anchor": c["at"]}}, "focus"]
+    assert c["sent"] == ["prevented"] and c["titled"] == 1            # 版式's 文档信息 (the editor's hook), no cursor moved
     assert c["line"] == "\\maketitle" and c["ignored"] is True
+    t = look["tableClick"]
+    assert t["sent"] == [{"selection": {"anchor": t["from"], "head": t["to"]}, "userEvent": "select.atom"}]
 
 
 # -- the title block -------------------------------------------------------------------------------------------------------
 
 
 @needs_node
-def test_the_title_block_styles_what_the_editor_knows_and_shows_the_rest_as_written(look):
+def test_the_title_block_styles_what_the_editor_knows_and_shows_the_rest_as_quiet_words(look):
     t = look["title"]
     [styled] = t["styled"]
     assert styled.startswith('div.latex-titleblock[div.latex-title[span"A ",span.latex-b[span"Bold"],span" and ",span.latex-math')
-    assert 'span.latex-cmd"\\thanks{fund}"' in styled                  # unknown: as written, never guessed
+    assert 'span.latex-chip.latex-chip-unit"fund"' in styled           # \\thanks{fund}: its words, never its code
     assert 'div.latex-title-author[span"Ann ",span.latex-title-and,span"Bo"]' in styled
     assert styled.endswith('div.latex-title-date[span"1 May 2026"]]')
     assert t["noTitle"] == ['div.latex-titleblock[div.latex-title-none"（没有设置标题）",div.latex-title-author[span"Ann"],div.latex-title-date"日期：导出当天"]']
-    assert t["emptyDate"] == ['div.latex-titleblock[div.latex-title[span"T"]]']          # \date{} prints no date
-    assert t["sameLine"] == []                                          # not alone on its line: shown as written
+    assert t["emptyDate"] == ['div.latex-titleblock[div.latex-title[span"T"]]']          # \\date{} prints no date
+    assert t["sameLine"] == []                                          # not alone on its line: a chip
     assert t["chapter"] == ['div.latex-titleblock[div.latex-title-none"（没有设置标题）"]']  # a chapter has no preamble: no date guessed
 
 
@@ -279,30 +277,31 @@ def test_the_title_block_styles_what_the_editor_knows_and_shows_the_rest_as_writ
 
 
 @needs_node
-def test_a_table_the_selection_does_not_touch_is_a_read_only_grid_with_its_caption_above(look):
+def test_a_table_is_a_read_only_grid_with_its_numbered_caption_above(look):
     t = look["tables"]
-    assert t["booktabs"] == ('div.latex-table-preview[p.latex-caption[span.latex-caption-word"表：",span"Main ",span.latex-i[span"results"]],'
+    assert t["booktabs"] == ('div.latex-table-preview[p.latex-caption[span.latex-caption-word"表 1：",span"Main ",span.latex-i[span"results"]],'
                              'table.latex-table[tbody[tr.latex-rule-heavy[td[span"A"],td.latex-col-c[span"B"],td.latex-col-r[span"C"]],'
                              'tr.latex-rule-light.latex-rule-below-heavy[td[span"1"],td.latex-col-c[span.latex-b[span"2"]],td.latex-col-r[span.latex-math]]]]]')
-    # \\[2pt] ends a row, \& and a brace group's & are a cell's text, \multicolumn shown as written
+    # \\[2pt] ends a row, \& and a brace group's & are a cell's text, \multicolumn its last argument's words
     assert t["hline"] == ('div.latex-table-preview[table.latex-table[tbody[tr.latex-rule-light[td[span"a"],td.latex-col-c[span"b"],td.latex-col-r],'
-                          'tr.latex-rule-light.latex-rule-below-light[td[span"c & d"],td.latex-col-c[span"e & f"],td.latex-col-r[span.latex-cmd"\\multicolumn{1}{c}{g}"]]]]]')
+                          'tr.latex-rule-light.latex-rule-below-light[td[span"c & d"],td.latex-col-c[span"e & f"],td.latex-col-r[span"g"]]]]]')
     assert t["noCaption"].startswith("div.latex-table-preview[table.latex-table")
-    assert t["unknownInCell"] == ('div.latex-table-preview[table.latex-table[tbody[tr[td[span.latex-cmd"\\foo{x}"],td.latex-col-c[span.latex-chip.latex-chip-cite"k"],'
+    assert t["unknownInCell"] == ('div.latex-table-preview[table.latex-table[tbody[tr[td[span.latex-chip.latex-chip-unit"x"],td.latex-col-c[span.latex-chip.latex-chip-cite"k"],'
                                   'td.latex-col-r[span"50%"]]]]]')
+    assert t["notAlone"].startswith("div.latex-table-preview")         # drawn in its line (B1), never as written
 
 
 @needs_node
-@pytest.mark.parametrize("case", ["unbalanced", "nested", "tooManyCells", "partialRule", "oddSpec", "tooManyColumns", "extraInFloat", "notAlone", "twoCaptions"])
-def test_a_table_the_reader_doubts_is_shown_as_written_never_guessed(look, case):
+@pytest.mark.parametrize("case", ["unbalanced", "nested", "tooManyCells", "partialRule", "oddSpec", "tooManyColumns", "extraInFloat", "twoCaptions"])
+def test_a_table_the_reader_doubts_is_a_quiet_chip_never_guessed_and_never_its_code(look, case):
     shown = look["tables"][case]
-    assert not shown.startswith("div.latex-table-preview"), shown
-    assert "\\begin{tabular}" in shown                                  # its source, the command in mono
+    assert shown.startswith('div.latex-chip.latex-chip-unit.latex-chip-block"表格'), shown
+    assert "\\" not in shown
 
 
 @needs_node
-def test_touching_any_line_of_a_table_shows_its_source_and_the_grid_reader_keeps_rules_apart(look):
-    assert look["tableTouched"] == 3 and look["tableTouchedCaption"] == 3   # the fold and the two document labels
+def test_a_table_is_one_unit_wherever_the_cursor_is_and_the_grid_reader_keeps_rules_apart(look):
+    assert look["tableTouched"] == 3 and look["tableTouchedCaption"] == 3   # the 导言区 line, the table, 正文结束
     g = look["grid"]
     assert g["cols"] == ["l", "c"]
     assert g["rows"] == [{"cells": ["a", "b"], "above": "heavy", "below": "heavy"}]
@@ -312,15 +311,18 @@ def test_touching_any_line_of_a_table_shows_its_source_and_the_grid_reader_keeps
 
 
 @needs_node
-def test_a_figure_is_its_files_and_its_caption_under_them_and_a_bare_includegraphics_a_line_with_its_name(look):
+def test_a_figure_is_its_files_and_its_editable_caption_and_a_bare_includegraphics_a_line_with_its_name(look):
     f = look["figures"]
-    assert f["one"] == 'div.latex-figure-preview[div.latex-graphic[span.latex-graphic-name"figs/plot.png"],p.latex-caption[span.latex-caption-word"图：",span"A ",span.latex-i[span"plot"]]]'
-    assert f["two"] == ['div.latex-figure-preview[div.latex-graphic[span.latex-graphic-name"a.png"],div.latex-graphic[span.latex-graphic-name"b.pdf"],'
-                        'p.latex-caption[span.latex-caption-word"图：",span"Two"]]']
-    assert f["sub"] == 0                                                # subfigures: shown as written
+    assert f["one"] == ["=latex-figure-line",
+                        'span.latex-figure-part[span.latex-graphic[span.latex-graphic-name"figs/plot.png"],span.latex-caption-word"图 1："]',
+                        "hidden", "plot=latex-i", "hidden", "hidden"]       # the caption's words in between, editable
+    assert f["two"][1] == ('span.latex-figure-part[span.latex-graphic[span.latex-graphic-name"a.png"],'
+                           'span.latex-graphic[span.latex-graphic-name"b.pdf"],span.latex-caption-word"图 1："]')
+    assert f["sub"] == ['div.latex-chip.latex-chip-unit.latex-chip-block"图：Sub"']   # subfigures: a chip with the caption's words
+    assert f["none"] == ['div.latex-figure-preview[div.latex-graphic[span.latex-graphic-name"a.png"]]']   # no caption: one block
     g = look["graphic"]
     assert g["away"] == [['span.latex-graphic[span.latex-graphic-name"figs/a.png"]', False]]
-    assert g["touched"] == [["\\includegraphics", "latex-cmd"]]
+    assert g["touched"] == [["\\includegraphics[width=2cm]{figs/a.png}", None]]        # touched, the same: never as written
 
 
 # -- font and size groups --------------------------------------------------------------------------------------------------
@@ -333,16 +335,16 @@ def test_font_and_size_groups_are_drawn_in_their_face_and_size_with_the_switch_h
                            ["l", "latex-s-large"], ["L", "latex-s-larger"], ["sf", "latex-sf"], ["tt", "latex-tt"], ["rm", "latex-rm"]]
     for opening in ("{\\songti ", "{\\heiti ", "{\\kaishu ", "{\\fangsong ", "{\\small ", "{\\large ", "{\\Large "):
         assert opening in g["hidden"], opening
-    # an argument is the command's, an empty group and one whose brace closes inside a formula are shown as written
-    assert ["\\small" in g["written"], "\\heiti" in g["written"], "\\large" in g["written"]] == [True, True, True]
+    # an argument's switch is hidden as a switch; an empty group and one whose brace closes inside a formula: hidden too
+    assert g["written"] == [] and "\\small " in g["hidden"] and "{\\heiti" in g["hidden"]
     assert [x[1] for x in g["read"]] == ["{\\heiti 不在正文}", "{\\songti 宋}", "{\\heiti 黑}", "{\\kaishu 楷}", "{\\fangsong 仿}", "{\\small s}", "{\\large l}",
-                                      "{\\Large L}", "{\\heiti}", "{\\large $a}"]   # \textbf{\small arg} is the command's argument
-    assert g["preamble"] == [[0, 'button.latex-preamble"收起导言区"']]   # read in the preamble, never drawn there
+                                      "{\\Large L}", "{\\heiti}", "{\\large $a}"]   # \\textbf{\\small arg} is the command's argument
+    assert g["preamble"] == [[0, 'div.latex-preamble-block[button.latex-preamble"导言区：文档类 ctexart，1 个宏包",div.latex-doc-mark"正文开始"]']]
 
 
 @needs_node
-def test_a_group_the_selection_touches_shows_its_source(look):
-    assert look["groups"]["touched"] == [["\\kaishu", "latex-cmd"]]       # the braces and the text as typed
+def test_a_group_the_selection_touches_is_drawn_the_same(look):
+    assert look["groups"]["touched"] == [["{\\kaishu ", None], ["楷", "latex-f-kai"]]   # B1: hidden and in its face still
 
 
 # -- the word count --------------------------------------------------------------------------------------------------------
@@ -356,7 +358,7 @@ def test_the_word_count_takes_cjk_characters_one_each_and_latin_words_and_leaves
     assert w["body"] == 14
     assert w["chapter"] == 5                                            # no preamble: the whole file is the body
     assert w["paper"] == len("Write the abstract here. Introduction Start writing here.".split())
-    assert look["fold"] == ["导言区：文档类 article，3 个宏包（已折叠，点开）", "导言区（已折叠，点开）", "导言区（已折叠，点开）"]
+    assert look["fold"] == ["导言区：文档类 article，3 个宏包", "导言区", "导言区"]   # B1: never opened here
 
 
 # -- drawn again only where needed, and in time ----------------------------------------------------------------------------
@@ -405,9 +407,9 @@ button('保存').fire('click'); await tick();
 out.saving = said();
 posts.shift().res({revision: 'r2', changed: true, previous: 'r1'}); await tick(); await tick();
 out.saved = said();
-button('显示源码').fire('click');
+button('显示代码').fire('click');
 out.source = {page: byClass('latex-page').className, likeWord: V.state.field(L._pure.wordField(CM).field, false) !== undefined};
-button('显示源码').fire('click');
+button('显示代码').fire('click');
 out.word = byClass('latex-page').className;
 await openFile('b.tex', {read_only: true, read_only_reason: 'generated', read_only_message: 'x'});
 out.readOnly = said();
@@ -444,9 +446,9 @@ def test_the_header_and_the_status_line_sit_in_the_texts_column_and_the_right_co
     c = p["columns"]
     assert c["body"] == ["latex-main", "latex-side"]
     assert c["main"] == ["latex-head", "latex-export", "node-sub", "node-sub", "latex-notice", "latex-editor", "latex-statusbar"]
-    assert c["side"][0] == "latex-format"
+    assert c["side"][0] == "latex-format"                              # 「显示代码」 heads it (B1)
     assert c["hint"] == ["选中一段文字，可以关联依据文件。"]               # under the panel
-    assert p["source"] == {"page": "latex-page is-source", "likeWord": False}   # 显示源码: the full width, nothing drawn
+    assert p["source"] == {"page": "latex-page is-source", "likeWord": False}   # 显示代码: the full width, nothing drawn
     assert p["word"] == "latex-page"
 
 
@@ -466,12 +468,12 @@ def test_every_new_word_goes_through_t_with_its_english():
         assert f't("{zh}"' in js, zh
         assert f'"{zh}": "{en}",' in i18n, zh
     assert '"{n} 字": {one: "{n} word", other: "{n} words"},' in i18n
-    assert '"导言区：文档类 {cls}，{n} 个宏包（已折叠，点开）": {one: "Preamble: class {cls}, {n} package (folded, click to open)",' in i18n
+    assert '"导言区：文档类 {cls}，{n} 个宏包": {one: "Preamble: class {cls}, {n} package", other: "Preamble: class {cls}, {n} packages"},' in i18n
     assert '"摘要": "Abstract",' in i18n
 
 
 def _section(js: str) -> str:
-    return js[js.index("// -- the page's look (22.12 B)"):js.index("// The preamble is folded from the file's start")]
+    return js[js.index("// -- the page's look (22.12 B)"):js.index("// The preamble is folded from the file's start")] + js[js.index("// -- the edit view (22.1;"):js.index("// The innermost place `pos` is in:")]
 
 
 def test_the_pages_blocks_use_words_never_a_glyph_or_an_arrow():

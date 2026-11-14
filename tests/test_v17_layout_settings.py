@@ -764,14 +764,16 @@ out.numbers.after = {pre: pre(), secnum: row('章节编号'), capnum: row('图�
 out.mine = {pagestyle: row('页码'), hyperref: row('超链接')};
 inside(item('页码'), (e) => e.tag === 'button' && e.textContent === '看这一行')[0].fire('click');
 out.shownLine = V.state.doc.lineAt(V.state.selection.main.head).number;
+out.shownInCode = byClass('latex-page').classList.contains('is-source');   // lines are the code's (B1)
+button('显示代码').fire('click');
 // the save sends what the selects wrote as typed edits
 button('保存').fire('click'); await tick();
 out.saved = posts.length ? posts[0].body.edits.length : 0;
 posts.shift().res({revision: 'r2', changed: true, previous: 'r1'}); await tick(); await tick();
-// 显示源码 turns 版式 off with its reason
-button('显示源码').fire('click');
+// 显示代码 (B1) leaves 版式 working: it edits the preamble, code or not
+button('显示代码').fire('click');
 out.source = {head: words(inside(layoutPane(), (e) => e.classList.contains('latex-layout-head'))[0]), off: sel('页边距').disabled && sel('章节编号').disabled};
-button('显示源码').fire('click');
+button('显示代码').fire('click');
 out.sourceOff = sel('页边距').disabled;
 // 格式's 段落 and the further insertions
 tab('格式').fire('click');
@@ -844,7 +846,7 @@ def panel() -> dict:
 def test_a_chapter_shows_its_main_files_layout_read_only_with_a_link_to_the_main_file(panel):
     ch = panel["chapter"]
     assert ch["head"] == ["版式在主文件 paper/main.tex 里设置。", "打开 paper/main.tex"]
-    assert ch["groups"] == ["页面", "文字与段落", "章节与图表"]
+    assert ch["groups"] == ["文档信息", "页面", "文字与段落", "章节与图表"]   # 文档信息 first (B1)
     assert ch["labels"] == ["页边距", "分栏", "页码", "超链接", "正文字号", "行距", "首行缩进", "段间距", "章节编号", "图表名称", "图表编号"]
     assert ch["margin"]["value"] == "2" and ch["spacing"]["value"] == "1.5"
     assert ch["secnum"]["value"] == "" and ch["capname"]["value"] == "en" and ch["capnum"]["value"] == ""
@@ -906,9 +908,10 @@ def test_heading_numbers_and_captions_on_the_page_say_what_a_document_cannot_tak
 
 
 @needs_node
-def test_show_source_a_read_only_main_and_a_file_without_a_main_turn_the_layout_off_with_a_reason(panel):
-    assert panel["source"] == {"head": ["正在显示源码。关掉「显示源码」后可以用格式与插入。"], "off": True}
+def test_show_code_leaves_the_layout_on_and_a_read_only_main_and_a_file_without_a_main_turn_it_off_with_a_reason(panel):
+    assert panel["source"] == {"head": [], "off": False}         # 显示代码 (B1): 版式 edits the preamble, code or not
     assert panel["sourceOff"] is False
+    assert panel["shownInCode"] is True                           # 看这一行 shows the line in 显示代码
     assert panel["readOnly"] == {"head": ["这个文件只能查看，不能用格式与插入。"], "off": True}
     assert panel["noMain"] == ["没有找到主文件。版式在主文件的导言区里设置。"]
 

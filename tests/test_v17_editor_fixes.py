@@ -17,52 +17,40 @@ needs_node = pytest.mark.skipif(NODE is None, reason="node is not installed")
 MODEL = ("\\section{模型}\n设汇率为 $e_t$，则\n\\begin{equation}\n  \\Delta e_t = \\alpha + \\beta\\, s_t + \\varepsilon_t,"
          " \\qquad \\varepsilon_t \\sim N(0,\\sigma^2).\n  \\label{eq:main}\n\\end{equation}\n式 \\eqref{eq:main} 是基准。\n")
 
+# B1 (22.1, the researcher, 2026-11-14: "编辑的时候是看不到latex代码的"): the heading is a heading wherever the cursor is --
+# at 0 as the file opens, focused, or inside the heading's own words; the rule of 8439d3c (source on touch, kept off
+# until the first focus) is gone with the rule it worked around.
 _OPENED = r"""
 window.katex = kctx.katex;
 const MODEL = __MODEL__;
 const shown = (st) => { const g = []; st.field(F.field).deco.between(0, st.doc.length, (f, t, v) =>
   g.push(st.doc.sliceString(f, t) + '=' + (v.spec.class || (v.spec.widget ? v.spec.widget.constructor.name : 'hidden')))); return g; };
-const fresh = () => CM.EditorState.create({doc: MODEL, extensions: [P.wordExtensions(CM)]});
-// as the editor loads a file: the cursor CodeMirror puts at 0, nothing focused yet
-let st = fresh().update({effects: F.live.of(false)}).state;
-out.opened = shown(st);
-out.cursor = st.selection.main.head;
-// KaTeX arriving after the file is open draws again, still not as source
-let late = CM.EditorState.create({doc: MODEL, extensions: [P.wordExtensions(CM)]});
-out.lateMath = shown(late.update({effects: F.live.of(false)}).state.update({effects: F.mathOn.of(true)}).state);
-// the first focus: what the focus facet answers turns the selection's rule on, and the cursor at 0 now shows the source
-const focusing = st.facet(CM.EditorView.focusChangeEffect).map((f) => f(st, true)).filter(Boolean);
-out.focusEffects = focusing.length;
-st = st.update({effects: focusing}).state;
-out.focused = shown(st);
-out.again = st.facet(CM.EditorView.focusChangeEffect).map((f) => f(st, true)).filter(Boolean).length;
-st = st.update({selection: {anchor: MODEL.length - 3}}).state;
-out.lastLine = shown(st);
+const at = (pos) => CM.EditorState.create({doc: MODEL, selection: {anchor: pos}, extensions: [P.wordExtensions(CM)]});
+out.opened = shown(at(0));
+out.inHeading = shown(at(MODEL.indexOf('模型') + 1));
+out.lastLine = shown(at(MODEL.length - 3));
+out.focusFacet = at(0).facet(CM.EditorView.focusChangeEffect).map((f) => f(at(0), true)).filter(Boolean).length;
 console.log(JSON.stringify(out));
 """
 
 
 @needs_node
-def test_model_tex_opens_with_its_section_as_a_heading_until_the_editor_is_focused():
+def test_model_tex_shows_its_section_as_a_heading_wherever_the_cursor_is():
     import json
     out = _node(_OPENED.replace("__MODEL__", json.dumps(MODEL)))
-    assert out["cursor"] == 0
-    for drawn in (out["opened"], out["lateMath"]):
+    for drawn in (out["opened"], out["inHeading"], out["lastLine"]):
         assert "模型=latex-h latex-h2" in drawn and "\\section{=hidden" in drawn and "}=hidden" in drawn
-        assert "\\section=latex-cmd" not in drawn
-    assert out["focusEffects"] == 1 and out["again"] == 0         # once a file, then the field stays live
-    assert "\\section=latex-cmd" in out["focused"] and "模型=latex-h latex-h2" not in out["focused"]
-    assert "模型=latex-h latex-h2" in out["lastLine"]
-    assert any(d.startswith("\\begin{equation}") and d.endswith("=MathWidget") for d in out["lastLine"])
+        assert not any(d.endswith("=latex-cmd") for d in drawn)       # never the code
+        assert any(d.startswith("\\begin{equation}") and d.endswith("=MathW") for d in drawn)
+    assert out["opened"] == out["inHeading"] == out["lastLine"]        # nothing drawn depends on the cursor
+    assert out["focusFacet"] == 0                                      # no first-focus rule any more
 
 
-def test_the_editor_loads_a_file_with_the_selection_rule_off_unless_it_has_the_focus():
+def test_the_editor_loads_a_file_with_no_selection_rule_and_its_code_by_the_switch():
     js = (WEBAPP / "latex.js").read_text(encoding="utf-8")
-    load = js[js.index("  function load(me, file) {"):js.index("  // 显示源码 (22.1)")]
-    assert "const focused = !!(me.view && me.view.hasFocus);" in load
-    assert "state.update({ effects: wordField(CM).live.of(false) })" in load
-    toggle = js[js.index("  function toggleSource(me) {"):js.index("  function mathWhenShown(me) {")]
-    assert "if (!on && !me.view.hasFocus) me.view.dispatch({ effects: wordField(me.CM).live.of(false) });" in toggle
+    load = js[js.index("  function load(me, file) {"):js.index("  // 显示代码 (22.1, B1;")]
+    assert "hasFocus" not in load and ".live.of(" not in load
+    assert "me.wordComp.of(code ? [] : wordExtensions(CM, { say: (s) => sayEdit(me, s) }))" in load
 
 
 # -- words, not glyphs (22.6 "the toolbar is words, with no emoji, arrow or glyph") --------------------------------------
@@ -81,11 +69,11 @@ def _ui_strings(js: str) -> list[str]:
 def test_latex_js_shows_no_chevron_or_arrow_as_ui_text_and_draws_none_in_css():
     js = (WEBAPP / "latex.js").read_text(encoding="utf-8")
     said = _ui_strings(js)
-    assert len(said) > 100 and "导言区（已折叠，点开）" in said and "收起导言区" in said
+    assert len(said) > 100 and "导言区：文档类 {cls}，{n} 个宏包" in said and "显示代码" in said
     assert [s for s in said if any(g in s for g in _GLYPHS)] == []
     assert "has-chevron" not in js                                  # the CSS chevron of 12.13 is not used here either
     i18n = (WEBAPP / "i18n.js").read_text(encoding="utf-8")
-    for zh in ("导言区（已折叠，点开）", "收起导言区"):
+    for zh in ("导言区", "显示代码"):
         english = re.search(r'"%s": "([^"]*)"' % re.escape(zh), i18n).group(1)
         assert english and not any(g in english for g in _GLYPHS)
 
@@ -180,14 +168,15 @@ def test_a_link_acts_undo_names_what_it_takes_back_and_stands_with_its_status_ap
     assert 'return done === t("已记录：仍然成立") ? t("撤销“仍然成立”") : t("撤销“是这段”");' in words
     assert "撤销这次确认" not in js
     assert "me.ui.undoLink.textContent = undoActWords(action, done);" in js
-    assert "said.append(status, undoLink);" in js and "tools.append(save, undo, exported.button, source, said);" in js
+    # 显示代码 left the header for the right column (B1)
+    assert "said.append(status, undoLink);" in js and "tools.append(save, undo, exported.button, said);" in js
     i18n = (WEBAPP / "i18n.js").read_text(encoding="utf-8")
     for zh, en in (("撤销这次关联", "Undo this link"), ("撤销这次撤回", "Undo this withdrawal"),
                    ("撤销“是这段”", "Undo “This is the passage”"), ("撤销“仍然成立”", "Undo “Still holds”")):
         assert f'"{zh}": "{en}",' in i18n
 
 
-# -- the real path: L.open() and 显示源码 under the editor's driver (review of 8439d3c) --------------------------------
+# -- the real path: L.open() and 显示代码 under the editor's driver (review of 8439d3c; B1) -----------------------------
 
 _OPEN_DRIVEN = r"""
 const out = {}, MODEL = __MODEL__;
@@ -204,12 +193,12 @@ await tick(); await tick(); await tick();
 const V = viewsMade[viewsMade.length - 1];
 out.cursor = V.state.selection.main.head;
 out.opened = shown(V.state);
-const source = byClass('latex-source');
+const source = button('显示代码');
 source.fire('click'); await tick();
 out.sourceOn = shown(V.state);
 source.fire('click'); await tick();
 out.sourceOff = shown(V.state);
-V.hasFocus = true;                                   // with the focus the cursor at 0 shows the heading's source
+V.hasFocus = true;                                   // the focus changes nothing drawn (B1)
 source.fire('click'); await tick(); source.fire('click'); await tick();
 out.focusedOff = shown(V.state);
 // 是这段 on the waiting passage: its undo is named after what the status said
@@ -225,7 +214,7 @@ console.log(JSON.stringify(out));
 
 
 @needs_node
-def test_l_open_shows_model_tex_section_as_a_heading_and_show_source_twice_keeps_it_until_focused():
+def test_l_open_shows_model_tex_section_as_a_heading_and_show_code_twice_keeps_it_focused_or_not():
     import json
     import subprocess
 
@@ -242,8 +231,8 @@ def test_l_open_shows_model_tex_section_as_a_heading_and_show_source_twice_keeps
     for drawn in (out["opened"], out["sourceOff"]):
         assert "模型=latex-h latex-h2" in drawn and "\\section{=hidden" in drawn, drawn
         assert "\\section=latex-cmd" not in drawn
-    assert out["sourceOn"] is None                                       # 显示源码: no word field at all
-    assert "模型=latex-h latex-h2" not in out["focusedOff"]              # focused: the cursor's construct as source
+    assert out["sourceOn"] is None                                       # 显示代码: no word field at all
+    assert "模型=latex-h latex-h2" in out["focusedOff"]                  # focused: still the heading, never its code
     assert out["reanchor"] == "/api/latex/evidence/reanchor"
     assert out["status"] == "已记录：是这段"
     assert out["undoWords"] == "撤销“是这段”" and not out["undoHidden"]
