@@ -152,7 +152,7 @@ def test_the_default_folder_is_the_document_folder_else_paper_else_manuscript(ro
     ("/etc", "x", "path"),                   # an absolute folder is not read as one inside the project
     ("paper/ chapters", "x.tex", "path"),    # nor a folder spelt with a space at its edge
     ("paper", "main", "exists"),
-    ("paper", "MAIN.tex", "exists"),         # the volume ignores case: still that file
+    ("paper", "MAIN.tex", "exists"),         # another case: that file on a Mac, a clash once synced to one from Linux
     (None, "x", "invalid"),
 ])
 def test_every_path_the_editor_could_not_open_is_refused_and_nothing_is_written(root, tmp_path, folder, name, code):

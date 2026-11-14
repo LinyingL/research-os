@@ -598,7 +598,8 @@ def _new_path(root: Path, folder: Any, name: Any) -> tuple[str, str | None]:
     no component starting with `.` or `-`, none with a TeX special character, a slash or backslash or a character one
     cannot see, none over 180 bytes, no symbolic link, not only in the cloud, lower-case `.tex` (added when the name has
     none) --, an existing folder typed in another case or Unicode form taken as it is spelt on disk, at most one new
-    folder level, and never a file that exists (409 `exists`). Nothing is written."""
+    folder level, and never a file that exists, nor one only another case or Unicode form away on any volume (409
+    `exists`). Nothing is written."""
     if not isinstance(folder, str) or not isinstance(name, str):
         raise _refuse("invalid", "A new draft needs a folder and a name", "请填写文件夹和文件名")
     name, folder = name.strip(), folder.strip().rstrip("/")   # a leading "/" is an empty component, refused below
@@ -650,6 +651,16 @@ def _new_path(root: Path, folder: Any, name: Any) -> tuple[str, str | None]:
                            "A draft is made only inside the project, with no symbolic link on its path") from exc
     except (ValueError, OSError) as exc:
         raise _new_refused("这个路径不能用作文稿", f"This path cannot be a draft: {exc}") from exc
+    if not exists and created is None:
+        # a name another file has but for case or Unicode form: one file on a Mac, two on Linux, and a clash for
+        # the project once it is synced to a Mac -- refused on every volume, named as it is on disk
+        try:
+            same = [n for n in os.listdir(current) if files_ingest.fold(n) == files_ingest.fold(parts[-1])]
+        except OSError as exc:
+            raise _refuse("unreadable", f"Cannot read the folder of {rel}: {exc}",
+                          "文件夹无法读取，请先检查项目文件", 409) from exc
+        if same:
+            exists, rel = True, "/".join(parts[:-1] + [sorted(same)[0]])
     if exists:
         raise _refuse("exists", f"{rel} already exists", f"已经有这个文件了：{rel}", 409)
     return rel, created

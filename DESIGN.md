@@ -8039,8 +8039,10 @@ project, so a paper had to be started outside Research OS. Now it starts here.
   some 70 to the volume's 255); no symbolic link anywhere on it; not only in
   the cloud (409 `cloud`); lower-case `.tex` (`x.TEX` is refused, not renamed);
   an existing folder typed in another case or Unicode form is taken as it is
-  spelt on disk; at most one new folder; never over a file that exists, 409
-  「已经有这个文件了：{path}」. Each refusal says what is wrong, in either
+  spelt on disk; at most one new folder; never over a file that exists, nor
+  beside one whose name differs only in case or Unicode form (on any volume:
+  two files on Linux are one clash once the project is synced to a Mac), 409
+  「已经有这个文件了：{path}」 with the name as it is on disk. Each refusal says what is wrong, in either
   language, and is made before anything is written. The file is written from a
   template kept in the code (no bibliography), UTF-8 with LF, through the human
   write path: `write_guard(human=True)`, exclusive creation, a history entry,
