@@ -257,6 +257,7 @@
   }
   const VERB_LIKE = new Set(["lstinline", "Verb", "path", "mintinline", "spverb"]);
   const URL_LIKE = new Set(["url", "nolinkurl", "href"]);
+  const RAW_CMDS = new Map([...Array.from(VERB_LIKE, (n) => [n, 1]), ...Array.from(URL_LIKE, (n) => [n, 2])]);
 
   // The end of math whose content starts at `from`, closed by `close`: the index after the close, or -1 when a blank
   // line (which TeX refuses in math) or the end comes first.
@@ -319,7 +320,8 @@
         i = e;
         continue;
       }
-      if (VERB_LIKE.has(name)) {   // \lstinline, \Verb, \path, \mintinline{lang}: raw text, as \verb's, between any two
+      const rawKind = RAW_CMDS.get(name);   // one lookup a command (the reader runs on every key)
+      if (rawKind === 1) {   // \lstinline, \Verb, \path, \mintinline{lang}: raw text, as \verb's, between any two
         let at = e + star;          // delimiters or in braces
         if (text[at] === "[") { const g = skipGroup(text, at, true); if (g > 0) at = g; }
         if (name === "mintinline" && text[at] === "{") { const g = skipGroup(text, at, true); if (g > 0) at = g; }
@@ -364,7 +366,7 @@
         continue;
       }
       const role = HEADINGS.has(name) ? "heading" : STYLES.has(name) ? "style" : CITE_RE.test(name) ? "cite" : REFS.has(name) ? "ref" : name === "item" ? "item" : "other";
-      const cmd = { name: name, role: role, from: i, nameTo: e + star, to: e + star, args: [] };
+      const cmd = { name: name, role: role, from: i, nameTo: e + star, to: e + star, args: [], raw: 0 };
       if (GROUP_CLASSES.has(name) && !star) {   // {\heiti …}: a group of its own, not a command's argument (as declAt reads it)
         let o = i - 1;
         while (o >= 0 && (text[o] === " " || text[o] === "\t")) o -= 1;
@@ -378,7 +380,7 @@
         }
       }
       let at = cmd.nameTo;
-      if (URL_LIKE.has(name) && text[at] === "{") {   // a web address is read as hyperref reads it: % and # are its own
+      if (rawKind === 2 && text[at] === "{") {   // a web address is read as hyperref reads it: % and # are its own
         const g = rawGroup(text, at);
         if (g > 0) { cmd.args.push({ from: at, to: g, opt: false }); argStarts.add(at); cmd.raw = g; at = g; }
       }
@@ -969,6 +971,7 @@
     const counts = { chapter: 0, section: 0, subsection: 0, subsubsection: 0, figure: 0, table: 0, note: 0 };
     const floats = read.envs.filter((e) => e.endFrom < e.to && (FIGURE_FLOATS.has(e.name) || TABLE_FLOATS.has(e.name)));
     let lost = false, target = null;
+    const theorems = read.envs.filter((e) => e.role === "text" && !PLAIN_TEXT_ENVS.has(e.name.replace(/\*$/, "")));
     const secNo = (lvl) => { const k = levels.indexOf(lvl); return k < 0 ? null : levels.slice(0, k + 1).map((l) => counts[l]).join("."); };
     for (const c of read.cmds) {
       if (c.from < read.preamble.to) continue;
@@ -1001,7 +1004,7 @@
       if (c.name === "label" && c.args.length) {
         const key = text.slice(c.args[0].from + 1, c.args[0].to - 1).trim();
         // in a theorem (and its like) a label names the theorem, whose number is not counted here: unknown
-        const own = read.envs.some((e) => e.role === "text" && !PLAIN_TEXT_ENVS.has(e.name.replace(/\*$/, "")) && e.beginTo <= c.from && c.from < e.endFrom);
+        const own = theorems.some((e) => e.beginTo <= c.from && c.from < e.endFrom);
         if (key && !out.labels.has(key)) out.labels.set(key, own ? null : target);
       }
     }
