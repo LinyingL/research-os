@@ -433,7 +433,7 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-tab-pane { display: flex; flex-direction: column; gap: .7rem; }
 .latex-format-group + .latex-format-group { border-top: 1px solid var(--line); padding-top: .7rem; }
 .latex-format-group { display: flex; flex-direction: column; gap: .35rem; }
-.latex-format-title { margin: 0; font-size: .74rem; font-weight: 600; color: var(--gray); }
+.latex-format-title { margin: 0; font-size: .75rem; font-weight: 600; color: var(--gray); }
 .latex-format-row { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .4rem; }
 .latex-format-label { font-size: .76rem; color: var(--ink-soft); white-space: nowrap; }
 .latex-format-field { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .2rem .3rem; max-width: 100%; min-width: 0; }
@@ -443,7 +443,7 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-side-rest > p { margin: 0; }
 .latex-file-name { min-width: 0; overflow-wrap: anywhere; font-family: var(--font-sans); }
 .latex-tool[aria-pressed="true"] { border-color: var(--ink); background: var(--paper); }
-.latex-key { font-size: .7rem; color: var(--gray); }
+.latex-key { font-size: .75rem; color: var(--gray); }
 .latex-format-reason, .latex-format-note { margin: 0; }
 .latex-picker { display: flex; flex-direction: column; align-items: flex-start; gap: .4rem; padding: .5rem .6rem; background: var(--paper-alt); border: 1px solid var(--line); }
 .latex-images, .latex-bibs { width: 100%; display: flex; flex-direction: column; gap: .2rem; max-height: 14rem; overflow: auto; }
@@ -475,7 +475,7 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-f-song { font-family: var(--font-serif); } .latex-f-hei { font-family: var(--font-sans); }
 .latex-f-kai { font-family: "Kaiti SC", STKaiti, KaiTi, var(--font-serif); }
 .latex-s-small { font-size: .9em; } .latex-s-large { font-size: 1.2em; } .latex-s-larger { font-size: 1.44em; }
-.latex-doc-mark { display: flex; align-items: center; gap: .6rem; padding: .3rem 1rem; font-family: var(--font-sans); font-size: .72rem; line-height: 1.4; color: var(--gray); }
+.latex-doc-mark { display: flex; align-items: center; gap: .6rem; padding: .3rem 1rem; font-family: var(--font-sans); font-size: .75rem; line-height: 1.4; color: var(--gray); }
 .latex-doc-mark::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
 .latex-titleblock { padding: 1rem 1rem 1.4rem; text-align: center; line-height: 1.45; }
 .latex-title { font-family: var(--font-serif); font-size: 1.65rem; font-weight: 600; }
@@ -515,7 +515,7 @@ span.latex-graphic .latex-graphic-thumb { max-height: 4rem; }
 .latex-chip-block { display: block; margin: .3rem 1rem; padding: .3rem .6rem; text-align: center; }
 .latex-math-tag { font-family: var(--font-sans); font-size: .78rem; color: var(--gray); border: 1px dashed var(--line-strong); border-radius: 3px; padding: 0 .3em; }
 div.latex-math-tag { display: block; width: fit-content; margin: .2rem auto; }
-.latex-note-mark { font-family: var(--font-sans); font-size: .7em; color: var(--ink-soft); cursor: pointer; padding: 0 .1em; }
+.latex-note-mark { font-family: var(--font-sans); font-size: .75em; color: var(--ink-soft); cursor: pointer; padding: 0 .1em; }
 .latex-line-mark { display: flex; align-items: center; gap: .6rem; padding: .3rem 1rem; font-family: var(--font-sans); font-size: .76rem; color: var(--gray); }
 .latex-line-mark::after { content: ""; flex: 1; border-top: 1px dashed var(--line); }
 .latex-preamble-block .latex-preamble { cursor: pointer; }

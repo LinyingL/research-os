@@ -866,11 +866,16 @@
     ["text", ["", 1]], ["makebox", ["", 1]], ["fbox", ["latex-boxed", 1]], ["framebox", ["latex-boxed", 1]], ["textcolor", ["", 2]], ["parbox", ["", 2]], ["raisebox", ["", 2]], ["hyperref", ["", 1]],
     ["colorbox", ["", 2]], ["uline", ["latex-u", 1]], ["CJKunderline", ["latex-u", 1]], ["sout", ["latex-strike", 1]], ["hl", ["", 1]], ["enquote", ["", 1]],
     ["foreignlanguage", ["", 2]]]);
-  // a line of its own in the edit view, said in words
-  const LINE_WORDS = { tableofcontents: () => t("目录（导出时生成）"), listoffigures: () => t("图目录（导出时生成）"),
-    listoftables: () => t("表目录（导出时生成）"), newpage: () => t("分页"), clearpage: () => t("分页"), cleardoublepage: () => t("分页"),
-    pagebreak: () => t("分页"), printbibliography: () => t("参考文献（导出时生成）"), bibliography: () => t("参考文献（导出时生成）"),
-    appendix: () => t("附录") };
+  // a line of its own in the edit view, said in words (looked up when said, 13.6)
+  const LINE_COMMANDS = new Set(["tableofcontents", "listoffigures", "listoftables", "newpage", "clearpage", "cleardoublepage", "pagebreak",
+    "printbibliography", "bibliography", "appendix"]);
+  function lineWords(n) {
+    if (n === "tableofcontents") return t("目录（导出时生成）");
+    if (n === "listoffigures") return t("图目录（导出时生成）");
+    if (n === "listoftables") return t("表目录（导出时生成）");
+    if (n === "printbibliography" || n === "bibliography") return t("参考文献（导出时生成）");
+    return n === "appendix" ? t("附录") : t("分页");
+  }
   const HIDDEN_CMDS = new Set(["label", "bibliographystyle", "nocite", "addbibresource"]);
   const REF_LIKE = /^(?:ref|eqref|autoref|Autoref|cref|Cref|pageref|nameref|vref)$/;
   const INCLUDE_CMDS = new Set(["input", "include", "subfile", "import", "subimport"]);
@@ -1326,8 +1331,8 @@
           } else atom(c.from, c.nameTo, new ChipW(t("标题"), "unit"), { kind: "unit" });
           continue;
         }
-        if (Object.prototype.hasOwnProperty.call(LINE_WORDS, n)) {
-          const words = LINE_WORDS[n]();
+        if (LINE_COMMANDS.has(n)) {
+          const words = lineWords(n);
           if (alone(c.from, c.to)) { const l = lineOf(c.from); atom(l.from, l.to, new BlockW("l" + words, () => mk("div", "latex-line-mark", words)), { block: true, kind: "line" }); }
           else atom(c.from, c.to, new ChipW(words, "unit"), { kind: "unit" });
           continue;
@@ -4730,16 +4735,17 @@
   // Under the switch, in the edit view: where what the cursor is at (or has selected) is changed -- a table, a
   // formula, anything shown as a chip: 「…要在「显示代码」里改」 with a link that turns the code on there; a footnote:
   // its words, changed here; and a sentence the edit view said, until the cursor moves.
-  const CHANGED_IN_CODE = { table: () => t("表格内容要在「显示代码」里改。"), math: () => t("公式要在「显示代码」里改。"),
-    unit: () => t("这部分要在「显示代码」里改。"), verbatim: () => t("这部分要在「显示代码」里改。"), verb: () => t("这部分要在「显示代码」里改。"),
-    url: () => t("这部分要在「显示代码」里改。") };
+  const CHANGED_IN_CODE = new Set(["table", "math", "unit", "verbatim", "verb", "url"]);
+  function changedInCode(kind) {   // looked up when said (13.6)
+    return kind === "table" ? t("表格内容要在「显示代码」里改。") : kind === "math" ? t("公式要在「显示代码」里改。") : t("这部分要在「显示代码」里改。");
+  }
   function unitAt(me) {
     const st = me.view.state, v = st.field(wordField(me.CM).field, false);
     if (!v) return null;
     const sel = st.selection.main, got = [];
     v.atoms.between(sel.from, sel.to, (from, to, d) => {
       const k = d.spec.kind;
-      if (!d.spec.atom || !(k === "footnote" || CHANGED_IN_CODE[k])) return;
+      if (!d.spec.atom || !(k === "footnote" || CHANGED_IN_CODE.has(k))) return;
       if (sel.empty ? from === sel.head || to === sel.head : from <= sel.from && sel.to <= to || (sel.from <= from && to <= sel.to)) got.push({ from: from, to: to, kind: k });
     });
     return got.find((x) => x.to === sel.head) || got[0] || null;
@@ -4762,7 +4768,7 @@
         const go = mkButton(t("在「显示代码」里改"), "ws-text-link", () => codeAt(me, u.from));
         go.addEventListener("mousedown", (event) => event.preventDefault());
         const p = mk("p", "node-sub latex-context-line");
-        p.append(mk("span", null, CHANGED_IN_CODE[u.kind]()), " ", go);
+        p.append(mk("span", null, changedInCode(u.kind)), " ", go);
         parts.push(p);
       }
     }
