@@ -176,7 +176,34 @@ def read_tex(root: str | Path, rel: Any, lang: str = "zh", links: bool = True) -
     raw = _read(root, rel)
     opened = _opened(root, rel, raw)
     payload = _payload(rel, raw, opened, lang)
-    return {**payload, **include_links(root, rel, opened["text"])} if links else payload
+    if not links:
+        return payload
+    found = include_links(root, rel, opened["text"])
+    if not opened["read_only"]:
+        found["format"] = format_facts(root, rel, found["mains"])
+    return {**payload, **found}
+
+
+#: The most of a main file's preamble 格式与插入 is given (22.12): what comes before `\begin{document}`.
+PREAMBLE_LIMIT = 64 * 1024
+
+
+def format_facts(root: Path, rel: str, mains: list[str]) -> dict[str, Any]:
+    """What 格式与插入 (22.12) needs of the main file the export would compile `rel` in: its path, the engine the
+    export would use, the folder TeX runs in (the main file's; with none, the draft's own) and, when that main file is
+    another file, its preamble (the text before `\\begin{document}`, at most `PREAMBLE_LIMIT`), from which the page
+    reads the class, the packages and `\\graphicspath`. The open file's own preamble the page reads from what it
+    holds. Reads files, runs nothing."""
+    from researchos import latex_export   # it imports this module
+
+    main, engine = latex_export.planned(root, rel, mains)
+    facts: dict[str, Any] = {"main": main, "engine": engine, "folder": posixpath.dirname(main or rel), "preamble": None}
+    if main and main != rel:
+        _known, text_of = tex_reader(root, [main])
+        text = text_of(main)
+        at = text.find("\\begin{document}")
+        facts["preamble"] = (text if at < 0 else text[:at])[:PREAMBLE_LIMIT]
+    return facts
 
 
 # -- includes and the main file (22.1 "One file at a time", 22.4 "Which file") --------------------------------------
@@ -1007,6 +1034,61 @@ def _own_paper(root: Path, draft: str) -> set[str]:
         own.add(posixpath.splitext(main)[0] + ".pdf")
     own.update(e["pdf"] for e in papers.exports(root) if e["main"] in mains and isinstance(e["pdf"], str))
     return {files_ingest.fold(rel) for rel in own}
+
+
+#: What 格式与插入's 图片 offers (22.12): the files `\includegraphics` takes in the engines of 22.4.
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".pdf", ".eps")
+#: The most images or bibliography entries one answer lists, and the most `.bib` files read for it.
+INSERT_LIMIT = 2000
+BIB_FILE_LIMIT = 50
+
+
+def _bib_text(value: Any, limit: int) -> str:
+    text = re.sub(r"\s+", " ", re.sub(r"[{}]", "", value or "")).strip()
+    return text[:limit]
+
+
+def insertables(root: str | Path, rel: Any, what: Any) -> dict[str, Any]:
+    """What 格式与插入's pickers offer for the draft `rel` (22.12), read without writing: `what` = `images`, the
+    project's image files as the scan walks it (no hidden folder, no symlink), never a PDF exported from the draft's
+    paper (`_own_paper`), each with `thumb` when the asset route can show it (21.5); `bib`, the entries of the
+    project's `.bib` files (key, author, year, title, the file), each file read as `tex_reader` reads a draft (a
+    regular file, not only in the cloud, at most 2 MB), the first entry of a key kept. At most `INSERT_LIMIT` (`more`)."""
+    from researchos import kind_rows
+    from researchos.ingest import latex as latex_ingest
+
+    root = workspace._root(root)  # noqa: SLF001
+    rel = checked_path(root, rel)
+    if what == "images":
+        try:
+            own = _own_paper(root, rel)
+        except (WorkspaceError, OSError, ValueError):
+            own = {files_ingest.fold(rel)}
+        images, walked = [], 0
+        for path, _category in files_ingest.iter_files(root):
+            walked += 1
+            if walked > _FILE_WALK_LIMIT or len(images) > INSERT_LIMIT:
+                break
+            if path.lower().endswith(IMAGE_SUFFIXES) and files_ingest.fold(path) not in own:
+                images.append({"path": path, "thumb": kind_rows.thumbnail(root, path)})
+        return {"images": images[:INSERT_LIMIT], "more": len(images) > INSERT_LIMIT}
+    if what == "bib":
+        bibs = [path for path, _c in itertools.islice(files_ingest.iter_files(root), _FILE_WALK_LIMIT)
+                if path.lower().endswith(".bib")][:BIB_FILE_LIMIT]
+        _known, text_of = tex_reader(root, bibs)
+        entries: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for bib in bibs:
+            for entry in latex_ingest.parse_bib_entries(text_of(bib)):
+                key = entry.key.strip()
+                if not key or key.casefold() in seen or re.search(r"[\s,{}%\\#]", key):
+                    continue
+                seen.add(key.casefold())
+                entries.append({"key": key, "author": _bib_text(entry.fields.get("author"), 120),
+                                "year": _bib_text(entry.fields.get("year"), 12),
+                                "title": _bib_text(entry.fields.get("title"), 160), "file": bib})
+        return {"files": bibs, "entries": entries[:INSERT_LIMIT], "more": len(entries) > INSERT_LIMIT}
+    raise _refuse("invalid", f"{what!r} is not a list 格式与插入 offers", "内容格式不对，请检查后重试")
 
 
 def supporting_files(root: str | Path, query: Any, limit: int = 50, draft: Any = None) -> dict[str, Any]:

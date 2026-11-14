@@ -536,6 +536,7 @@ GET_ROUTES: dict[str, tuple[str, str]] = {
     "/api/latex/files": ("read", "/api/latex/files?q=fig"),   # 22.2: the link panel's file search
     "/api/latex/drafts": ("read", "/api/latex/drafts"),   # 22.10: 正文's list of drafts
     "/api/latex/export": ("read", "/api/latex/export?path=paper/main.tex"),   # 22.4: the export's settings line
+    "/api/latex/insert": ("read", "/api/latex/insert?path=paper/main.tex&what=images"),   # 22.12: 格式与插入's pickers
     "/api/workspace/asset": ("read", "/api/workspace/asset?path=figs/fig1.png"),
     "/api/summary": ("read", "/api/summary"),
     "/api/settings/llm": ("read", "/api/settings/llm"),

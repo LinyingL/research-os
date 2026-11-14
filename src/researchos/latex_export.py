@@ -413,6 +413,24 @@ def choices(root: str | Path, path: Any) -> dict[str, Any]:
     return answer
 
 
+def planned(root: Path, rel: str, mains: list[str]) -> tuple[str | None, str | None]:
+    """The main file and engine an export of `rel` would use now, for 格式与插入 (22.12), read without writing: the
+    person's kept main file, else the only one, else the first of several (the export would ask); the kept engine,
+    else the preset. Where this person may not write (a project opened read-only) nothing kept is read. (None, None)
+    with no main file."""
+    try:
+        pid = workspace._require_write(root)  # noqa: SLF001
+    except WorkspaceError:
+        pid = None
+    if not mains:
+        return None, None
+    main = (_chosen(MAIN_SETTING, f"{pid}/{rel}", None, mains) if pid else None) or mains[0]
+    _known, text_of = latex_edit.tex_reader(root, [])
+    engine = ((_chosen(ENGINE_SETTING, f"{pid}/{main}", None, ENGINES) if pid else None)
+              or preset_engine(_closure(root, main, text_of), text_of))
+    return main, engine
+
+
 def export(root: str | Path, body: Any, lang: str = "zh", *, guard: Callable[[], Any] | None = None,
            timeout: float = TIMEOUT_S) -> dict[str, Any]:
     """「导出 PDF」 (22.4) for `{path, main?, engine?, pdf?}`: an answer that exports, asks (`ask`: `main` with the

@@ -7323,7 +7323,7 @@ for nothing. `~/paperleaf` (an unfinished, never-run prototype) is not reused.
 The parts: 22.1 the editor; 22.2 passages and their supporting files; 22.3 the
 kinds of evidence; 22.4 export to PDF; 22.5 a team; 22.6 words; 22.7
 presentation; 22.8 batches and acceptance; 22.9 what the review changed; 22.10
-正文 in the sidebar.
+正文 in the sidebar; 22.11 新建文稿; 22.12 格式与插入.
 
 ### 22.0 Rulings that need the researcher's word
 
@@ -7495,10 +7495,11 @@ over the changed region; the decorations live in a state field, since
 CodeMirror refuses line-crossing replacements from a view plugin. **Typing
 stays under 16 ms a key on a 3,000-line file with 300 formulas.**
 
-Typing is typing source. The toolbar has 加粗, 斜体, 标题, 公式, 引用 (a search
-over the project's `.bib` keys; with no `.bib`, it says so), each the same as
-typing the command; ⌘B / ⌘I do the first two. **Return follows Word**, by
-where the cursor is:
+Typing is typing source. The tools -- 加粗, 斜体, 标题, 公式, 引用 (a search
+over the project's `.bib` keys; with no `.bib`, it says so) and the rest -- are
+the right column's 「格式与插入」 (22.12; the toolbar first promised here was
+never built), each the same as typing the command; ⌘B / ⌘I / ⌘U do the first
+three. **Return follows Word**, by where the cursor is:
 - in running text: a new paragraph (a blank line, then the cursor);
 - in a heading's argument: the cursor leaves the braces and a new paragraph
   starts after the heading;
@@ -7851,6 +7852,11 @@ emoji, arrow or glyph.
 - 正文 (22.11, amending 22.10's "no primary button"): 「新建文稿」 primary;
   while its form is open it is hidden and the form's 「创建」 is the primary,
   「取消」 a text link.
+- 格式与插入 (22.12): no primary while no picker is open; an open picker's
+  「插入」 is its one primary and 「取消」 a text link. Opening the link panel
+  closes a picker and opening a picker closes the link panel, so 「插入」 and
+  「确认关联」 are never shown together. The tools are small quiet buttons; a
+  pressed one (aria-pressed) has an ink edge on the paper, never a colour.
 
 ### 22.8 Batches and acceptance
 
@@ -8072,3 +8078,171 @@ project, so a paper had to be started outside Research OS. Now it starts here.
 - **Words** (13.4 rows): 新建文稿 New draft; 中文论文 Chinese paper; 英文论文
   English paper; 章节文件 Chapter file; 文件夹 Folder; 文件名 File name;
   标题（可选） Title (optional); 加入主文件 Add to main file; 不加入 Do not add.
+
+### 22.12 格式与插入 (the researcher, 2026-11-14)
+
+"在右侧添加插入图片，添加表格功能，章节标题，字体，斜体，加粗这些常用功能也要加到右侧，
+还需要优化UI"; and the same day: "我的意思是论文排版类似的常用功能都需要加上去，
+行间距之类的". The toolbar 22.1 promised (B3) was never built: the right column
+showed only 「选中一段文字，可以关联依据文件。」. It is now a panel there, built in
+three steps: **A** (this section) the panel and every insertion; **A2** 「版式」,
+the document's layout settings and paragraph tools (行间距 among them); **B** the
+page's look.
+
+- **Where.** At the top of the editor's right column (`aside.latex-side`),
+  above what the column already shows (the passages' counts, the link panel, a
+  passage's panel), which keeps its behaviour. Two word tabs head it,
+  **「格式」** and **「版式」** (`role="tab"`, `aria-selected`); 「版式」 says
+  「（下一步加入）」 until A2 fills it. The panel is there whenever a file is
+  open. It is disabled, its reason above the groups, in a read-only file
+  (「这个文件只能查看，不能用格式与插入。」) and while 「显示源码」 shows the source
+  (「正在显示源码。关掉「显示源码」后可以用格式与插入。」): 显示源码 turns "like
+  Word" off for the file (22.1), and the panel is part of it. ⌘B / ⌘I / ⌘U do
+  nothing then.
+- **One rule for every tool.** It is exactly the same as typing its command:
+  one transaction of the editor's own (`view.dispatch`), so ⌘Z undoes it as
+  one step, the save sends it as typed edits (22.1), the passages are carried
+  through it (22.2) and the line-break filter applies; every line break it
+  writes is the file's own (LF or CRLF). It never writes another file. Block
+  insertions (a figure, a table, a displayed formula, a list) go on lines of
+  their own -- after the text before the cursor on its line, before the text
+  after it -- and add no blank line, so no paragraph is split or joined. The
+  cursor lands where the researcher types next and the editor takes the focus
+  back.
+- **Where a tool does not apply** it says why, in a quiet sentence in the
+  panel, and changes nothing: the cursor in the preamble, after
+  `\end{document}`, in a command's name, in a formula, in a comment or
+  verbatim text, in an environment shown as written (`tabular`, `figure`, …),
+  in the argument of `\cite`, `\ref`, `\label`, `\includegraphics`, `\input`,
+  `\url`, `\href` and their like or in an optional argument; a block in any
+  command's argument; a heading in a list. **A selection is never broken**: one
+  that crosses a brace, a command's name or two of its arguments, an
+  environment's `\begin` or `\end`, a formula's edge, a comment or a backslash
+  and what it escapes is refused with 「选中的文字跨过了括号或环境的边界，不能整段
+  加格式。请重新选择。」; one that spans a blank line with 「选中的文字跨了段落，
+  不能整段加这个格式。」.
+
+**文字** (a small quiet heading, as every group's):
+
+- **加粗 ⌘B, 斜体 ⌘I, 下划线 ⌘U** -- `\textbf{}`, `\textit{}`, `\underline{}`;
+  the shortcut a quiet word beside the name (`aria-keyshortcuts`). Like
+  Word, a toggle: a selection is wrapped; a selection that is exactly that
+  command's text, or the whole command, is unwrapped; with no selection the
+  command the cursor is in is unwrapped, else an empty one is typed with the
+  cursor in its braces. A button is shown pressed (`aria-pressed`) while the
+  cursor is in its command. The shortcuts come before CodeMirror's own Mod-i
+  and Mod-u.
+- **字体** (a select): 默认; 宋体 `{\songti …}`, 黑体 `{\heiti …}`, 楷体
+  `{\kaishu …}`, 仿宋 `{\fangsong …}` where the main file loads ctex (a `ctex*`
+  class or the `ctex` package); 无衬线 `\textsf{}` and 等宽 `\texttt{}` always;
+  衬线 `\textrm{}` for a pdfLaTeX document. *Chosen while building:* the
+  Chinese fonts follow ctex, not the engine: `\songti` and the rest are ctex's
+  commands, so a XeLaTeX paper with only `xeCJK` or `fontspec` would stop at
+  them. Which engine a document has is the export's answer (22.4: the
+  person's kept engine, else the preset). A choice changes the font the
+  selection is (or the cursor is in) to it, the two forms into each other;
+  默认 removes it; with none, a selection is wrapped or an empty one typed.
+- **字号** (a select): 小 `{\small …}`, 正常 (removes the size group the cursor
+  is in), 大 `{\large …}`, 更大 `{\Large …}`. A group that is a command's
+  argument (`\textbf{\small …}`) is the command's and is never taken apart.
+
+**章节标题**: a select, 级别, showing the level of the paragraph the cursor is
+in -- 正文段落, 章 (only when the document class has `\chapter`: book, report,
+ctexbook, ctexrep, memoir, scrbook, scrreprt; for a chapter file, the class of
+its main file), 节, 小节, 小小节, and 其他标题 (shown, never chosen) for a
+`\paragraph` or a `\chapter` the class does not have. Choosing a level turns
+the paragraph -- the run of lines between blank lines and lines that are a
+command or an environment of their own -- into `\section{…}` (its text kept,
+its indentation and a comment after it left outside), changes an existing
+heading's level (a star and a short title kept), or with 正文段落 unwraps it.
+A heading made from text with a blank line is refused
+(「标题里不能有空行：选中的文字跨了段落。」); a line that is a command or an
+environment cannot become one; on an empty line `\section{}` is typed with the
+cursor in it.
+
+**插入**:
+
+- **图片** opens a picker in the panel: the project's image files (png, jpg,
+  jpeg, pdf, eps; never a PDF exported from the draft's paper), a search, a
+  thumbnail for png, jpeg, gif and webp through the asset route (21.5), 图注,
+  宽度 (整栏 `width=\linewidth`, 半栏 `width=0.5\linewidth`), 「插入」 and
+  「取消」. A file whose name holds `% # { } \ ~ $ ^ &` is listed but cannot be
+  chosen (「文件名里有 LaTeX 不能用的字符」); an `.eps` says that it may not come
+  out in the export. It inserts `\begin{figure}[htbp]`, `\centering`,
+  `\includegraphics[width=…]{<path>}`, `\caption{<图注, escaped>}`,
+  `\label{fig:<from the file's name>}` (made unique in the file),
+  `\end{figure}`. **The path is the one the export compiles**: TeX runs in the
+  main file's folder (22.4), so the path is relative to that folder, or to a
+  `\graphicspath` folder of the main file's preamble that holds the file. When
+  the main file's preamble loads no graphicx (itself, or `tikz`, `pgf`,
+  `pgfplots`, `adjustbox`, or a beamer class): if the open file is the main
+  file, `\usepackage{graphicx}` goes on the line after `\documentclass` in the
+  same transaction; else the figure is inserted and the panel says, in ochre,
+  「主文件 {main} 的导言区需要加一行：\usepackage{graphicx}」. No image in the
+  project: 「项目里还没有图片。把图片放进项目文件夹后，这里就能选。」 No upload
+  from the computer in this step.
+- **表格** opens a picker: 行 (1–20) and 列 (1–10) as number fields (the
+  keyboard's way) and a grid of 8 by 8 that sets them (out of the tab order),
+  第一行是表头 (on), 表注, 「插入」, 「取消」. It inserts `\begin{table}[htbp]`,
+  `\centering`, `\caption{…}`, `\label{tab:…}`, `\begin{tabular}{l…l}`, the
+  rows of empty cells (`& & \\`), `\end{tabular}`, `\end{table}`, the cursor
+  in the first cell; `\toprule`, `\midrule` after the header row (with a header
+  only) and `\bottomrule` when the main file loads booktabs -- the open main
+  file gets `\usepackage{booktabs}` as it gets graphicx --, else `\hline` in
+  their place, with no sentence.
+- **公式**: 行内 `$…$` (a selection wrapped, else the cursor between) and 独立
+  `\begin{equation}`…`\end{equation}` (a selection moved into it, else the
+  cursor in it).
+- **列表**: 项目符号 (itemize) and 数字编号 (enumerate). The lines a selection
+  touches become the items, each non-empty line one `\item`; with none, an
+  empty list with one `\item ` and the cursor after it. Lines holding a command
+  or an environment of their own are refused.
+- **脚注**: `\footnote{}` after the selection (its text is new text), the
+  cursor in its braces.
+- **文献引用** (22.1's 引用): a picker searching the project's `.bib` entries
+  (key, author, year, title); the keys picked go in one `\cite{a,b}` after the
+  selection. With no `.bib`: 「项目里没有 .bib 文件，没有可以引用的文献。」
+  (「文献引用」, not 「引用文献」: the key 引用文献 is already the link word
+  "cites".)
+
+One picker is open at a time; pressing its button again closes it.
+
+- **The engine.** `GET /api/latex/file` gives, for a file that is not
+  read-only, `format`: the main file the export would compile it in (the
+  person's kept choice, else the only one, else the first), the engine it would
+  use, the folder TeX runs in, and that main file's preamble when it is another
+  file (the text before `\begin{document}`, at most 64 KB). The page reads the
+  class, the packages and `\graphicspath` from it, or from the open file's own
+  text when that is the main file. The pickers read
+  `GET /api/latex/insert?path=&what=images|bib`, a read like the editor's
+  others (refused for a blocked project, `project` echoed): the image files
+  as the scan walks the project (no hidden folder, no symlink), or the entries
+  of its `.bib` files (at most 50 files, each a regular file not only in the
+  cloud, at most 2 MB; a key's first entry kept). Nothing existing fitted:
+  the link panel's file search stops at 50 files of every kind, and the cite
+  chips do not read `.bib` files. Both read only.
+- **Words** (13.4 rows): 格式 Format; 版式 Layout; 文字 Text; 加粗 Bold; 斜体
+  Italic; 下划线 Underline; 字体 Font; 字号 Size; 默认 Default; 宋体 Song
+  (serif); 黑体 Hei (sans serif); 楷体 Kai (brush); 仿宋 Fangsong; 无衬线 Sans
+  serif; 等宽 Monospace; 衬线 Serif; 小 Small; 正常 Normal; 大 Large; 更大
+  Larger; 章节标题 Headings; 级别 Level; 正文段落 Body text (not 正文, which is
+  "Manuscript", 22.10); 章 Chapter; 节 Section; 小节 Subsection; 小小节
+  Subsubsection; 其他标题 Other heading; 插入 Insert; 图片 Image; 表格 Table;
+  文献引用 Citation; 脚注 Footnote; 公式 Formula; 行内 Inline; 独立 Displayed;
+  项目符号 Bullets; 数字编号 Numbered; 图注 / 表注 Caption; 宽度 Width; 整栏
+  Full width; 半栏 Half width; 行 Rows; 列 Columns; 第一行是表头 First row is a
+  header. Every sentence goes through `t()` with its English; no glyph stands
+  for a word (⌘ is the key's own name).
+- **Presentation** (22.7): no primary until a picker is open, then its
+  「插入」; 「取消」 a text link; the tabs are words underlined in ink when
+  chosen; colours, faces and spacing are the palette's own tokens.
+- **Tests** (`tests/test_v17_format_panel.py`): every tool's exact source
+  under node (wrap, unwrap, empty, the refusals, heading levels with 章 only for
+  a class that has it, fonts by engine and ctex, image paths from the main
+  folder and through `\graphicspath`, graphicx and booktabs only into an open
+  main file, tables with and without a header and booktabs, lists, citations,
+  CRLF files); the panel on the page (its tabs, pickers, one primary at a time,
+  ⌘B / ⌘I / ⌘U before CodeMirror's own, ⌘Z, the save, read-only and
+  显示源码); the engine's facts and lists; and a real compile by latexmk of a
+  ctexrep (XeLaTeX) and an article (pdfLaTeX) document with every insertion
+  applied, a png figure and a bibliography: a PDF, no error.
