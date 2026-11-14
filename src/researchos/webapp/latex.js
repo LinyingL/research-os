@@ -278,17 +278,18 @@
   // (comments, \verb, verbatim-like environments) {from, to, kind}. Nothing inside math or raw text is read.
   // For the edit view (22.1, B1): `braces`, every pair of braces read as text {from, to} (a command's argument among
   // them: `argStarts` holds where those open); `symbols`, each one-character command {from, to, ch} (\%, \\, \' …);
-  // `tildes`; and `bad`, what TeX would stop at or the reader cannot follow {at, why: brace, env or math}.
+  // `tildes`; `defs`, the commands that define others (\newcommand …), so a key need not look for them among all; and
+  // `bad`, what TeX would stop at or the reader cannot follow {at, why: brace, env or math}.
   function readLatex(text) {
-    const out = { cmds: [], maths: [], envs: [], raws: [], groups: [], preamble: null, end: -1, meta: {}, braces: [], symbols: [], tildes: [], bad: [] }, theorems = new Set();
+    const out = { cmds: [], maths: [], envs: [], raws: [], groups: [], preamble: null, end: -1, meta: {}, braces: [], symbols: [], tildes: [], bad: [], defs: [] }, theorems = new Set();
     const stack = [], n = text.length, argStarts = new Set(), meta = { packages: 0 }, open = [];
     out.argStarts = argStarts;
     let i = 0;
     while (i < n) {
+      // test, not exec: no match object a character (the reader runs on every key; every special is one character)
       SPECIAL.lastIndex = i;
-      const m = SPECIAL.exec(text);
-      if (!m) break;
-      i = m.index;
+      if (!SPECIAL.test(text)) break;
+      i = SPECIAL.lastIndex - 1;
       const c = text[i];
       if (c === "%") { let e = text.indexOf("\n", i); if (e < 0) e = n; out.raws.push({ from: i, to: e, kind: "comment" }); i = e; continue; }
       if (c === "~") { out.tildes.push(i); i += 1; continue; }
@@ -419,6 +420,7 @@
         else if (arg != null) meta[name === "documentclass" ? "cls" : name] = name === "documentclass" ? arg.trim() : arg;
       }
       out.cmds.push(cmd);
+      if (DEFINITIONS.has(name)) out.defs.push(cmd);
       i = cmd.role === "cite" || cmd.role === "ref" ? cmd.to : cmd.raw || cmd.nameTo;   // the arguments' text is read as text
     }
     if (out.preamble) out.meta = meta;
@@ -426,6 +428,49 @@
     stack.forEach((f) => out.bad.push({ at: f.from, why: "env" }));
     if (out.braces.length > 1) out.braces.sort((a, b) => a.from - b.from);
     return out;
+  }
+
+  // The items of one of the reader's lists (each in order of `from`; tildes are positions) that may meet [lo, hi], as
+  // [start, end): those before start end before lo, those from end on start after hi. Found by two binary searches over
+  // the list's running maximum of `to`, kept once a list, so what a key looks up costs the same in a long file as in a
+  // short one. A list whose ends rise with its starts (comments, formulas, symbols, ties: none holds another) needs no
+  // running maximum. A list not in order (none is) is looked through whole.
+  const meetsCache = new WeakMap();
+  const startOf = (x) => (typeof x === "number" ? x : x.from), endOf = (x) => (typeof x === "number" ? x + 1 : x.to);
+  function meetRange(list, lo, hi) {
+    const n = list.length;
+    let pm = meetsCache.get(list);
+    if (pm === undefined) {
+      pm = true;
+      if (n && typeof list[0] === "number") { for (let k = 1; k < n; k++) if (list[k] < list[k - 1]) { pm = null; break; } }
+      else {
+        let last = -Infinity, m = -1;
+        for (let k = 0; k < n; k++) {
+          const x = list[k], from = x.from, to = x.to;
+          if (from < last) { pm = null; break; }
+          last = from;
+          if (to < m) pm = false; else m = to;
+        }
+      }
+      if (pm === false) {
+        pm = new Int32Array(n);
+        let m = -1;
+        for (let k = 0; k < n; k++) { const to = list[k].to; if (to > m) m = to; pm[k] = m; }
+      }
+      meetsCache.set(list, pm);
+    }
+    if (pm === null) return [0, n];
+    let a = 0, b = n;
+    if (pm === true) while (a < b) { const mid = (a + b) >> 1; if (endOf(list[mid]) < lo) a = mid + 1; else b = mid; }
+    else while (a < b) { const mid = (a + b) >> 1; if (pm[mid] < lo) a = mid + 1; else b = mid; }
+    let c = a, d = n;
+    while (c < d) { const mid = (c + d) >> 1; if (startOf(list[mid]) <= hi) c = mid + 1; else d = mid; }
+    return [a, c];
+  }
+  // Each item of `list` that may meet [lo, hi], in the list's order (a superset: the caller checks its own condition).
+  function eachMeeting(list, lo, hi, fn) {
+    const [a, b] = meetRange(list, lo, hi);
+    for (let k = a; k < b; k++) fn(list[k]);
   }
 
   // What KaTeX is given: \label (which it does not know) dropped, multline set as gather.
@@ -1011,6 +1056,23 @@
     out.sig = JSON.stringify([Array.from(out.fig.values()), Array.from(out.tab.values()), Array.from(out.notes.values()), Array.from(out.labels)]);
     return out;
   }
+  // The numbers before a change, still true after it, or null: when no command and no environment's \begin or \end is
+  // touched, the preamble is not, and every command and environment reads as before (`cmp`, from `compared`), what
+  // numbersOf counts is the same -- only where each figure, table and footnote starts has moved.
+  function numbersKept(old, num, read, ch, cmp) {
+    if (!old.preamble || !read.preamble || old.preamble.to !== read.preamble.to) return null;
+    if (old.cmds.length !== read.cmds.length || cmp.cmds[0] + cmp.cmds[1] !== read.cmds.length) return null;
+    if (old.envs.length !== read.envs.length || cmp.envs[0] + cmp.envs[1] !== read.envs.length) return null;
+    let near = false;
+    ch.iterChangedRanges((fa, ta, fb, tb) => {
+      if (fa <= old.preamble.to) near = true;
+      eachMeeting(read.cmds, fb, tb, (c) => { if (c.from <= tb && c.to >= fb) near = true; });
+      eachMeeting(read.envs, fb, tb, (e) => { if ((e.from <= tb && e.beginTo >= fb) || (e.endFrom <= tb && e.to >= fb)) near = true; });
+    });
+    if (near) return null;
+    const moved = (m) => { const out = new Map(); m.forEach((v, k) => out.set(cmp.map(k), v)); return out; };
+    return { fig: moved(num.fig), tab: moved(num.tab), notes: moved(num.notes), labels: num.labels, sig: num.sig };
+  }
 
   const PLAIN_TEXT_ENVS = new Set(["document", "abstract", "quote", "quotation", "verse", "center", "flushleft", "flushright", "doublespace",
     "onehalfspace", "singlespace", "spacing", "minipage", "multicols", "appendices", "landscape", "titlepage", "frame"]);
@@ -1029,38 +1091,71 @@
 
   // Constructs read before (mapped through the change) and now, compared from both ends: the ranges of those between,
   // which differ, are pushed to `spans`.
-  function differ(was, now, same, parts, map, spans) {
+  function sameEnds(was, now, same) {
     const n = Math.min(was.length, now.length);
     let a = 0, b = 0;
     while (a < n && same(was[a], now[a])) a += 1;
     while (b < n - a && same(was[was.length - 1 - b], now[now.length - 1 - b])) b += 1;
+    return [a, b];
+  }
+  // sameEnds for a list of {from, to} (and a formula's `display`), the change's mapping written out: what lies wholly
+  // before it or after it is compared as it is, or shifted
+  function pairEnds(was, now, cmp) {
+    const n = Math.min(was.length, now.length), first = cmp.first, last = cmp.last, shift = cmp.shift, map = cmp.map;
+    let a = 0, b = 0;
+    for (; a < n; a++) {
+      const x = was[a], y = now[a];
+      if (x.display !== y.display) break;
+      if (x.to < first ? x.from !== y.from || x.to !== y.to : map(x.from) !== y.from || map(x.to) !== y.to) break;
+    }
+    for (; b < n - a; b++) {
+      const x = was[was.length - 1 - b], y = now[now.length - 1 - b];
+      if (x.display !== y.display) break;
+      if (x.from > last ? x.from + shift !== y.from || x.to + shift !== y.to : map(x.from) !== y.from || map(x.to) !== y.to) break;
+    }
+    return [a, b];
+  }
+  function differ(was, now, same, parts, map, spans, ends) {
+    const [a, b] = ends || sameEnds(was, now, same);
     for (let k = a; k < was.length - b; k++) parts(was[k], map).forEach((p) => spans.push([Math.min(p[0], p[1]), Math.max(p[0], p[1])]));
     for (let k = a; k < now.length - b; k++) parts(now[k], (x) => x).forEach((p) => spans.push(p));
   }
   function sameCmd(a, b, map) {
     if (a.role !== b.role || a.name !== b.name || a.n !== b.n || a.depth !== b.depth || (a.list && a.list.name) !== (b.list && b.list.name) ||
       map(a.from) !== b.from || map(a.to) !== b.to || map(a.nameTo) !== b.nameTo || a.args.length !== b.args.length) return false;
-    return a.args.every((x, k) => map(x.from) === b.args[k].from && map(x.to) === b.args[k].to);
+    for (let k = 0; k < a.args.length; k++) if (map(a.args[k].from) !== b.args[k].from || map(a.args[k].to) !== b.args[k].to) return false;
+    return true;
   }
   const envParts = (e, map) => [[map(e.from), map(e.beginTo)], [map(e.endFrom), map(e.to)]];
   const wholeParts = (x, map) => [[map(x.from), map(x.to)]];
-  const samePair = (map) => (a, b) => map(a.from) === b.from && map(a.to) === b.to;
+  const sameEnv = (map) => (a, b) => map(a.from) === b.from && map(a.beginTo) === b.beginTo && map(a.endFrom) === b.endFrom && map(a.to) === b.to;
+  // A change's ch.mapPos, without its walk over the changes where the answer is plain (before every change, or after all
+  // of them); and how the commands and environments read before and now compare from both ends (`sameEnds`): what
+  // `redraw` and `numbersKept` both ask, looked at once a key.
+  function compared(old, read, ch) {
+    let first = Infinity, last = -Infinity;
+    ch.iterChangedRanges((fa, ta) => { if (fa < first) first = fa; if (ta > last) last = ta; });
+    const shift = ch.newLength - ch.length, map = (x) => (x < first ? x : x > last ? x + shift : ch.mapPos(x));
+    return { map: map, first: first, last: last, shift: shift, cmds: sameEnds(old.cmds, read.cmds, (a, b) => sameCmd(a, b, map)), envs: sameEnds(old.envs, read.envs, sameEnv(map)) };
+  }
 
   // Where the edit view must be drawn again after `tr`: around each change and every construct read differently from
   // before, widened to whole lines and to every construct they reach, so none crosses an edge. Null when nothing is.
-  function redraw(old, read, tr, extents) {
+  function redraw(old, read, tr, extents, cmp) {
     if (!tr.docChanged) return null;
-    const doc = tr.state.doc, ch = tr.changes, map = (x) => ch.mapPos(x), spans = [];
+    const doc = tr.state.doc, ch = tr.changes, spans = [];
     ch.iterChangedRanges((fa, ta, fb, tb) => spans.push([fb, tb]));
-    differ(old.cmds, read.cmds, (a, b) => sameCmd(a, b, map), wholeParts, map, spans);
-    differ(old.envs, read.envs, (a, b) => map(a.from) === b.from && map(a.beginTo) === b.beginTo && map(a.endFrom) === b.endFrom && map(a.to) === b.to,
+    cmp = cmp || compared(old, read, ch);
+    const map = cmp.map;
+    differ(old.cmds, read.cmds, null, wholeParts, map, spans, cmp.cmds);
+    differ(old.envs, read.envs, null,
       // an environment whose lines take a class (a list, a quote …) is drawn again whole when it changes
-      (e, m) => (wholeEnv(e) || ((e.role === "list" || e.role === "text") && e.name !== "document") ? wholeParts(e, m) : envParts(e, m)), map, spans);
-    differ(old.maths, read.maths, (a, b) => map(a.from) === b.from && map(a.to) === b.to && a.display === b.display, wholeParts, map, spans);
+      (e, m) => (wholeEnv(e) || ((e.role === "list" || e.role === "text") && e.name !== "document") ? wholeParts(e, m) : envParts(e, m)), map, spans, cmp.envs);
+    differ(old.maths, read.maths, null, wholeParts, map, spans, pairEnds(old.maths, read.maths, cmp));
     differ(old.groups, read.groups, (a, b) => a.name === b.name && map(a.from) === b.from && map(a.nameTo) === b.nameTo && map(a.to) === b.to, wholeParts, map, spans);
-    differ(old.raws, read.raws, samePair(map), wholeParts, map, spans);
-    differ(old.braces, read.braces, samePair(map), (x, m) => [[m(x.from), m(x.from + 1)], [m(x.to - 1), m(x.to)]], map, spans);
-    differ(old.symbols, read.symbols, samePair(map), wholeParts, map, spans);
+    differ(old.raws, read.raws, null, wholeParts, map, spans, pairEnds(old.raws, read.raws, cmp));
+    differ(old.braces, read.braces, null, (x, m) => [[m(x.from), m(x.from + 1)], [m(x.to - 1), m(x.to)]], map, spans, pairEnds(old.braces, read.braces, cmp));
+    differ(old.symbols, read.symbols, null, wholeParts, map, spans, pairEnds(old.symbols, read.symbols, cmp));
     if (JSON.stringify(old.meta) !== JSON.stringify(read.meta)) for (const c of read.cmds) if (c.name === "maketitle") spans.push([c.from, c.nameTo]);
     const preWas = old.preamble ? map(old.preamble.to) : -1, preNow = read.preamble ? read.preamble.to : -1;
     if (preWas !== preNow) spans.push([0, Math.max(preWas, preNow, 0)]);
@@ -1074,23 +1169,37 @@
     };
     let w = lines(spans);
     for (let pass = 0; pass < 12; pass++) {
-      let grew = false;
+      let grew = false, lo = Infinity, hi = -Infinity;
+      for (const s of w) { if (s[0] < lo) lo = s[0]; if (s[1] > hi) hi = s[1]; }
       const reach = (from, to) => {
-        for (const s of w) if (from <= s[1] && to >= s[0] && (from < s[0] || to > s[1])) { s[0] = Math.min(s[0], from); s[1] = Math.max(s[1], to); grew = true; }
+        for (const s of w) {
+          if (from <= s[1] && to >= s[0] && (from < s[0] || to > s[1])) {
+            s[0] = Math.min(s[0], from); s[1] = Math.max(s[1], to); grew = true;
+            if (s[0] < lo) lo = s[0];
+            if (s[1] > hi) hi = s[1];
+          }
+        }
+      };
+      // each list in its order, from the first item that can meet a place to the last that starts before the places'
+      // end as they grow: those skipped would change nothing (a key looks near itself, not at the whole file)
+      const over = (list, fn) => {
+        const a = meetRange(list, lo, hi)[0];
+        if (meetsCache.get(list) === null) { list.forEach(fn); return; }
+        for (let k = a; k < list.length && list[k].from <= hi; k++) fn(list[k]);
       };
       if (read.preamble) reach(0, read.preamble.to);
-      for (const c of read.cmds) reach(c.from, c.to);
-      for (const e of read.envs) { if (wholeEnv(e)) reach(e.from, e.to); else { reach(e.from, e.beginTo); reach(e.endFrom, e.to); } }
-      for (const f of read.maths) reach(f.from, f.to);
-      for (const g of read.groups) reach(g.from, g.to);
-      for (const r of read.raws) reach(r.from, r.to);
+      over(read.cmds, (c) => reach(c.from, c.to));
+      over(read.envs, (e) => { if (wholeEnv(e)) reach(e.from, e.to); else { reach(e.from, e.beginTo); reach(e.endFrom, e.to); } });
+      over(read.maths, (f) => reach(f.from, f.to));
+      over(read.groups, (g) => reach(g.from, g.to));
+      over(read.raws, (r) => reach(r.from, r.to));
       for (const x of extents) reach(x[0], x[1]);
       // a pair of braces drawn again at one end is drawn again at the other: what it is (an argument, a group) is one
       const ends = [];
-      for (const b of read.braces) {
+      over(read.braces, (b) => {
         const a = w.some((s) => b.from <= s[1] && b.from + 1 >= s[0]), z = w.some((s) => b.to - 1 <= s[1] && b.to >= s[0]);
         if (a !== z) ends.push(a ? [b.to - 1, b.to] : [b.from, b.from + 1]);
-      }
+      });
       if (ends.length) { w = lines(w.concat(ends)); continue; }
       if (!grew) return w;
       w = lines(w);
@@ -1203,6 +1312,8 @@
       const text = info.text, len = text.length, num = info.num;
       const W0 = within ? Math.max(0, within[0] - 1) : 0, W1 = within ? Math.min(len, within[1] + 1) : len;
       const near = (from, to) => from <= W1 && to >= W0;
+      // a list's items that may be near (all when drawn whole), in order: those left out would be skipped by `near`
+      const nearOf = (list) => { if (!within) return list; const r = meetRange(list, W0 - 2, W1 + 2); return r[0] === 0 && r[1] === list.length ? list : list.slice(r[0], r[1]); };
       const cand = [];
       const atom = (from, to, widget, extra) => { if (to > from) cand.push(Object.assign({ from: from, to: to, widget: widget || null, atom: true }, extra || {})); };
       const lineOf = (pos) => doc.lineAt(Math.min(Math.max(pos, 0), len));
@@ -1231,7 +1342,8 @@
       // comments: hidden; a line that is only a comment leaves no trace (nor does a paragraph of them)
       const claimed = new Set();
       const runs = new Set();
-      for (const r of read.raws) {
+      const rawsNear = nearOf(read.raws);
+      for (const r of rawsNear) {
         if (r.kind !== "comment" || !near(r.from - 1, r.to + 1)) continue;
         const l = lineOf(r.from);
         // a comment after words: what is typed at its end goes before it, never into it
@@ -1249,7 +1361,7 @@
         atom(from, to, null, { kind: "comment" });
       }
       // verbatim text, shown as it is (it is the researcher's, not code); the comment environment hidden
-      for (const r of read.raws) {
+      for (const r of rawsNear) {
         if (r.kind === "comment" || !near(r.from, r.to)) continue;
         if (r.kind === "verb") {
           const star = text[r.from + 5] === "*" ? 1 : 0;
@@ -1262,7 +1374,7 @@
         atom(own ? first.from : r.from, own ? last.to : r.to, new VerbW(inner, own), { block: own, kind: "verbatim" });
       }
       // formulas, typeset (or a quiet 公式 until KaTeX is in or where it cannot typeset): changed only in 显示代码
-      for (const f of read.maths) if (near(f.from, f.to)) atom(f.from, f.to, new MathW(f.src, f.display, text.slice(f.from, f.to), info.math), { kind: "math" });
+      for (const f of nearOf(read.maths)) if (near(f.from, f.to)) atom(f.from, f.to, new MathW(f.src, f.display, text.slice(f.from, f.to), info.math), { kind: "math" });
       // floats and other environments the edit view does not open
       const floatEnds = [];   // the floats open before an environment, by their end (environments come in order)
       for (const e of read.envs) {
@@ -1298,7 +1410,10 @@
       }
       // commands
       const bareArgs = new Set();
-      for (const c of read.cmds) {
+      const cmdsNear = nearOf(read.cmds);
+      // definitions are drawn to their end (definitionEnd), which may be past their command's: each is looked at, in order
+      const defsFar = cmdsNear === read.cmds ? [] : read.defs.filter((c) => !cmdsNear.length || c.from < cmdsNear[0].from || c.from > cmdsNear[cmdsNear.length - 1].from);
+      for (const c of defsFar.length ? defsFar.concat(cmdsNear).sort((a, b) => a.from - b.from) : cmdsNear) {
         if (!near(c.from, Math.max(c.to, c.nameTo + 1)) && !DEFINITIONS.has(c.name)) continue;
         const n = c.name, args = c.args.filter((a) => !a.opt), arg = (k) => text.slice(args[k].from + 1, args[k].to - 1);
         if (c.role === "heading" || c.role === "style") continue;   // frames, below
@@ -1371,7 +1486,7 @@
         else atom(from, to, null, { kind: "hidden" });
       }
       // one-character commands and ties
-      for (const s of read.symbols) {
+      for (const s of nearOf(read.symbols)) {
         if (!near(s.from, s.to + 2)) continue;
         const ch = s.ch;
         if (ch === "\\") {
@@ -1391,7 +1506,7 @@
         }
         atom(s.from, s.to, new ChipW(t("LaTeX 内容"), "unit"), { kind: "unit" });
       }
-      for (const p of read.tildes) if (near(p, p + 1)) atom(p, p + 1, new TextW(" "), { kind: "text" });
+      for (const p of nearOf(read.tildes)) if (near(p, p + 1)) atom(p, p + 1, new TextW(" "), { kind: "text" });
 
       // an environment's options (\begin{minipage}{0.5\textwidth}, [label=(\alph*)]) are hidden with its \begin: nothing
       // drawn inside them
@@ -1424,7 +1539,7 @@
       const out = kept.slice(), marksOut = [], linesOut = [];
       const hide = (from, to, extra) => { if (to > from) out.push(Object.assign({ from: from, to: to, widget: null, atom: true }, extra || {})); };
       const markupRanges = [];
-      for (const c of read.cmds) {
+      for (const c of cmdsNear) {
         if (!near(c.from, c.to) || inside(c.from)) continue;
         const wrap = WRAPPERS.get(c.name), args = c.args.filter((a) => !a.opt);
         let cls = null;
@@ -1441,7 +1556,7 @@
         if (c.role === "heading") linesOut.push([l.from, "latex-hline"]);
         markupRanges.push([c.from, a.from + 1], [a.to - 1, c.to]);
       }
-      for (const g of read.groups) {
+      for (const g of nearOf(read.groups)) {
         if (!near(g.from, g.to) || inside(g.from)) continue;
         if (groupShown(read, g)) {
           hide(g.from, g.nameTo, { kind: "open", slotTo: true });
@@ -1485,7 +1600,7 @@
       function itemEnd(m) { const opt = m.args.find((a) => a.opt), at = opt ? opt.to : m.nameTo; return text[at] === " " ? at + 1 : at; }
       // a group of braces that is no command's argument: its braces hidden, its words kept
       const markIn = (pos) => markupRanges.some((r) => pos >= r[0] && pos < r[1]);
-      for (const b of read.braces) {
+      for (const b of nearOf(read.braces)) {
         if (!near(b.from, b.to) || inside(b.from) || (read.argStarts.has(b.from) && !bareArgs.has(b.from)) || markIn(b.from)) continue;
         if (read.groups.some((g) => g.from === b.from)) continue;
         hide(b.from, b.from + 1, { kind: "brace" });
@@ -1590,7 +1705,7 @@
     // and drawn again only where `redraw` says -- widened over every piece that meets the place, before and after, so
     // none is left half drawn -- and a key costs the same in a long file as in a short one. Nothing depends on the
     // selection: a move of the cursor changes nothing drawn.
-    const infoOf = (text, read, math, cites) => ({ text: text, num: numbersOf(text, read), math: math, cites: cites, typeset: math ? "K" : "-" });
+    const infoOf = (text, read, math, cites, num) => ({ text: text, num: num || numbersOf(text, read), math: math, cites: cites, typeset: math ? "K" : "-" });
     const whole = (state, read, info, math) => {
       const d = decorations(state.doc, read, info, null);
       return { read: read, info: info, math: math, open: false, live: false, deco: D.set(d.deco, true), atoms: D.set(d.atoms, true) };
@@ -1605,11 +1720,13 @@
         for (const e of tr.effects) { if (e.is(mathOn)) math = true; if (e.is(refresh)) again = true; }
         if (!tr.docChanged && math === value.math && !again) return value;
         const text = tr.docChanged ? tr.state.doc.toString() : value.info.text, read = tr.docChanged ? readLatex(text) : value.read;
-        const info = infoOf(text, read, math, hooks.cites || null);
         // a text the reader is unsure of (TeX would stop in it) is drawn whole: its pairs are not to be trusted far away
-        if (math !== value.math || again || info.num.sig !== value.info.num.sig || read.bad.length || value.read.bad.length) return whole(tr.state, read, info, math);
-        const doc = tr.state.doc, extents = read.cmds.filter((c) => DEFINITIONS.has(c.name)).map((c) => [c.from, definitionEnd(text, c)]);
-        const spans = redraw(value.read, read, tr, extents);
+        const part = tr.docChanged && math === value.math && !again && !read.bad.length && !value.read.bad.length;
+        const cmp = part ? compared(value.read, read, tr.changes) : null;
+        const info = infoOf(text, read, math, hooks.cites || null, part ? numbersKept(value.read, value.info.num, read, tr.changes, cmp) : null);
+        if (!part || info.num.sig !== value.info.num.sig) return whole(tr.state, read, info, math);
+        const doc = tr.state.doc, extents = read.defs.map((c) => [c.from, definitionEnd(text, c)]);
+        const spans = redraw(value.read, read, tr, extents, cmp);
         let deco = value.deco.map(tr.changes), atoms = value.atoms.map(tr.changes);
         const wide = (x) => [doc.lineAt(Math.max(0, Math.min(x[0], doc.length))).from, doc.lineAt(Math.max(0, Math.min(x[1], doc.length))).to];
         for (let s of spans || []) {
@@ -1702,23 +1819,33 @@
     }
     // The frames around words: {from, to, openTo, closeFrom, kind, inline} -- a style, a group, a heading, a figure's
     // caption, an environment, a list (its first \item with its \begin), braces; and the document (always kept).
+    // With [lo, hi], only the frames that may meet it (a superset, in the same order: the caller keeps those it asks
+    // for), so a key looks at what is near it, not at the whole file.
     const framesCache = new WeakMap();
-    function framesOf(value) {
-      if (framesCache.has(value)) return framesCache.get(value);
+    function framesOf(value, lo, hi) {
+      const all = lo == null;
+      if (all && framesCache.has(value)) return framesCache.get(value);
       const read = value.read, text = value.info.text, out = [];
-      for (const c of read.cmds) {
+      const each = (list, x, y, fn) => { if (all) { for (const item of list) fn(item); } else eachMeeting(list, x, y, fn); };
+      each(read.cmds, lo, hi, (c) => {
         const args = c.args.filter((a) => !a.opt), a = c.args[c.args.length - 1];
-        if (!a || a.opt || !args.length) continue;
+        if (!a || a.opt || !args.length) return;
         const wrap = WRAPPERS.get(c.name);
         if (c.role === "heading" || c.role === "style" || (wrap && args.length === wrap[1] && !c.group)) out.push({ from: c.from, to: c.to, openTo: a.from + 1, closeFrom: a.to - 1, kind: c.role === "heading" ? "heading" : "inline" });
         else if (c.name === "caption") out.push({ from: c.from, to: c.to, openTo: a.from + 1, closeFrom: a.to - 1, kind: "caption" });
-      }
-      for (const g of read.groups) out.push({ from: g.from, to: g.to, openTo: g.nameTo, closeFrom: g.to - 1, kind: "inline" });
+      });
+      each(read.groups, lo, hi, (g) => out.push({ from: g.from, to: g.to, openTo: g.nameTo, closeFrom: g.to - 1, kind: "inline" }));
+      const braces = [];
+      each(read.braces, lo, hi, (b) => braces.push(b));
       const args = read.argStarts, groups = new Set(read.groups.map((g) => g.from)), loose = new Set();
-      // the groups after a command that takes none (\noindent{…}, \LaTeX{}{…}) are groups of their own
-      for (const c of read.cmds) if (c.args.length && (SILENT.has(c.name) || TEXT_MACROS.has(c.name) || GROUP_CLASSES.has(c.name))) c.args.forEach((a) => loose.add(a.from));
-      for (const b of read.braces) if ((!args.has(b.from) || loose.has(b.from)) && !groups.has(b.from) && b.to - b.from > 2) out.push({ from: b.from, to: b.to, openTo: b.from + 1, closeFrom: b.to - 1, kind: "inline" });
-      for (const e of read.envs) {
+      // the groups after a command that takes none (\noindent{…}, \LaTeX{}{…}) are groups of their own (such a command
+      // holds its argument's brace: it meets wherever the brace starts)
+      const lo2 = braces.reduce((m, b) => Math.min(m, b.from), all ? 0 : lo);
+      each(read.cmds, lo2, hi, (c) => { if (c.args.length && (SILENT.has(c.name) || TEXT_MACROS.has(c.name) || GROUP_CLASSES.has(c.name))) c.args.forEach((a) => loose.add(a.from)); });
+      for (const b of braces) if ((!args.has(b.from) || loose.has(b.from)) && !groups.has(b.from) && b.to - b.from > 2) out.push({ from: b.from, to: b.to, openTo: b.from + 1, closeFrom: b.to - 1, kind: "inline" });
+      const envs = [];
+      each(read.envs, lo, hi, (e) => envs.push(e));
+      for (const e of envs) {
         if (!(e.endFrom < e.to)) continue;
         if (e.name === "document") { out.push({ from: e.from, to: e.to, openTo: e.beginTo, closeFrom: e.endFrom, kind: "document", keep: true }); continue; }
         if (FIGURE_FLOATS.has(e.name)) { out.push({ from: e.from, to: e.to, openTo: e.beginTo, closeFrom: e.endFrom, kind: "figure", keep: true }); continue; }
@@ -1730,7 +1857,7 @@
       if (read.preamble) out.push({ from: 0, to: read.preamble.to, openTo: read.preamble.to, closeFrom: read.preamble.to, kind: "preamble", keep: true });
       if (read.end >= 0) out.push({ from: read.end, to: text.length, openTo: text.length, closeFrom: text.length, kind: "after", keep: true });
       out.sort((a, b) => a.from - b.from || b.to - a.to);
-      framesCache.set(value, out);
+      if (all) framesCache.set(value, out);
       return out;
     }
 
@@ -1761,7 +1888,7 @@
         D = next;
         kept.forEach((k) => minus(k[0], k[1]));   // what another construct keeps stays kept
       };
-      const frames = framesOf(value).filter((f) => f.from < to && from < f.to);
+      const frames = framesOf(value, from, to).filter((f) => f.from < to && from < f.to);
       for (let pass = 0; pass < 6; pass++) {
         const before = JSON.stringify(D);
         for (const f of frames) {
@@ -1810,7 +1937,7 @@
       return s.replace(/[ \t]*\n\s*/g, br + br);
     }
     function placeOf(value, pos) {
-      const text = value.info.text, inline = framesOf(value).some((f) => (f.kind === "inline" || f.kind === "heading" || f.kind === "caption") && f.openTo <= pos && pos <= f.closeFrom);
+      const text = value.info.text, inline = framesOf(value, pos, pos).some((f) => (f.kind === "inline" || f.kind === "heading" || f.kind === "caption") && f.openTo <= pos && pos <= f.closeFrom);
       if (inline) return { ctx: "inline", indent: "" };
       const ctx = contextAt(value.read, pos);
       if (ctx && ctx.kind === "env" && ctx.x.role === "list") {
@@ -2145,7 +2272,7 @@
   function backSpec(CM, state, value, dir) {
     const w = wordField(CM), sel = state.selection.main, text = value.info.text;
     if (!sel.empty) return null;
-    const pos = sel.head, frames = w.framesOf(value);
+    const pos = sel.head, frames = w.framesOf(value, pos, pos);
     const f = frames.filter((x) => (x.kind === "inline" || x.kind === "heading") && (dir < 0 ? x.openTo === pos : x.closeFrom === pos)).pop();
     if (!f) return null;
     if (f.openTo === f.closeFrom) return { changes: state.changes({ from: f.from, to: f.to }), selection: { anchor: f.from }, userEvent: "delete.backward.made" };
@@ -2187,10 +2314,11 @@
     };
     if (read.preamble) consider(0, read.preamble.to, "raw", null);
     if (read.end >= 0) consider(read.end, Infinity, "raw", null);
-    read.envs.forEach((e) => consider(e.beginTo, e.endFrom, "env", e));
-    read.raws.forEach((r) => consider(r.from + 1, r.to, "raw", r));
-    read.maths.forEach((f) => consider(f.from + 1, f.to - 1, "math", f));
-    read.cmds.forEach((c) => c.args.forEach((a) => consider(a.from + 1, a.to - 1, "arg", { cmd: c, arg: a })));
+    // only what may hold `pos` is looked at (each place below lies within its item), in the same order
+    eachMeeting(read.envs, pos, pos, (e) => consider(e.beginTo, e.endFrom, "env", e));
+    eachMeeting(read.raws, pos, pos, (r) => consider(r.from + 1, r.to, "raw", r));
+    eachMeeting(read.maths, pos, pos, (f) => consider(f.from + 1, f.to - 1, "math", f));
+    eachMeeting(read.cmds, pos, pos, (c) => c.args.forEach((a) => consider(a.from + 1, a.to - 1, "arg", { cmd: c, arg: a })));
     return best;
   }
 

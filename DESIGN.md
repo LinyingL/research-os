@@ -7537,7 +7537,8 @@ reader is unsure of (unbalanced braces, an environment or a formula not closed, 
 the body) -- opens as code, the switch on and disabled, with one sentence why; a text that becomes unsure in the code
 stays there, saying why. The ranges come from the LaTeX range reader (braces, environments, math, comments, `\verb`,
 one-character commands), read again whole on each change; the decorations live in a state field and are drawn again
-only where a change reaches. **Typing stays under 16 ms a key on a 3,000-line file with 300 formulas.**
+only where a change reaches, and what a key looks up (the place it is typed in, the frames around it, what reaches the
+place drawn again) is found among the constructs near it, not by going through all. **Typing stays under 16 ms a key on a 3,000-line file with 300 formulas.**
 
 The tools -- 加粗, 斜体, 标题, 公式, 引用 (a search over the project's `.bib` keys; with no `.bib`, it says so) and the rest --
 are the right column's 「格式与插入」 (22.12; the toolbar first promised here was never built), each the same as typing
@@ -8765,6 +8766,9 @@ typeset in the edit view and changed only in the code. 22.1 states the rule; how
   (`1.2`); footnotes; and what each `\label` names (a float after its caption, a numbered heading). Anything after an
   `\input` or `\appendix`, a form not read here (titlesec, `\ctexset`, `secnumdepth`, `\numberwithin`), an equation, an
   enumerate item: unknown, said 「引用：key」, 「图：」, 「注」. A chapter file's numbers are its main file's: unknown there.
+  A change that touches no command, no environment's `\begin` or `\end` and not the preamble, after which every command
+  and environment reads as before, keeps the numbers it had (`numbersKept`: only where each figure, table and footnote
+  starts has moved), so a key in a long paper does not count it again.
 - **Citations**: a moment after a file with a `\cite` opens, `GET /api/latex/insert?what=bib` (22.12 A's read) gives the
   entries; each chip says the first author's surname (two: both; more: 「… 等」, "et al.") and the year, else the key.
 - **Typing** (`userEdit`, a transaction filter on the edit view's own `input.*` and `delete.*` events; the tools'
