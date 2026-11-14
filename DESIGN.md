@@ -7482,10 +7482,23 @@ only how it looks changes. Where the selection does not touch them:
   `\item` hidden; `\footnote{…}` a small mark that opens its text in place;
 - comments are in the quiet gray; **the preamble** is folded under
   「导言区（已折叠，点开）」, said in words with no chevron, and opens as source
-  under 「收起导言区」;
+  under 「收起导言区」 *(22.12 B: the folded line names the class and counts the
+  packages, 「导言区：文档类 article，6 个宏包（已折叠，点开）」)*;
+- *(22.12 B, the researcher, 2026-11-14: "我觉得很简陋…还需要优化UI")* **the
+  text is a page**: a centred column of a page's measure (46rem) on the paper,
+  the desk's tone around it, the body at 1rem in the body face with a line
+  height of 1.8, headings in the serif with space above; `\begin{document}`
+  and `\end{document}` are quiet label lines 「正文开始」 / 「正文结束」;
+  `\maketitle` is the title block read from the preamble; an `abstract`'s
+  `\begin` and `\end` are a small heading 「摘要」 over its lines, indented;
+  a `tabular` (alone, or the one in a `table` float, with its caption) is a
+  read-only grid and a `figure` its files with the caption under them;
+  `{\heiti …}`, `{\large …}`, `\textsf`, `\texttt`, `\textrm` are drawn in
+  their face or size, the switch hidden; under the text a quiet status line
+  counts the body's words and says whether it is saved (22.12 B has the rules);
 - **everything else is shown as written**, in the mono face for the command
-  only: `tabular`, `\newcommand`, any macro the editor does not know. The
-  editor never guesses what an unknown command means.
+  only: a tabular the reader doubts (22.12 B), `\newcommand`, any macro the
+  editor does not know. The editor never guesses what an unknown command means.
 
 A construct shows its source as soon as the selection touches it. 「显示源码」
 (a text link) turns all of it off for the file. The ranges come from a
@@ -7860,6 +7873,15 @@ emoji, arrow or glyph.
   「版式」 (A2) has no primary: its settings are selects that write when chosen.
   A choice a document cannot take (A3) is a disabled option with its reason
   after a colon.
+- The page (22.12 B): the header, the notices and the status line sit in the
+  text's column, aligned with the page (46rem, centred; the full width while
+  显示源码 shows the source); 保存 stays the editor's one primary, 导出 PDF quiet,
+  显示源码 a text link. The status line is quiet small gray words, no button; the
+  page's blocks (label lines, the title block, 摘要, a table, a figure) are words
+  and rules in the palette's tokens, never a glyph. The right column stays at
+  the top beside the text, its groups apart by space and a hairline, 「选中一段文字，
+  可以关联依据文件。」 under the panel; at the shell's 900 px it narrows (to 14rem)
+  before anything scrolls sideways.
 
 ### 22.8 Batches and acceptance
 
@@ -8096,7 +8118,7 @@ project, so a paper had to be started outside Research OS. Now it starts here.
 showed only 「选中一段文字，可以关联依据文件。」. It is now a panel there, built in
 three steps: **A** (this section) the panel and every insertion; **A2** 「版式」,
 the document's layout settings and paragraph tools (行间距 among them); **B** the
-page's look.
+page's look (at the end of this section).
 
 - **Where.** At the top of the editor's right column (`aside.latex-side`),
   above what the column already shows (the passages' counts, the link panel, a
@@ -8567,3 +8589,120 @@ after seeing the plan):
   显示源码); the engine's facts and lists; and a real compile by latexmk of a
   ctexrep (XeLaTeX) and an article (pdfLaTeX) document with every insertion
   applied, a png figure and a bibliography: a PDF, no error.
+
+**The page (B; the researcher, 2026-11-14: "我觉得很简陋…还需要优化UI").** Seen on a
+new English paper made by 新建文稿: the editor showed `\begin{document}`,
+`\maketitle`, `\begin{abstract}`, `\end{abstract}` and `\end{document}` as raw
+grey mono lines across a very wide empty box, with an empty right column. Now,
+in Word view (22.1), only where the selection does not touch a construct (it
+shows its source as soon as it does), never in the preamble or 显示源码:
+
+- **A page.** The text is a centred column of a page's measure (`--latex-measure`,
+  46rem) on the paper (`--paper`) with a hairline either side and generous
+  padding, the desk's tone (`--paper-alt`) around it; the body at 1rem in the
+  body face (the sans), line height 1.8 (times 行距's stretch, A2); headings in
+  the serif with space above (`latex-hline`, kept while the heading shows its
+  source, so nothing jumps). 显示源码 keeps the full-width mono source. The
+  header (the file's path, cut short with its whole path on hover; 保存, 导出 PDF,
+  显示源码), the notices and the status line are in the text's column, aligned
+  with the page; the right column is beside them from the top.
+- **Document scaffolding** -- each a block that replaces its whole lines, so it is
+  drawn only when its command stands alone on its lines (else as written); a
+  click on it puts the cursor on its first line, which shows the source:
+  - `\begin{document}` and `\end{document}`: a thin quiet label line,
+    「正文开始」 / 「正文结束」 (small, gray, sans, a hairline after the words);
+  - `\maketitle`: the title block read from the open file's own preamble
+    (`\title`, `\author`, `\date`; a chapter file has none, so it shows only
+    「（没有设置标题）」, no date guessed): the title large in the serif, centred;
+    the author and the date smaller under it. An empty `\author{}` is left out;
+    `\date{\today}`, or no `\date` (LaTeX prints today's then too), reads
+    「日期：导出当天」; an empty `\date{}` is left out; a missing or empty
+    `\title` reads 「（没有设置标题）」, quiet. In these arguments what the editor
+    knows is drawn as elsewhere (`\textbf` …, formulas, the font and size groups,
+    `\cite` and `\ref` chips, `\\` a new line, `\and` a gap); any other command is
+    shown as written with its arguments (`\thanks{…}`);
+  - an `abstract`: its `\begin` line a small centred heading 「摘要」 (small caps,
+    quiet), its `\end` line a little space, its own lines indented a little, as
+    the PDF sets them (the indent stays while a line is edited);
+  - the folded 导言区: 「导言区：文档类 {cls}，{n} 个宏包（已折叠，点开）」, the class
+    and the packages counted from the preamble (`\usepackage{a,b}` is two),
+    still a word button with no chevron; with no class read, 22.1's
+    「导言区（已折叠，点开）」.
+- **Tables.** A `tabular` (also `tabular*` and `tabularx`) on lines of its own, or
+  a `table` float holding exactly one, is a read-only grid: rows split on an
+  unescaped `\\` (`\\*` and `\\[2pt]` too), cells on an `&` outside braces,
+  `\toprule` and `\bottomrule` as heavy rules, `\midrule` and `\hline` as light
+  ones, `\addlinespace` ignored, the columns aligned as `l`, `c`, `r` say (`p`,
+  `m`, `b`, `X` left; `|`, `@{}`, `!{}`, `>{}`, `<{}` read and dropped;
+  `*{n}{…}` counted); a cell's text drawn as a title's is, `\multicolumn` and
+  `\multirow` shown as written in their cell. A float's caption is above the grid
+  in small text, 「表：…」; besides its tabular the float may hold only
+  `\centering`, a size switch, one `\caption`, `\label` and comments. **Any
+  doubt is shown as written, never guessed**: unbalanced braces, an environment
+  inside (a nested tabular, a minipage), more cells in a row than columns, a
+  partial rule (`\cline`, `\cmidrule`), a column type not read here, more than 20
+  columns or 200 rows, anything else in the float (`\resizebox`, a note), two
+  captions, a tabular inside a float that is not alone on its lines. A tabular
+  in a float is drawn only as part of it.
+- **Figures.** A `figure` float holding one to four `\includegraphics` (and
+  only `\centering`, a size switch, one `\caption`, `\label`, comments; no
+  environment inside) is its files -- each a line with the file's name and, for a
+  png, jpeg, gif or webp, its thumbnail through the asset route (21.5), the path
+  taken from the main file's folder as the export finds it (22.4; one that does
+  not load is dropped) -- with the caption under them, 「图：…」. A bare
+  `\includegraphics` in the text is the same line inline: 22.1's promise, not
+  built before.
+- **Font groups** (A's 字体 and 字号): `{\songti …}` and `{\fangsong …}` in the
+  serif CJK stack (`--font-serif`), `{\heiti …}` in the sans, `{\kaishu …}` in
+  a Kaiti stack (`"Kaiti SC", STKaiti, KaiTi`, then the serif), `{\small …}`,
+  `{\large …}`, `{\Large …}` at 0.9, 1.2 and 1.44 of the body (LaTeX's
+  proportions at 12 pt); `\textsf`, `\texttt`, `\textrm` in the sans, the mono and
+  the serif. The switch and the braces are hidden. The range reader reads such a
+  group as `readLatex` reads a command: a `{` with only spaces before the switch,
+  not a command's argument (`\textbf{\small x}` is the command's), closed by its
+  matching brace; one that holds nothing or whose brace closes inside a formula
+  is shown as written. Drawn again only where a change or the selection asks, as
+  every construct (22.1).
+- **The status line**, under the text, quiet and small: the body's words --
+  each CJK character one, each run of Latin letters or digits one (`3.14` and
+  `don't` one each); commands' names, comments, formulas, verbatim text, the
+  preamble, what follows `\end{document}`, citation and reference keys, labels,
+  paths and the arguments of `\input` and its like, optional arguments, environment
+  names and a tabular's column spec left out -- 「{n} 字」, drawn when the file loads
+  and 0.4 s after typing stops, never on a key; and the save state, following
+  the save: 「正在保存」 while one is under way, 「有未保存的改动」, else 「已保存」
+  (nothing for a file that can only be viewed). The header's own 「尚未保存」 /
+  「已保存」 beside 保存 stays.
+- **The right column** stays at the top while the text scrolls (sticky; the text
+  scrolls in its own box), its groups set apart by space and a hairline, the
+  hint 「选中一段文字，可以关联依据文件。」 under the panel; it narrows from 19rem to
+  14rem, so the whole page fits the shell's 900 px without scrolling sideways
+  (measured in a browser at 900 by 640: the text's column 376 px wide, nothing
+  wider than the window).
+- **Typing** stays under 16 ms a key on 22.1's 3,000-line file with the page's
+  blocks among its lines (a title, an abstract, a table float every 50 lines,
+  a figure every 70, font groups in the running text): median 4.5 ms, p95
+  8.7 ms (node, the same measure as 22.1's); typing inside a table, which then
+  shows its source, median 2.1 ms. The word count of that file takes 3 ms.
+- *Not done in B:* the first-line indent that A2 left to B (the Word view's
+  paragraphs following 首行缩进): which line starts a paragraph depends on the
+  line before it, which the redraw would have to read one line wider; left for a
+  later step.
+- **Words** (13.4 rows): 正文开始 Start of the text; 正文结束 End of the text;
+  （没有设置标题） (No title set); 日期：导出当天 Date: the day of the export; 表：
+  Table:; 图： Figure:; {n} 字 {n} words; 正在保存 Saving; 有未保存的改动 Unsaved
+  changes; 导言区：文档类 {cls}，{n} 个宏包（已折叠，点开） Preamble: class {cls}, {n}
+  packages (folded, click to open). 摘要 keeps its English, Abstract.
+- **Tests** (`tests/test_v17_page_look.py`, under node on the vendored CodeMirror
+  and KaTeX and on the stand-in page): the new English paper as a page; each
+  block shown untouched and as source when touched; the preamble open; the title
+  block's styles, an unknown command, a missing title and date, a chapter; tables
+  drawn and every doubt shown as written; figures and a bare `\includegraphics`;
+  the font and size groups, touched, as arguments, empty, in the preamble; the
+  word count; 3,000 random edits drawn again only where needed equal to drawing
+  whole; the 16 ms; the status line through a save and in a read-only file; the
+  columns; English for every word; no glyph; the style sheet's page, measure and
+  900 px. `test_v17_latex_word.py`'s stand-in elements gained children, its fold
+  line and a tabular test now expect 22.12 B, and its "a move that changes nothing
+  keeps the decorations" moves inside running text (the line of `\end{document}`
+  now shows its source when touched).

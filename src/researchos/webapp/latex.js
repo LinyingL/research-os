@@ -192,7 +192,12 @@
   // a construct's markup only where the selection does not touch it; `returnSpec` is Return by context.
 
   const HEADINGS = new Map([["chapter", 1], ["section", 2], ["subsection", 3], ["subsubsection", 4], ["paragraph", 5]]);
-  const STYLES = new Map([["textbf", "latex-b"], ["textit", "latex-i"], ["emph", "latex-i"], ["underline", "latex-u"]]);
+  const STYLES = new Map([["textbf", "latex-b"], ["textit", "latex-i"], ["emph", "latex-i"], ["underline", "latex-u"],
+    ["textsf", "latex-sf"], ["texttt", "latex-tt"], ["textrm", "latex-rm"]]);
+  // 22.12 B: the font and size groups of 格式与插入 ({\heiti …}, {\large …}), drawn in their face or size, the switch hidden.
+  const GROUP_CLASSES = new Map([["songti", "latex-f-song"], ["fangsong", "latex-f-song"], ["heiti", "latex-f-hei"], ["kaishu", "latex-f-kai"],
+    ["small", "latex-s-small"], ["large", "latex-s-large"], ["Large", "latex-s-larger"]]);
+  const PREAMBLE_META = new Set(["documentclass", "usepackage", "title", "author", "date"]);
   const CITE_RE = /^(?:cite(?:p|t|alp)?|Citep|Citet|parencite|textcite|autocite)$/;   // ingest/latex.py's _CITE_RE
   const REFS = new Set(["ref", "eqref", "label"]);
   const LIST_ENVS = new Set(["itemize", "enumerate", "description"]);
@@ -252,8 +257,8 @@
   // environment {name, role (list, text or raw), from, beginTo, endFrom, to}; math {from, to, display, src}; raw text
   // (comments, \verb, verbatim-like environments) {from, to, kind}. Nothing inside math or raw text is read.
   function readLatex(text) {
-    const out = { cmds: [], maths: [], envs: [], raws: [], preamble: null, end: -1 }, theorems = new Set();
-    const stack = [], n = text.length;
+    const out = { cmds: [], maths: [], envs: [], raws: [], groups: [], preamble: null, end: -1, meta: {} }, theorems = new Set();
+    const stack = [], n = text.length, argStarts = new Set(), meta = { packages: 0 };
     let i = 0;
     while (i < n) {
       SPECIAL.lastIndex = i;
@@ -318,12 +323,25 @@
       }
       const role = HEADINGS.has(name) ? "heading" : STYLES.has(name) ? "style" : CITE_RE.test(name) ? "cite" : REFS.has(name) ? "ref" : name === "item" ? "item" : "other";
       const cmd = { name: name, role: role, from: i, nameTo: e + star, to: e + star, args: [] };
+      if (GROUP_CLASSES.has(name) && !star) {   // {\heiti …}: a group of its own, not a command's argument (as declAt reads it)
+        let o = i - 1;
+        while (o >= 0 && (text[o] === " " || text[o] === "\t")) o -= 1;
+        let run = 0;
+        while (o - run - 1 >= 0 && text[o - run - 1] === "\\") run += 1;
+        const close = o >= 0 && text[o] === "{" && run % 2 === 0 && !argStarts.has(o) ? skipGroup(text, o, false) : -1;
+        if (close > 0) {
+          const g = { name: name, from: o, nameTo: e + (text[e] === " " || text[e] === "\t" ? 1 : 0), to: close };
+          out.groups.push(g);
+          cmd.group = g;
+        }
+      }
       let at = cmd.nameTo;
       if (role === "other") {   // a command it does not know: the groups right after it are its arguments
         while (cmd.args.length < 9 && (text[at] === "{" || text[at] === "[")) {
           const g = skipGroup(text, at, false);
           if (g < 0) break;
           cmd.args.push({ from: at, to: g, opt: text[at] === "[" });
+          argStarts.add(at);
           at = g;
         }
       } else {
@@ -335,7 +353,7 @@
           at = skipSpaces(text, g);
         }
         const g = role !== "item" && text[at] === "{" ? skipGroup(text, at, true) : -1;
-        if (g > 0) cmd.args.push({ from: at, to: g, opt: false });
+        if (g > 0) { cmd.args.push({ from: at, to: g, opt: false }); argStarts.add(at); }
         else if (role !== "item") cmd.role = "other";   // no argument: shown as written
         if (role === "item") {
           for (let k = stack.length - 1; k >= 0; k--) if (stack[k].role === "list") { cmd.list = stack[k]; cmd.n = ++stack[k].items; break; }
@@ -347,9 +365,15 @@
         const a = cmd.args.find((x) => !x.opt);
         if (a) theorems.add(text.slice(a.from + 1, a.to - 1).trim());
       }
+      if (PREAMBLE_META.has(name) && !out.preamble && !stack.length) {   // what the 导言区 line and \maketitle show
+        const a = cmd.args.filter((x) => !x.opt).pop(), arg = a ? text.slice(a.from + 1, a.to - 1) : null;
+        if (name === "usepackage") meta.packages += arg ? arg.split(",").filter((x) => x.trim()).length : 0;
+        else if (arg != null) meta[name === "documentclass" ? "cls" : name] = name === "documentclass" ? arg.trim() : arg;
+      }
       out.cmds.push(cmd);
       i = cmd.role === "cite" || cmd.role === "ref" ? cmd.to : cmd.nameTo;   // the arguments' text is read as text
     }
+    if (out.preamble) out.meta = meta;
     return out;
   }
 
@@ -371,6 +395,367 @@
       box.textContent = whole;
     }
     return box;
+  }
+
+  // -- the page's look (22.12 B) -------------------------------------------------------------------------------------
+  //
+  // Where the selection does not touch them: \begin{document} and \end{document} as a quiet label line, \maketitle as
+  // the title block read from the preamble, an abstract's \begin and \end as a small heading, a table (a tabular, or
+  // a table float holding one) as a read-only grid with its caption, a figure as its files and caption. Each is a
+  // block replacing whole lines, so it is drawn only when it stands alone on its lines; anything the reader doubts
+  // (unbalanced braces, a nested environment, more cells than columns, a partial rule) is shown as written.
+
+  const TABLE_FLOATS = new Set(["table", "table*"]), FIGURE_FLOATS = new Set(["figure", "figure*"]);
+  const TABULARS = new Map([["tabular", 0], ["tabular*", 1], ["tabularx", 1]]);   // arguments before the column spec
+  const FLOAT_EXTRAS = /\\(?:centering|small|footnotesize|scriptsize|normalsize)(?![A-Za-z])/g;
+  const RASTER = /\.(?:png|jpe?g|gif|webp)$/i;
+  const TABLE_RULE = /^\s*\\(toprule|midrule|bottomrule|hline|addlinespace)(?![A-Za-z])\s*(?:\[[^\]]*\])?/;
+  const TABLE_LIMIT = { columns: 20, rows: 200 };
+
+  function linesOf(doc, from, to) { return [doc.lineAt(from).from, doc.lineAt(to).to]; }
+  // Whether [from, to] stands alone on its lines: nothing but spaces before it on its first line or after it on its last.
+  function aloneOn(doc, from, to) {
+    const a = doc.lineAt(from), b = doc.lineAt(to);
+    return !/\S/.test(doc.sliceString(a.from, from)) && !/\S/.test(doc.sliceString(to, b.to));
+  }
+  // Environments whose whole range is drawn as one (a table, a figure, a tabular, an abstract's indented lines).
+  function wholeEnv(e) { return e.endFrom < e.to && (TABLE_FLOATS.has(e.name) || FIGURE_FLOATS.has(e.name) || TABULARS.has(e.name) || e.name === "abstract"); }
+
+  // The blocks of the body, each with its whole lines `range` (what the selection touches): document-begin / -end,
+  // abstract-begin / -end, title (\maketitle), table (a table float, or a tabular in none), figure.
+  function scaffoldsOf(doc, read, pre) {
+    const out = [], floats = read.envs.filter((e) => e.endFrom < e.to && (TABLE_FLOATS.has(e.name) || FIGURE_FLOATS.has(e.name)));
+    for (const e of read.envs) {
+      if (e.from < pre) continue;
+      if (e.name === "document" || e.name === "abstract") {
+        out.push({ kind: e.name + "-begin", x: e, range: linesOf(doc, e.from, e.beginTo) });
+        if (e.endFrom < e.to) out.push({ kind: e.name + "-end", x: e, range: linesOf(doc, e.endFrom, e.to) });
+      } else if (e.endFrom < e.to && (TABLE_FLOATS.has(e.name) || FIGURE_FLOATS.has(e.name) ||
+        (TABULARS.has(e.name) && !floats.some((f) => f.from < e.from && e.to < f.to)))) {
+        out.push({ kind: FIGURE_FLOATS.has(e.name) ? "figure" : "table", x: e, range: linesOf(doc, e.from, e.to) });
+      }
+    }
+    for (const c of read.cmds) if (c.name === "maketitle" && c.from >= pre && !c.args.length) out.push({ kind: "title", x: c, range: linesOf(doc, c.from, c.nameTo) });
+    return out;
+  }
+
+  // The columns of a tabular's spec, as alignments ("l", "c", "r"): null when it holds what is not read here.
+  function columnsOf(spec) {
+    const cols = [];
+    let i = 0;
+    const group = () => {
+      while (spec[i] === " " || spec[i] === "\n" || spec[i] === "\t") i += 1;
+      if (spec[i] !== "{") return null;
+      const g = skipGroup(spec, i, false);
+      if (g < 0) return null;
+      const s = spec.slice(i + 1, g - 1);
+      i = g;
+      return s;
+    };
+    while (i < spec.length) {
+      const c = spec[i++];
+      if (c === " " || c === "\n" || c === "\t" || c === "|") continue;
+      if (c === "l" || c === "c" || c === "r") cols.push(c);
+      else if (c === "X") cols.push("l");
+      else if (c === "p" || c === "m" || c === "b") { if (group() == null) return null; cols.push("l"); }
+      else if (c === "@" || c === "!" || c === ">" || c === "<") { if (group() == null) return null; }
+      else if (c === "*") {
+        const k = group(), sub = k == null ? null : group(), inner = sub == null ? null : columnsOf(sub);
+        if (!inner || !/^\s*\d{1,2}\s*$/.test(k)) return null;
+        for (let r = Number(k); r > 0 && cols.length <= TABLE_LIMIT.columns; r--) cols.push(...inner);
+      } else return null;
+      if (cols.length > TABLE_LIMIT.columns) return null;
+    }
+    return cols.length ? cols : null;
+  }
+
+  // A tabular's grid from what follows \begin{tabular} up to its \end: {cols, rows: [{cells, above, below}]}, a rule
+  // "heavy" (\toprule, \bottomrule) or "light" (\midrule, \hline). Null on any doubt.
+  function tabularGrid(src, before) {
+    const text = src.split("\n").map(codePart).join("\n");
+    let i = 0;
+    const ws = () => { while (i < text.length && /\s/.test(text[i])) i += 1; };
+    for (let k = 0; k < before; k++) {
+      ws();
+      const g = text[i] === "{" ? skipGroup(text, i, false) : -1;
+      if (g < 0) return null;
+      i = g;
+    }
+    ws();
+    if (text[i] === "[") { const g = skipGroup(text, i, false); if (g < 0) return null; i = g; ws(); }
+    const g = text[i] === "{" ? skipGroup(text, i, false) : -1;
+    const cols = g > 0 ? columnsOf(text.slice(i + 1, g - 1)) : null;
+    if (!cols) return null;
+    const body = text.slice(g);
+    if (/\\(?:begin|end|cline|cmidrule)(?![A-Za-z])/.test(body)) return null;   // a nested environment, a partial rule
+    const chunks = [];
+    let cells = [], cell = "", depth = 0;
+    for (let j = 0; j < body.length; j++) {
+      const c = body[j];
+      if (c === "\\") {
+        if (body[j + 1] === "\\" && depth === 0) {   // \\ ends a row; \\* and \\[2pt] too
+          cells.push(cell); chunks.push(cells); cells = []; cell = "";
+          let k = j + 2;
+          if (body[k] === "*") k += 1;
+          let s = k;
+          while (body[s] === " " || body[s] === "\t") s += 1;
+          if (body[s] === "[") { const close = body.indexOf("]", s); if (close < 0) return null; k = close + 1; }
+          j = k - 1;
+          continue;
+        }
+        cell += c + (body[j + 1] || "");
+        j += 1;
+        continue;
+      }
+      if (c === "{") depth += 1;
+      else if (c === "}" && --depth < 0) return null;
+      if (c === "&" && depth === 0) { cells.push(cell); cell = ""; continue; }
+      cell += c;
+    }
+    if (depth !== 0) return null;
+    cells.push(cell); chunks.push(cells);
+    const rows = [], weigh = (was, rule) => (rule === "addlinespace" ? was : was === "heavy" || rule === "toprule" || rule === "bottomrule" ? "heavy" : "light");
+    let above = null;
+    for (let r = 0; r < chunks.length; r++) {
+      const cs = chunks[r];
+      let m;
+      while ((m = TABLE_RULE.exec(cs[0]))) { above = weigh(above, m[1]); cs[0] = cs[0].slice(m[0].length); }
+      if (r === chunks.length - 1 && cs.length === 1 && !/\S/.test(cs[0])) {   // after the last \\: rules only
+        if (above && rows.length) rows[rows.length - 1].below = above;
+        break;
+      }
+      if (cs.length > cols.length || rows.length >= TABLE_LIMIT.rows) return null;
+      rows.push({ cells: cs.map((x) => x.trim()), above: above, below: null });
+      above = null;
+    }
+    return rows.length ? { cols: cols, rows: rows } : null;
+  }
+
+  // What a float holds besides `skip` (its tabular or its graphics): only \centering, size switches, comments, one
+  // \caption and \label. {caption} (the caption's source, or null), or null when it holds anything else.
+  function floatRest(doc, read, e, skip) {
+    let caption = null, captions = 0;
+    const cut = skip.map((r) => [r.from, r.to]);
+    for (const c of read.cmds) {
+      if (c.from <= e.beginTo || c.from >= e.endFrom || cut.some((r) => c.from >= r[0] && c.from < r[1])) continue;
+      if (c.name === "caption") {
+        const a = c.args.filter((x) => !x.opt).pop();
+        if (!a || ++captions > 1) return null;
+        caption = doc.sliceString(a.from + 1, a.to - 1);
+        cut.push([c.from, c.to]);
+      } else if (c.name === "label") cut.push([c.from, c.to]);
+    }
+    cut.sort((a, b) => a[0] - b[0]);
+    let rest = "", at = e.beginTo;
+    for (const [a, b] of cut) { if (a > at) rest += doc.sliceString(at, a); at = Math.max(at, b); }
+    rest += doc.sliceString(at, e.endFrom);
+    rest = rest.split("\n").map(codePart).join("\n").replace(/^\s*\[[^\]\n]*\]/, "").replace(FLOAT_EXTRAS, "");
+    return /\S/.test(rest) ? null : { caption: caption };
+  }
+  function tableModel(doc, read, e) {
+    const inner = read.envs.filter((x) => x !== e && x.from > e.from && x.to <= e.endFrom);
+    let tab = e, caption = null;
+    if (TABLE_FLOATS.has(e.name)) {
+      if (inner.length !== 1 || !TABULARS.has(inner[0].name) || !(inner[0].endFrom < inner[0].to)) return null;
+      tab = inner[0];
+      const rest = floatRest(doc, read, e, [tab]);
+      if (!rest) return null;
+      caption = rest.caption;
+    } else if (inner.length) return null;
+    const grid = tabularGrid(doc.sliceString(tab.beginTo, tab.endFrom), TABULARS.get(tab.name));
+    return grid ? { caption: caption, grid: grid } : null;
+  }
+  function figureModel(doc, read, e) {
+    if (read.envs.some((x) => x !== e && x.from > e.from && x.to <= e.endFrom)) return null;   // subfigures, minipages
+    const pics = read.cmds.filter((c) => c.name === "includegraphics" && c.from > e.beginTo && c.to <= e.endFrom);
+    if (!pics.length || pics.length > 4) return null;
+    const paths = pics.map((c) => { const a = c.args.filter((x) => !x.opt); return a.length === 1 ? doc.sliceString(a[0].from + 1, a[0].to - 1).trim() : ""; });
+    if (paths.some((p) => !p)) return null;
+    const rest = floatRest(doc, read, e, pics);
+    return rest ? { caption: rest.caption, paths: paths } : null;
+  }
+
+  // A piece of LaTeX (a title, a caption, a cell) drawn into `host`: the styles, fonts, sizes, formulas and chips the
+  // editor knows drawn as in the text; \\ a new line; \and a gap; every other command shown as written with its
+  // arguments, never guessed.
+  function inlineInto(host, src, depth) {
+    let i = 0, text = "";
+    const n = src.length;
+    const flush = () => { if (text) { host.appendChild(mk("span", null, text)); text = ""; } };
+    const put = (el) => { flush(); host.appendChild(el); };
+    if (depth > 8) { host.appendChild(mk("span", "latex-cmd", src)); return; }
+    while (i < n) {
+      const c = src[i];
+      if (c === "%") { const e = src.indexOf("\n", i); i = e < 0 ? n : e + 1; continue; }
+      if (c === "~") { text += " "; i += 1; continue; }
+      if (c === "$") {
+        const display = src[i + 1] === "$", open = display ? 2 : 1, e = mathEnd(src, i + open, display ? "$$" : "$");
+        if (e < 0) { text += c; i += 1; continue; }
+        put(window.katex ? mathDOM(src.slice(i + open, e - open), false, src.slice(i, e)) : mk("span", "latex-math-raw", src.slice(i, e)));
+        i = e;
+        continue;
+      }
+      if (c === "{") {
+        const g = skipGroup(src, i, false);
+        if (g < 0) { text += c; i += 1; continue; }
+        const m = /^\{[ \t]*\\([A-Za-z]+)(?![A-Za-z])[ \t]?/.exec(src.slice(i, i + 40));
+        flush();
+        if (m && GROUP_CLASSES.has(m[1])) { const span = mk("span", GROUP_CLASSES.get(m[1])); inlineInto(span, src.slice(i + m[0].length, g - 1), depth + 1); host.appendChild(span); }
+        else inlineInto(host, src.slice(i + 1, g - 1), depth + 1);
+        i = g;
+        continue;
+      }
+      if (c !== "\\") { text += c; i += 1; continue; }
+      const d = src[i + 1];
+      if (d === "\\") { put(mk("br")); i += 2; continue; }
+      if (d && /[%&$#_{} ]/.test(d)) { text += d; i += 2; continue; }
+      let e = i + 1;
+      while (e < n && /[A-Za-z]/.test(src[e])) e += 1;
+      if (e === i + 1) { text += src.slice(i, i + 2); i += 2; continue; }
+      const name = src.slice(i + 1, e);
+      let at = e;
+      while (src[at] === " ") at += 1;
+      if (STYLES.has(name) && src[at] === "{" && skipGroup(src, at, false) > 0) {
+        const g = skipGroup(src, at, false), span = mk("span", STYLES.get(name));
+        inlineInto(span, src.slice(at + 1, g - 1), depth + 1);
+        put(span);
+        i = g;
+        continue;
+      }
+      if (CITE_RE.test(name) || REFS.has(name)) {
+        let k = at;
+        for (let opts = 0; opts < 2 && src[k] === "["; opts++) { const g = skipGroup(src, k, false); if (g < 0) break; k = g; }
+        const g = src[k] === "{" ? skipGroup(src, k, false) : -1;
+        if (g > 0) {
+          const keys = src.slice(k + 1, g - 1).split(",").map((x) => x.trim()).filter(Boolean).join(", ");
+          put(mk("span", "latex-chip latex-chip-" + (CITE_RE.test(name) ? "cite" : "ref"), keys));
+          i = g;
+          continue;
+        }
+      }
+      if (name === "and") { put(mk("span", "latex-title-and")); i = at; continue; }   // TeX drops the spaces after it
+      if (GROUP_CLASSES.has(name)) {   // a switch in the middle: the rest of its group
+        const span = mk("span", GROUP_CLASSES.get(name));
+        inlineInto(span, src.slice(src[e] === " " ? e + 1 : e), depth + 1);
+        put(span);
+        i = n;
+        continue;
+      }
+      let to = e;
+      while (to < n && (src[to] === "{" || src[to] === "[")) { const g = skipGroup(src, to, false); if (g < 0) break; to = g; }
+      put(mk("span", "latex-cmd", src.slice(i, to)));
+      i = to;
+    }
+    flush();
+  }
+
+  // The project path of an image \includegraphics names, as the export finds it from the main file's folder (22.4), for
+  // a thumbnail through the asset route; null for a kind the route does not draw or a path that leaves the project.
+  function assetOf(path) {
+    if (!RASTER.test(path) || typeof ed === "undefined" || !ed || !ed.path) return null;
+    const f = ed.format || {}, folder = typeof f.folder === "string" ? f.folder : ed.path.slice(0, Math.max(ed.path.lastIndexOf("/"), 0));
+    const p = normPath((folder ? folder + "/" : "") + path);
+    return p && !p.startsWith("..") ? "/api/workspace/asset?path=" + encodeURIComponent(p) : null;
+  }
+  function graphicDOM(path, tag) {
+    const line = mk(tag, "latex-graphic"), src = assetOf(path);
+    if (src) {
+      const img = mk("img", "latex-graphic-thumb");
+      img.alt = ""; img.loading = "lazy"; img.src = src;
+      img.addEventListener("error", () => { if (img.remove) img.remove(); });
+      line.appendChild(img);
+    }
+    line.appendChild(mk("span", "latex-graphic-name", path));
+    return line;
+  }
+  function captionDOM(word, src) {
+    const p = mk("p", "latex-caption");
+    p.appendChild(mk("span", "latex-caption-word", word));
+    inlineInto(p, src, 0);
+    return p;
+  }
+  function tableDOM(model) {
+    const box = mk("div", "latex-table-preview"), table = mk("table", "latex-table"), body = mk("tbody");
+    if (model.caption != null) box.appendChild(captionDOM(t("表："), model.caption));
+    const cols = model.grid.cols;
+    model.grid.rows.forEach((r) => {
+      const tr = mk("tr", [r.above ? "latex-rule-" + r.above : "", r.below ? "latex-rule-below-" + r.below : ""].filter(Boolean).join(" ") || null);
+      cols.forEach((align, k) => {
+        const td = mk("td", align === "l" ? null : "latex-col-" + align);
+        if (k < r.cells.length) inlineInto(td, r.cells[k], 0);
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+    table.appendChild(body);
+    box.appendChild(table);
+    return box;
+  }
+  function figureDOM(model) {
+    const box = mk("div", "latex-figure-preview");
+    model.paths.forEach((p) => box.appendChild(graphicDOM(p, "div")));
+    if (model.caption != null) box.appendChild(captionDOM(t("图："), model.caption));
+    return box;
+  }
+  // \maketitle: the title large in the serif face, the author and the date under it. An empty \author{} is left out; a
+  // \date{\today}, or no \date (LaTeX prints today's then too), is 「日期：导出当天」; an empty \date{} is left out.
+  function titleDOM(meta) {
+    const box = mk("div", "latex-titleblock");
+    const part = (cls, src) => { const el = mk("div", cls); inlineInto(el, src, 0); box.appendChild(el); };
+    if (meta.title != null && /\S/.test(meta.title)) part("latex-title", meta.title.trim());
+    else box.appendChild(mk("div", "latex-title-none", t("（没有设置标题）")));
+    if (meta.author != null && /\S/.test(meta.author)) part("latex-title-author", meta.author.trim());
+    const date = meta.date == null ? (meta.own ? "\\today" : "") : meta.date.trim();   // a chapter has no preamble: no date guessed
+    if (date === "\\today") box.appendChild(mk("div", "latex-title-date", t("日期：导出当天")));
+    else if (date) part("latex-title-date", date);
+    return box;
+  }
+  // 导言区's folded line: the class and how many packages, in words (22.12 B), no chevron.
+  function preambleWords(meta) {
+    if (!meta || !meta.cls) return t("导言区（已折叠，点开）");
+    return t("导言区：文档类 {cls}，{n} 个宏包（已折叠，点开）", { cls: meta.cls, n: meta.packages || 0 });
+  }
+
+  // The body's words for the status line: each CJK character one, each run of Latin letters or digits one; commands'
+  // names, comments, formulas, verbatim text, the preamble and what is not prose (keys, labels, paths, environment
+  // names, options, a tabular's columns) left out.
+  const CJK = /[぀-ヿ㐀-䶿一-鿿豈-﫿]|[\ud840-\ud87f][\udc00-\udfff]/g;
+  const LATIN_WORD = /[A-Za-z0-9À-ɏ]+(?:['’.-][A-Za-z0-9À-ɏ]+)*/g;
+  function bodyWords(text, read) {
+    const docEnv = read.envs.find((e) => e.name === "document");
+    const start = docEnv ? docEnv.beginTo : 0, stop = docEnv && docEnv.endFrom < docEnv.to ? docEnv.endFrom : text.length;
+    const cut = [];
+    read.maths.forEach((f) => cut.push([f.from, f.to]));
+    read.raws.forEach((r) => cut.push([r.from, r.to]));
+    for (const c of read.cmds) {
+      cut.push([c.from, c.nameTo]);
+      if (c.role === "cite" || c.role === "ref" || NAME_ARGS.has(c.name) || c.name === "documentclass" || c.name === "usepackage") cut.push([c.from, c.to]);
+      else c.args.forEach((a) => { if (a.opt) cut.push([a.from, a.to]); });
+    }
+    for (const e of read.envs) {
+      cut.push([e.from, e.beginTo]);
+      if (e.endFrom < e.to) cut.push([e.endFrom, e.to]);
+      if (e.role === "raw") {   // a tabular's {ll}, a figure's [htbp]
+        let at = e.beginTo;
+        while (text[at] === "[" || text[at] === "{") { const g = skipGroup(text, at, false); if (g < 0) break; cut.push([at, g]); at = g; if (text[at - 1] === "}") break; }
+      }
+    }
+    cut.sort((a, b) => a[0] - b[0]);
+    let n = 0, at = start;
+    const count = (s) => {
+      const cjk = s.match(CJK);
+      n += (cjk ? cjk.length : 0);
+      const latin = s.replace(CJK, " ").match(LATIN_WORD);
+      n += latin ? latin.length : 0;
+    };
+    for (const [a, b] of cut) {
+      if (b <= at) continue;
+      if (a >= stop) break;
+      if (a > at) count(text.slice(at, a));
+      at = Math.max(at, b);
+    }
+    if (at < stop) count(text.slice(at, stop));
+    return n;
   }
 
   // The preamble is folded from the file's start to the end of the line before \begin{document}: 0 when nothing is.
@@ -418,16 +803,24 @@
     if (tr.docChanged) {
       ch.iterChangedRanges((fa, ta, fb, tb) => spans.push([fb, tb]));
       differ(old.cmds, read.cmds, (a, b) => sameCmd(a, b, map), wholeParts, map, spans);
-      differ(old.envs, read.envs, (a, b) => map(a.from) === b.from && map(a.beginTo) === b.beginTo && map(a.endFrom) === b.endFrom && map(a.to) === b.to, envParts, map, spans);
+      differ(old.envs, read.envs, (a, b) => map(a.from) === b.from && map(a.beginTo) === b.beginTo && map(a.endFrom) === b.endFrom && map(a.to) === b.to,
+        (e, m) => (wholeEnv(e) ? wholeParts(e, m) : envParts(e, m)), map, spans);
       differ(old.maths, read.maths, (a, b) => map(a.from) === b.from && map(a.to) === b.to && a.display === b.display, wholeParts, map, spans);
+      differ(old.groups, read.groups, (a, b) => a.name === b.name && map(a.from) === b.from && map(a.nameTo) === b.nameTo && map(a.to) === b.to, wholeParts, map, spans);
+      // \maketitle shows the preamble's \title, \author and \date: drawn again when they change
+      if (JSON.stringify(old.meta) !== JSON.stringify(read.meta)) for (const c of read.cmds) if (c.name === "maketitle") spans.push([c.from, c.nameTo]);
       const preWas = map(preambleEnd(tr.startState.doc, old));
       if (preWas !== pre) spans.push([0, Math.max(pre, preWas)]);
     }
     if (inPreamble(was, pre) !== inPreamble(sel, pre)) spans.push([0, pre]);
     const touch = (s, from, to) => s.some((r) => r.from <= to && r.to >= from);
     const flip = (from, to) => { if (live && touch(was, from, to) !== touch(sel, from, to)) spans.push([from, to]); };
-    for (const c of read.cmds) if (c.role !== "other" && c.from >= pre) flip(c.from, c.to);
+    for (const c of read.cmds) if ((c.role !== "other" || c.name === "includegraphics") && c.from >= pre) flip(c.from, c.to);
     if (math) for (const f of read.maths) if (f.from >= pre) flip(f.from, f.to);
+    if (live) {
+      for (const g of read.groups) if (g.from >= pre) flip(g.from, g.to);
+      for (const x of scaffoldsOf(doc, read, pre)) flip(x.range[0], x.range[1]);
+    }
     if (!spans.length) return null;
     const lines = (list) => {
       const out = [];
@@ -445,13 +838,18 @@
       };
       if (pre > 0) reach(0, pre);
       for (const c of read.cmds) reach(c.from, c.to);
-      for (const e of read.envs) { reach(e.from, e.beginTo); reach(e.endFrom, e.to); }
+      for (const e of read.envs) { if (wholeEnv(e)) reach(e.from, e.to); else { reach(e.from, e.beginTo); reach(e.endFrom, e.to); } }
       for (const f of read.maths) reach(f.from, f.to);
+      for (const g of read.groups) reach(g.from, g.to);
       if (!grew) return w;
       w = lines(w);
     }
     return [[0, doc.length]];
   }
+
+  // A group is drawn in its face or size when it holds text and its closing brace is not inside a formula (where the
+  // brace belongs to the formula, not to the group: shown as written).
+  function groupShown(read, g) { return g.to - 1 > g.nameTo && !read.maths.some((f) => f.from < g.to - 1 && g.to - 1 < f.to); }
 
   let wx = null;
   function wordField(CM) {
@@ -478,12 +876,13 @@
       toDOM() { return mk("span", this.n ? "latex-item" : "latex-item latex-bullet", this.n ? this.n + "." : ""); }
     }
     // 导言区 is a button (12.11): Tab reaches it, Return and Space press it. Folding it moves a cursor that was in the
-    // preamble to the body, so the fold always closes when asked. Its state is said in words, with no chevron (22.6).
+    // preamble to the body, so the fold always closes when asked. Its state is said in words, with no chevron (22.6);
+    // folded, it says the class and how many packages (22.12 B).
     class Preamble extends CM.WidgetType {
-      constructor(open) { super(); this.open = open; }
-      eq(other) { return other.open === this.open; }
+      constructor(open, words) { super(); this.open = open; this.words = words; }
+      eq(other) { return other.open === this.open && other.words === this.words; }
       toDOM(view) {
-        const b = mk("button", "latex-preamble", this.open ? t("收起导言区") : t("导言区（已折叠，点开）"));
+        const b = mk("button", "latex-preamble", this.open ? t("收起导言区") : this.words);
         b.setAttribute("type", "button");
         b.setAttribute("aria-expanded", String(this.open));
         b.addEventListener("mousedown", (event) => event.preventDefault());
@@ -499,10 +898,58 @@
       }
       ignoreEvent() { return true; }
     }
+    // 22.12 B: a block of the page, drawn from `make` and compared by `key`. A click puts the cursor at its first line,
+    // which shows the source (CodeMirror's own placing would put it on the line after a block, touching nothing).
+    class Block extends CM.WidgetType {
+      constructor(key, make) { super(); this.key = key; this.make = make; }
+      eq(other) { return other.key === this.key; }
+      toDOM(view) {
+        const el = this.make();
+        el.addEventListener("mousedown", (event) => {
+          if (event.button || typeof view.posAtDOM !== "function") return;
+          event.preventDefault();
+          view.dispatch({ selection: { anchor: view.posAtDOM(el) } });
+          view.focus();
+        });
+        return el;
+      }
+      ignoreEvent() { return true; }
+    }
+    class Graphic extends CM.WidgetType {
+      constructor(path) { super(); this.path = path; }
+      eq(other) { return other.path === this.path; }
+      toDOM() { return graphicDOM(this.path, "span"); }
+      ignoreEvent() { return false; }
+    }
     const command = D.mark({ class: "latex-cmd" }), hide = D.replace({});
     const marks = new Map();
     const mark = (cls) => { if (!marks.has(cls)) marks.set(cls, D.mark({ class: cls })); return marks.get(cls); };
     const lineMarks = [1, 2, 3, 4].map((k) => D.line({ class: "latex-li latex-li-" + k }));
+    const headingLine = D.line({ class: "latex-hline" }), abstractLine = D.line({ class: "latex-abstract-line" });
+
+    // The block a scaffold is drawn as, or null when it is shown as written (not alone on its lines, or a doubt). Its
+    // formulas are typeset once KaTeX is in: the key says whether it was, so the block is drawn again when it arrives.
+    const typeset = () => (typeof window !== "undefined" && window.katex ? "K" : "-");
+    function blockOf(doc, read, x) {
+      const e = x.x;
+      switch (x.kind) {
+        case "document-begin": return aloneOn(doc, e.from, e.beginTo) ? new Block("db", () => mk("div", "latex-doc-mark", t("正文开始"))) : null;
+        case "document-end": return aloneOn(doc, e.endFrom, e.to) ? new Block("de", () => mk("div", "latex-doc-mark", t("正文结束"))) : null;
+        case "abstract-begin": return aloneOn(doc, e.from, e.beginTo) ? new Block("ab", () => mk("div", "latex-abstract-head", t("摘要"))) : null;
+        case "abstract-end": return aloneOn(doc, e.endFrom, e.to) ? new Block("ae", () => mk("div", "latex-abstract-end")) : null;
+        case "title": {
+          if (!aloneOn(doc, e.from, e.nameTo)) return null;
+          const meta = { title: read.meta.title, author: read.meta.author, date: read.meta.date, own: !!read.preamble };
+          return new Block(typeset() + "t" + JSON.stringify(meta), () => titleDOM(meta));
+        }
+        default: {
+          if (!aloneOn(doc, e.from, e.to)) return null;
+          const model = x.kind === "figure" ? figureModel(doc, read, e) : tableModel(doc, read, e);
+          if (!model) return null;
+          return new Block(typeset() + x.kind + doc.sliceString(e.from, e.to), () => (x.kind === "figure" ? figureDOM(model) : tableDOM(model)));
+        }
+      }
+    }
 
     // The decorations of the constructs that meet `within` ([from, to], closed: none crosses its edges), or of all.
     function decorate(read, math, open, state, within, on) {
@@ -511,16 +958,42 @@
       const meets = within ? (from, to) => from <= within[1] && to >= within[0] : () => true;
       const pre = preambleEnd(doc, read);
       if (pre > 0 && meets(0, pre)) {
-        out.push(open || inPreamble(sel, pre) ? D.widget({ widget: new Preamble(true), block: true, side: -1 }).range(0)
-          : D.replace({ widget: new Preamble(false), block: true }).range(0, pre));
+        out.push(open || inPreamble(sel, pre) ? D.widget({ widget: new Preamble(true, ""), block: true, side: -1 }).range(0)
+          : D.replace({ widget: new Preamble(false, preambleWords(read.meta)), block: true }).range(0, pre));
       }
-      const lines = new Set();
+      // the page's blocks (22.12 B); what they cover is not decorated again
+      const covered = [];
+      for (const x of scaffoldsOf(doc, read, pre)) {
+        const [a, b] = x.range;
+        if (!meets(a, b) || touch(a, b)) continue;
+        const w = blockOf(doc, read, x);
+        if (!w) continue;
+        out.push(D.replace({ widget: w, block: true }).range(a, b));
+        covered.push([a, b]);
+      }
+      const under = covered.length ? (from, to) => covered.some((r) => from >= r[0] && to <= r[1]) : () => false;
+      for (const e of read.envs) {   // an abstract's own lines are indented a little, as the PDF sets them
+        if (e.name !== "abstract" || e.from < pre || !(e.endFrom < e.to)) continue;
+        let k = doc.lineAt(e.beginTo).number + 1, last = doc.lineAt(e.endFrom).number - 1;
+        if (within) { k = Math.max(k, doc.lineAt(within[0]).number); last = Math.min(last, doc.lineAt(within[1]).number); }
+        for (; k <= last; k++) { const l = doc.line(k); if (!under(l.from, l.from)) out.push(abstractLine.range(l.from)); }
+      }
+      const lines = new Set(), headings = new Set();
       for (const c of read.cmds) {
-        if (c.from < pre || !meets(c.from, c.to)) continue;   // the preamble is source, folded or open
+        if (c.from < pre || !meets(c.from, c.to) || under(c.from, c.to)) continue;   // the preamble is source, folded or open
         const arg = c.args.length ? c.args[c.args.length - 1] : null;
         if (c.role === "item" && c.list) {
           const line = doc.lineAt(c.from);
           if (!lines.has(line.from)) { lines.add(line.from); out.push(lineMarks[Math.min(c.depth, 4) - 1].range(line.from)); }
+        }
+        if (c.role === "heading") {   // space above a heading, as on a page; kept while its source shows, so nothing jumps
+          const line = doc.lineAt(c.from);
+          if (!headings.has(line.from)) { headings.add(line.from); out.push(headingLine.range(line.from)); }
+        }
+        if (c.group && groupShown(read, c.group) && !touch(c.group.from, c.group.to)) continue;   // the group hides its switch
+        if (c.name === "includegraphics" && !touch(c.from, c.to)) {
+          const a = c.args.filter((x) => !x.opt), path = a.length === 1 ? doc.sliceString(a[0].from + 1, a[0].to - 1).trim() : "";
+          if (path) { out.push(D.replace({ widget: new Graphic(path) }).range(c.from, c.to)); continue; }
         }
         if (c.role === "other" || touch(c.from, c.to)) { out.push(command.range(c.from, c.nameTo)); continue; }
         if (c.role === "heading" || c.role === "style") {
@@ -535,14 +1008,18 @@
           out.push(D.replace({ widget: new Item(c.list.name === "enumerate" ? c.n : 0) }).range(c.from, c.nameTo + (doc.sliceString(c.nameTo, c.nameTo + 1) === " " ? 1 : 0)));
         } else out.push(command.range(c.from, c.nameTo));
       }
+      for (const g of read.groups) {   // {\heiti …}, {\large …}: the text in its face or size, the switch and braces hidden
+        if (g.from < pre || !meets(g.from, g.to) || under(g.from, g.to) || touch(g.from, g.to) || !groupShown(read, g)) continue;
+        out.push(hide.range(g.from, g.nameTo), mark(GROUP_CLASSES.get(g.name)).range(g.nameTo, g.to - 1), hide.range(g.to - 1, g.to));
+      }
       for (const env of read.envs) {
         if (env.from < pre) continue;
-        if (meets(env.from, env.beginTo)) out.push(command.range(env.from, env.beginTo));
-        if (env.endFrom < env.to && meets(env.endFrom, env.to)) out.push(command.range(env.endFrom, env.to));
+        if (meets(env.from, env.beginTo) && !under(env.from, env.beginTo)) out.push(command.range(env.from, env.beginTo));
+        if (env.endFrom < env.to && meets(env.endFrom, env.to) && !under(env.endFrom, env.to)) out.push(command.range(env.endFrom, env.to));
       }
       if (math) {
         for (const f of read.maths) {
-          if (f.from >= pre && meets(f.from, f.to) && !touch(f.from, f.to)) out.push(D.replace({ widget: new MathWidget(f.src, f.display, doc.sliceString(f.from, f.to)) }).range(f.from, f.to));
+          if (f.from >= pre && meets(f.from, f.to) && !under(f.from, f.to) && !touch(f.from, f.to)) out.push(D.replace({ widget: new MathWidget(f.src, f.display, doc.sliceString(f.from, f.to)) }).range(f.from, f.to));
         }
       }
       return out;
@@ -1975,15 +2452,23 @@
     const said = mk("span", "latex-act");
     said.append(status, undoLink);
     tools.append(save, undo, exported.button, source, said);
-    head.append(mk("div", "node-path mono", file.path), tools);
+    const where = mk("div", "node-path mono", file.path);
+    where.title = file.path;   // 22.12 B: a long path is cut short in the header, said whole on hover
+    head.append(where, tools);
     const readOnly = mk("p", "node-sub latex-read-only" + (file.read_only ? "" : " hidden"), file.read_only_message || "");
     const notice = mk("div", "latex-notice hidden"), box = mk("div", "latex-editor"), side = mk("aside", "latex-side");
-    const body = mk("div", "latex-body");
-    body.append(box, side);
+    // 22.12 B: under the text, quietly, how many words the body has and whether it is saved
+    const bar = mk("div", "latex-statusbar"), count = mk("span", "latex-words"), saved = mk("span", "latex-save-state");
+    bar.append(count, saved);
+    const body = mk("div", "latex-body"), main = mk("div", "latex-main");
     const note = mk("p", "node-sub latex-new-note" + (at && at.note ? "" : " hidden"), (at && at.note) || "");   // 22.11: \input not added
-    page.append(backBar(), head, exported.block, readOnly, note, notice, body);
+    // the header, the notices and the status line in the text's column; the right column beside it, from the top
+    main.append(head, exported.block, readOnly, note, notice, box, bar);
+    body.append(main, side);
+    page.append(backBar(), body);
     host.replaceChildren(page);
-    const me = { path: file.path, CM: CM, ui: { save: save, undo: undo, status: status, notice: notice, box: box, side: side, undoLink: undoLink, source: source },
+    const me = { path: file.path, CM: CM, ui: { save: save, undo: undo, status: status, notice: notice, box: box, side: side, undoLink: undoLink, source: source,
+      page: page, words: count, saveState: saved },
       lastKey: 0, busy: false, lastSave: null, afterComposing: null, target: at || null, panel: null };
     me.ui.format = formatPanel(me);   // 22.12: 格式与插入, at the top of the right column
     side.appendChild(me.ui.format.box);
@@ -2009,6 +2494,7 @@
     const CM = me.CM;
     me.wordComp = new CM.Compartment();
     me.ui.source.setAttribute("aria-pressed", String(sourceShown.has(me.path)));
+    me.ui.page.classList.toggle("is-source", sourceShown.has(me.path));   // 22.12 B: the page's column, or the full width
     me.revision = file.revision;
     me.readOnly = !!file.read_only;
     me.sep = file.line_ending === "crlf" ? "\r\n" : "\n";
@@ -2022,6 +2508,7 @@
       CM.EditorView.contentAttributes.of({ "aria-label": t("LaTeX 源码"), spellcheck: "false" }),
       CM.EditorView.updateListener.of((update) => {
         changed(me, update);
+        if (update.docChanged) { scheduleWords(me); drawSaveState(me); }
         if (update.selectionSet || update.docChanged || update.geometryChanged) placeLinkButton(me);
         syncFormat(me);
       }),
@@ -2059,6 +2546,8 @@
     if (me.ui.format) me.ui.format.optionsFor = null;
     me.layoutCustom = {};
     formatAvailability(me);
+    drawWords(me);
+    drawSaveState(me);
     loadPassages(me, false);
   }
 
@@ -2070,6 +2559,7 @@
     if (sourceShown.has(me.path)) sourceShown.delete(me.path); else sourceShown.add(me.path);
     const on = sourceShown.has(me.path);
     me.ui.source.setAttribute("aria-pressed", String(on));
+    me.ui.page.classList.toggle("is-source", on);
     me.view.dispatch({ effects: me.wordComp.reconfigure(on ? [] : wordExtensions(me.CM)) });
     if (!on && !me.view.hasFocus) me.view.dispatch({ effects: wordField(me.CM).live.of(false) });   // as a file loads
     formatAvailability(me);   // 22.12: 格式与插入 is for the file shown like Word
@@ -2154,19 +2644,23 @@
       return;
     }
     me.busy = true; me.ui.save.disabled = true; me.sinceSent = me.CM.ChangeSet.empty(doc.length);
+    me.inSave = true;
     setStatus(me.ui.status, "", t("正在保存…"));
+    drawSaveState(me);
     let r;
     try {
       r = await apiPost("/api/latex/save", body);
     } catch (err) {
       if (ed !== me) return;
       me.busy = false; me.ui.save.disabled = false; me.sinceSent = null;
+      me.inSave = false; drawSaveState(me);
       if (err.state === "workspace_conflict") conflict(me);
       else setStatus(me.ui.status, "err", t("没能保存，当前内容已保留。"), err);
       return;
     }
     if (ed !== me) return;
     me.savedDoc = doc; me.revision = r.revision; me.pending = me.sinceSent; me.sinceSent = null;
+    me.inSave = false; drawSaveState(me);
     if (lastShown && lastShown.path === me.path) lastShown = null;   // an export's answer is about the text before this save
     clearNotice(me);   // a conflict's notice and folded text are over once a save goes through
     const emptied = checkPassages(me);
@@ -2176,7 +2670,26 @@
     // passage act runs on a list about to be replaced
     if (emptied) { await loadPassages(me, true); if (ed !== me) return; }
     me.busy = false; me.ui.save.disabled = false;
+    me.inSave = false; drawSaveState(me);
     setStatus(me.ui.status, "", dirty() ? t("尚未保存") : t("已保存"));
+  }
+
+  // 22.12 B: the status line under the text. The word count is drawn when a file loads and a moment after typing
+  // stops, so a key never waits for it; the save state follows the save (正在保存 while one is under way).
+  function drawWords(me) {
+    if (ed !== me || !me.view || !me.ui.words) return;
+    const st = me.view.state, value = st.field(wordField(me.CM).field, false), text = st.doc.toString();
+    me.ui.words.textContent = t("{n} 字", { n: bodyWords(text, value ? value.read : readLatex(text)) });
+  }
+  function scheduleWords(me) {
+    clearTimeout(me.wordsTimer);
+    me.wordsTimer = setTimeout(() => { me.wordsTimer = null; drawWords(me); }, 400);
+  }
+  function drawSaveState(me) {
+    const el = me.ui.saveState;
+    if (!el || ed !== me) return;
+    el.textContent = me.readOnly ? "" : me.inSave ? t("正在保存") : dirty() ? t("有未保存的改动") : t("已保存");
+    el.classList.toggle("is-unsaved", !me.readOnly && !me.inSave && dirty());
   }
 
   // 409: the file changed elsewhere. What the editor holds stays in it and, folded, under the notice; 载入新版本 reads the
@@ -3565,6 +4078,7 @@
       sizeSpec: sizeSpec, headingSpec: headingSpec, headingLevel: headingLevel, figureSpec: figureSpec, tableSpec: tableSpec, mathSpec: mathSpec,
       listSpec: listSpec, footnoteSpec: footnoteSpec, citeSpec: citeSpec, formatState: formatState,
       readPreamble: readPreamble, layoutOf: layoutOf, layoutSpec: layoutSpec, alignSpec: alignSpec, quoteSpec: quoteSpec,
-      paragraphState: paragraphState, pageBreakSpec: pageBreakSpec, tocSpec: tocSpec, refSpec: refSpec, urlSpec: urlSpec, labelsOf: labelsOf }),
+      paragraphState: paragraphState, pageBreakSpec: pageBreakSpec, tocSpec: tocSpec, refSpec: refSpec, urlSpec: urlSpec, labelsOf: labelsOf,
+      bodyWords: bodyWords, tabularGrid: tabularGrid, columnsOf: columnsOf, inlineInto: inlineInto, preambleWords: preambleWords }),
   });
 })();

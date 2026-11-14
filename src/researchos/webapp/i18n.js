@@ -2138,6 +2138,17 @@
     "五号、小四这些字号要用 ctex。": "Chinese sizes such as Wuhao and Xiaosi need ctex.",
     "行距要在 0.5 到 4 倍之间。": "Line spacing must be between 0.5 and 4 lines.",
     "文稿用到了 {command}，它需要 hyperref，不能关掉超链接。": "The paper uses {command}, which needs hyperref, so links cannot be turned off.",
+    // The editor as a writing page (DESIGN.md 22.12, B)
+    "正文开始": "Start of the text",
+    "正文结束": "End of the text",
+    "（没有设置标题）": "(No title set)",
+    "日期：导出当天": "Date: the day of the export",
+    "表：": "Table: ",
+    "图：": "Figure: ",
+    "导言区：文档类 {cls}，{n} 个宏包（已折叠，点开）": {one: "Preamble: class {cls}, {n} package (folded, click to open)", other: "Preamble: class {cls}, {n} packages (folded, click to open)"},
+    "{n} 字": {one: "{n} word", other: "{n} words"},
+    "正在保存": "Saving",
+    "有未保存的改动": "Unsaved changes",
 
   };
 

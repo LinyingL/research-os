@@ -37,8 +37,9 @@ vm.runInContext(fs.readFileSync(__CM__, 'utf8'), ctx);
 const kctx = vm.createContext({});
 vm.runInContext(fs.readFileSync(__KATEX__, 'utf8'), kctx);
 global.window = {ROCodeMirror: ctx.ROCodeMirror};
-global.mk = (tag, cls, text) => ({tag, className: cls || '', textContent: text == null ? '' : String(text), innerHTML: '', attrs: {},
-  setAttribute(k, v) { this.attrs[k] = v; }, addEventListener() {}});
+// children, since 22.12 B's blocks (the title, a table, a figure) are built of elements
+global.mk = (tag, cls, text) => ({tag, className: cls || '', textContent: text == null ? '' : String(text), innerHTML: '', attrs: {}, children: [],
+  setAttribute(k, v) { this.attrs[k] = v; }, addEventListener() {}, append(...k) { this.children.push(...k); }, appendChild(k) { this.children.push(k); }});
 eval(fs.readFileSync(__LATEX__, 'utf8'));
 const CM = ctx.ROCodeMirror, P = window.ROLatex._pure, F = P.wordField(CM);
 const out = {};
@@ -92,7 +93,8 @@ out.noMath = drawn(noMath);
 window.katex = kctx.katex;
 out.mathArrives = drawn(noMath.update({effects: F.mathOn.of(true)}).state);
 // a selection move that shows and hides nothing new keeps the very same decorations
-const st0 = make(DOC, DOC.length), st1 = st0.update({selection: {anchor: DOC.length - 2}}).state;
+// (inside running text: since 22.12 B the cursor on \end{document}'s line shows its source, as any construct's)
+const st0 = make(DOC, DOC.indexOf('Text ') + 1), st1 = st0.update({selection: {anchor: DOC.indexOf('Text ') + 2}}).state;
 out.sameDeco = st0.field(F.field).deco === st1.field(F.field).deco;
 out.newDeco = st1.field(F.field).deco !== st1.update({selection: {anchor: DOC.indexOf('bold')}}).state.field(F.field).deco;
 
@@ -339,7 +341,10 @@ def test_cite_and_ref_are_quiet_chips_with_their_keys_and_unknown_commands_show_
     assert [x["widget"]["text"] for x in _find(d, "\\ref{sec:i}")] == ["sec:i"]
     assert [x["widget"]["text"] for x in _find(d, "\\label{sec:i}")] == ["sec:i"]
     assert _find(d, "\\newcommand", cls="latex-cmd") and _find(d, "\\unknown", cls="latex-cmd")
-    assert _find(d, "\\begin{tabular}", cls="latex-cmd") and _find(d, "\\end{tabular}", cls="latex-cmd")
+    # 22.12 B: a tabular the selection does not touch is a read-only grid (test_v17_page_look.py); its source is
+    # written as typed, never hidden piecemeal
+    grid = _find(d, "\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}", block=True)
+    assert grid and grid[0]["widget"]["cls"] == "latex-table-preview"
     # nothing of the comment, nor the arguments of an unknown command, is hidden or typeset
     assert not [x for x in d if "$q$" in x["text"] or x["text"] in ("{\\R}", "\\mathbb{R}", "{x}")]
 
@@ -358,7 +363,8 @@ def test_the_preamble_is_folded_under_its_label_and_opens_as_source_by_its_butto
     fold = [x for x in run["away"] if x["widget"] and "latex-preamble" in x["widget"]["cls"]]
     assert len(fold) == 1 and fold[0]["block"] and fold[0]["from"] == 0
     assert fold[0]["text"] == "\\documentclass{article}\n\\usepackage{amsmath}"
-    assert fold[0]["widget"] == {"cls": "latex-preamble", "text": "导言区（已折叠，点开）", "html": "", "expanded": "false"}
+    # 22.12 B: folded, it says the class and how many packages, in words
+    assert fold[0]["widget"] == {"cls": "latex-preamble", "text": "导言区：文档类 article，1 个宏包（已折叠，点开）", "html": "", "expanded": "false"}
     for opened in (run["opened"], run["cursorInPreamble"]):
         bar = [x for x in opened if x["widget"] and "latex-preamble" in x["widget"]["cls"]]
         assert len(bar) == 1 and bar[0]["from"] == bar[0]["to"] == 0 and bar[0]["widget"]["expanded"] == "true"
@@ -650,7 +656,9 @@ def test_the_words_of_like_word_go_through_t_with_their_english_and_the_toolbar_
     js = (WEBAPP / "latex.js").read_text(encoding="utf-8")
     i18n = (WEBAPP / "i18n.js").read_text(encoding="utf-8")
     assert 'mkButton(t("显示源码"), "ws-text-link latex-source"' in js
-    assert 'mk("button", "latex-preamble", this.open ? t("收起导言区") : t("导言区（已折叠，点开）"))' in js  # words, no chevron
+    assert 'mk("button", "latex-preamble", this.open ? t("收起导言区") : this.words)' in js  # words, no chevron
+    assert 'if (!meta || !meta.cls) return t("导言区（已折叠，点开）");' in js                # 22.12 B: with no class read
+    assert 't("导言区：文档类 {cls}，{n} 个宏包（已折叠，点开）", { cls: meta.cls, n: meta.packages || 0 })' in js
     assert '"导言区（已折叠，点开）": "Preamble (folded, click to open)",' in i18n
     assert '"收起导言区": "Fold the preamble",' in i18n and '"显示源码": "Show source",' in i18n
     css = (WEBAPP / "workspace.css").read_text(encoding="utf-8")
