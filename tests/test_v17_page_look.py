@@ -76,9 +76,18 @@ out.tables = {
   notAlone: tableOf('x ' + T('a & b \\\\')),
   twoCaptions: tableOf('\\begin{table}\n\\caption{a}\\caption{b}\n' + T('a \\\\') + '\n\\end{table}'),
 };
+// 22.12 T: a table the grid reader is sure of is its cells and caption, typed in place: what is drawn, in order (a cell
+// its text and class, a row or the caption's line its class, a widget its shape; hidden markup left out)
+const gridShape = (s) => { const d = body(s), a = d.indexOf('Before.') + 7, b = d.indexOf('After.');
+  return drawn(make(d, b + 1)).filter((x) => x.from > a && x.from < b).map((x) => x.shape || (x.cls ? (x.cls.startsWith('latex-cell') ? x.text + '=' + x.cls : x.cls) : null)).filter(Boolean); };
+out.grids = {
+  booktabs: gridShape('\\begin{table}[htbp]\n\\centering\n\\caption{Main \\emph{results}}\n\\label{tab:main}\n' + T('\\toprule\nA & B & C \\\\\n\\midrule\n1 & \\textbf{2} & $3$ \\\\\n\\bottomrule') + '\n\\end{table}'),
+  noCaption: gridShape('\\begin{table}\n' + T('a & b \\\\', 'll') + '\n\\end{table}'),
+  fewerCells: tableOf('\\begin{table}\n' + T('a & b \\\\') + '\n\\end{table}'),
+  unknownInCell: gridShape(T('\\foo{x} & \\cite{k} & 50\\% \\\\')),
+};
 const tdoc = body('\\begin{table}\n\\caption{C}\n' + T('a & b & c \\\\') + '\n\\end{table}');
-out.tableTouched = drawn(make(tdoc, tdoc.indexOf('a & b'))).filter((x) => x.block).length;
-out.tableTouchedCaption = drawn(make(tdoc, tdoc.indexOf('\\caption'))).filter((x) => x.block).length;
+out.tableSame = [tdoc.indexOf('a & b'), tdoc.indexOf('\\caption'), tdoc.indexOf('C}'), tdoc.indexOf('After.')].every((p) => JSON.stringify(drawn(make(tdoc, p))) === JSON.stringify(drawn(make(tdoc, 0))));
 out.grid = P.tabularGrid('{l|c}\n\\toprule\na & b \\\\\n\\bottomrule\n', 0);
 
 // -- figures and a bare \includegraphics --
@@ -117,7 +126,8 @@ const titleEl = titleWidget.w.toDOM(fakeView);
 titleEl.on.mousedown({button: 0, preventDefault: () => sent.push('prevented')});
 out.click = {sent, at: titleWidget.a, line: PAPER.slice(titleWidget.a).split('\n')[0], ignored: titleWidget.w.ignoreEvent(), titled: titleHits};
 F.hooks.title = null;
-let tableW = null; const tdoc2 = body('\\begin{table}\n\\caption{C}\n' + T('a & b & c \\\\') + '\n\\end{table}');
+// (a table with merged cells: one unit -- 22.12 T fills the others in like Word)
+let tableW = null; const tdoc2 = body('\\begin{table}\n\\caption{C}\n' + T('\\multicolumn{3}{c}{abc} \\\\') + '\n\\end{table}');
 const tst = make(tdoc2, 0); tst.field(F.field).deco.between(0, tdoc2.length, (a, b, v) => { if (v.spec.kind === 'table') tableW = {w: v.spec.widget, a, b}; });
 const tsent = [], tview = {state: tst, posAtDOM: () => tableW.a, dispatch: (spec) => tsent.push(spec), focus() {}};
 tableW.w.toDOM(tview).on.mousedown({button: 0, preventDefault() {}});
@@ -277,18 +287,27 @@ def test_the_title_block_styles_what_the_editor_knows_and_shows_the_rest_as_quie
 
 
 @needs_node
-def test_a_table_is_a_read_only_grid_with_its_numbered_caption_above(look):
+def test_a_table_is_its_cells_typed_in_place_under_its_numbered_caption_or_a_read_only_grid_where_cells_are_merged(look):
+    # 22.12 T (acceptance, 2026-11-14): the caption's words after 「表 1：」 on a centred line, then each row a line of cells,
+    # the rules as the PDF draws them, a formula, a style or a chip in a cell drawn as in the text
+    g = look["grids"]
+    W = "width:min(100%,"
+    assert g["booktabs"][:3] == ["latex-tcap-line", 'span.latex-caption-word"表 1："', "latex-i"]
+    rows = [x for x in g["booktabs"] if x.startswith("latex-trow")]
+    assert rows == ["latex-trow latex-trule-heavy", "latex-trow latex-trule-light latex-trule-below-heavy"]
+    cells = [x for x in g["booktabs"] if "=latex-cell" in x]
+    assert cells == ["A =latex-cell", " B =latex-cell latex-col-c", " C =latex-cell latex-col-r", "1 =latex-cell", " \\textbf{2} =latex-cell latex-col-c", " $3$ =latex-cell latex-col-r"]
+    assert "latex-b" in g["booktabs"] and any(x.startswith("span.latex-math") for x in g["booktabs"])
+    assert [x for x in g["noCaption"] if "latex-cell" in x or x.startswith("latex-t")] == ["latex-trow", "a =latex-cell", " b =latex-cell"]
+    assert 'span.latex-chip.latex-chip-unit"x"' in g["unknownInCell"] and 'span.latex-chip.latex-chip-cite"k"' in g["unknownInCell"]
+    assert " 50\\% =latex-cell latex-col-r" in g["unknownInCell"]
     t = look["tables"]
-    assert t["booktabs"] == ('div.latex-table-preview[p.latex-caption[span.latex-caption-word"表 1：",span"Main ",span.latex-i[span"results"]],'
-                             'table.latex-table[tbody[tr.latex-rule-heavy[td[span"A"],td.latex-col-c[span"B"],td.latex-col-r[span"C"]],'
-                             'tr.latex-rule-light.latex-rule-below-heavy[td[span"1"],td.latex-col-c[span.latex-b[span"2"]],td.latex-col-r[span.latex-math]]]]]')
-    # \\[2pt] ends a row, \& and a brace group's & are a cell's text, \multicolumn its last argument's words
+    # merged cells: a read-only grid, one unit. \\[2pt] ends a row, \& and a brace group's & are a cell's text,
+    # \multicolumn its last argument's words
     assert t["hline"] == ('div.latex-table-preview[table.latex-table[tbody[tr.latex-rule-light[td[span"a"],td.latex-col-c[span"b"],td.latex-col-r],'
                           'tr.latex-rule-light.latex-rule-below-light[td[span"c & d"],td.latex-col-c[span"e & f"],td.latex-col-r[span"g"]]]]]')
-    assert t["noCaption"].startswith("div.latex-table-preview[table.latex-table")
-    assert t["unknownInCell"] == ('div.latex-table-preview[table.latex-table[tbody[tr[td[span.latex-chip.latex-chip-unit"x"],td.latex-col-c[span.latex-chip.latex-chip-cite"k"],'
-                                  'td.latex-col-r[span"50%"]]]]]')
     assert t["notAlone"].startswith("div.latex-table-preview")         # drawn in its line (B1), never as written
+    assert g["fewerCells"].startswith("div.latex-table-preview")       # a row with fewer cells than columns: one unit too
 
 
 @needs_node
@@ -300,8 +319,8 @@ def test_a_table_the_reader_doubts_is_a_quiet_chip_never_guessed_and_never_its_c
 
 
 @needs_node
-def test_a_table_is_one_unit_wherever_the_cursor_is_and_the_grid_reader_keeps_rules_apart(look):
-    assert look["tableTouched"] == 3 and look["tableTouchedCaption"] == 3   # the 导言区 line, the table, 正文结束
+def test_a_table_is_drawn_the_same_wherever_the_cursor_is_and_the_grid_reader_keeps_rules_apart(look):
+    assert look["tableSame"] is True
     g = look["grid"]
     assert g["cols"] == ["l", "c"]
     assert g["rows"] == [{"cells": ["a", "b"], "above": "heavy", "below": "heavy"}]

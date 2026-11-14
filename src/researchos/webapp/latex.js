@@ -616,8 +616,9 @@
   // \caption and \label. {caption} (the caption's source, or null), or null when it holds anything else.
   function floatRest(doc, read, e, skip) {
     let caption = null, captions = 0;
-    const cut = skip.map((r) => [r.from, r.to]);
-    for (const c of read.cmds) {
+    const cut = skip.map((r) => [r.from, r.to]), inside = [];
+    eachMeeting(read.cmds, e.beginTo, e.endFrom, (c) => inside.push(c));   // only the float's own (a key looks near itself)
+    for (const c of inside) {
       if (c.from <= e.beginTo || c.from >= e.endFrom || cut.some((r) => c.from >= r[0] && c.from < r[1])) continue;
       if (c.name === "caption") {
         const a = c.args.filter((x) => !x.opt).pop();
@@ -654,6 +655,230 @@
     if (paths.some((p) => !p)) return null;
     const rest = floatRest(doc, read, e, pics);
     return rest ? { caption: rest.caption, paths: paths } : null;
+  }
+
+  // -- tables filled in like Word (22.12 T; acceptance, 2026-11-14) ------------------------------------------------
+  //
+  // A table the grid reader is sure of is drawn as a grid whose cells are the text itself: its markup (the \begin and
+  // \end lines, the column spec, \centering, \label, the & between cells, the \\ that ends a row, the rules) is hidden,
+  // each cell's words are typed in place, the caption's too. `readGrid` is sure of a table float holding one tabular
+  // (tabular, tabular* or tabularx), or such a tabular alone, standing alone on its lines, whose rows each stand on a
+  // line of their own, ended by \\ (the last may end without), with as many cells as the spec has columns; between the
+  // rows only rules and comments; the caption on lines of its own, above or below the tabular. Anything else --
+  // \multicolumn, \multirow, a partial rule, a nested environment, a blank line, two rows on one line, a row over two
+  // lines, a column spec it does not read -- leaves the table one unit, changed in 显示代码, as before.
+  const GRID_RULE = /^[ \t]*\\(toprule|midrule|bottomrule|hline|addlinespace)(?![A-Za-z])[ \t]*(?:\[[^\]\n]*\][ \t]*)?/;
+  const GRID_UNSURE = /\\(?:multicolumn|multirow|cline|cmidrule|cr|crcr|tabularnewline|hhline|noalign|omit|span|newline|par)(?![A-Za-z])/;
+  const GRID_LIMIT = { columns: 20, rows: 200 };
+  const lineStartAt = (text, i) => text.lastIndexOf("\n", i - 1) + 1;
+  const lineEndAt = (text, i) => { const k = text.indexOf("\n", i); return k < 0 ? text.length : k; };
+  // The rules at the start of `code` from `j`: the index after them, each weighed into `acc.rule` as the PDF draws it.
+  function eatRules(code, j, acc) {
+    for (let m = GRID_RULE.exec(code.slice(j)); m; m = GRID_RULE.exec(code.slice(j))) {
+      const was = acc.rule, rule = m[1];
+      acc.rule = rule === "addlinespace" ? was : was === "heavy" || rule === "toprule" || rule === "bottomrule" ? "heavy" : "light";
+      j += m[0].length;
+    }
+    return j;
+  }
+  // A column spec's own items, positions counted in the spec: each column {col: true, from, to} (its >{…} and <{…} with
+  // it), each rule "|" {bar: true}, each @{…} and !{…} {from, to}. Null for a spec holding *{n}{…}, which is read for the
+  // grid but whose columns are added and taken away in 显示代码.
+  function specItems(spec) {
+    const out = [];
+    let i = 0;
+    const group = (k) => { while (spec[k] === " " || spec[k] === "\t") k += 1; return spec[k] === "{" ? skipGroup(spec, k, false) : -1; };
+    while (i < spec.length) {
+      const c = spec[i];
+      if (c === " " || c === "\t") { i += 1; continue; }
+      if (c === "|") { out.push({ bar: true, from: i, to: i + 1 }); i += 1; continue; }
+      if (c === "@" || c === "!") { const g = group(i + 1); if (g < 0) return null; out.push({ from: i, to: g }); i = g; continue; }
+      let from = i;
+      if (c === ">") { const g = group(i + 1); if (g < 0) return null; i = g; while (spec[i] === " " || spec[i] === "\t") i += 1; }
+      const l = spec[i];
+      if (l === "l" || l === "c" || l === "r" || l === "X") i += 1;
+      else if (l === "p" || l === "m" || l === "b") { const g = group(i + 1); if (g < 0) return null; i = g; }
+      else return null;
+      let k = i;
+      while (spec[k] === " " || spec[k] === "\t") k += 1;
+      if (spec[k] === "<") { const g = group(k + 1); if (g < 0) return null; i = g; }
+      out.push({ col: true, from: from, to: i });
+    }
+    return out;
+  }
+  // Where the spec draws a vertical rule: [before column 0, …, after the last], from its items.
+  function barsOf(items, n) {
+    const bars = new Array(n + 1).fill(false);
+    let k = 0;
+    for (const x of items) { if (x.col) k += 1; else if (x.bar) bars[k] = true; }
+    return bars;
+  }
+  // How wide a cell's words are, roughly, in widths of a digit: commands and markup left out, a CJK character two.
+  function shownWidth(src) {
+    const s = src.replace(/\\[A-Za-z]+\*?/g, "").replace(/\\./g, "x").replace(/[{}$]/g, "").trim();
+    let n = 0;
+    for (const ch of s) n += CJK_ONE.test(ch) ? 2 : 1;
+    return n;
+  }
+  const gridCache = new WeakMap();
+  // The grid of the table environment `e` (a float or a tabular) as `read` reads `text`, or null; kept once a reading.
+  function gridOf(text, read, e) {
+    let m = gridCache.get(read);
+    if (!m) { m = new Map(); gridCache.set(read, m); }
+    if (!m.has(e.from)) m.set(e.from, readGrid(text, read, e));
+    return m.get(e.from);
+  }
+  // {env, tab, from, to (the lines it stands on), cols (alignments), spec {from, to}, items, bars, rows, caption, widths,
+  // booktabs}. A row {from, to (its line), lead (where its first cell starts), cells [[from, to]], seps (each &), end
+  // (where its last cell ends: its \\ or its line's code), slashTo (after the \\ and its option), slash, above, below
+  // (the rules drawn there: heavy or light)}. A cell's range holds its spaces, so all a row shows is in a cell.
+  function readGrid(text, read, e) {
+    if (!(e.endFrom < e.to)) return null;
+    const from = lineStartAt(text, e.from), to = lineEndAt(text, e.to);
+    if (text.slice(from, e.from).trim() || codePart(text.slice(e.to, to)).trim()) return null;
+    const near = [];
+    eachMeeting(read.envs, e.from, e.to, (x) => { if (x !== e && x.from < e.to && e.from < x.to) near.push(x); });
+    const inner = near.filter((x) => x.from > e.from && x.to <= e.endFrom);
+    if (near.some((x) => x.from < e.from && x.to >= e.to && (TABLE_FLOATS.has(x.name) || FIGURE_FLOATS.has(x.name)))) return null;   // drawn as its float
+    let tab = e, caption = null;
+    if (TABLE_FLOATS.has(e.name)) {
+      if (inner.length !== 1 || !TABULARS.has(inner[0].name) || !(inner[0].endFrom < inner[0].to)) return null;
+      tab = inner[0];
+      const rest = floatRest({ sliceString: (a, b) => text.slice(a, b) }, read, e, [tab]);
+      if (!rest) return null;
+      if (rest.caption != null) {
+        let c = null;
+        eachMeeting(read.cmds, e.beginTo, e.endFrom, (x) => { if (x.name === "caption" && x.from > e.beginTo && x.to <= e.endFrom && (x.to <= tab.from || x.from >= tab.to)) c = x; });
+        const a = c && c.nameTo === c.from + 8 ? c.args.filter((x) => !x.opt) : [];
+        if (a.length !== 1 || text.slice(c.from, c.to).indexOf("\n") >= 0) return null;
+        const below = c.from >= tab.to;
+        if (below ? lineStartAt(text, c.from) <= lineEndAt(text, tab.to) : lineEndAt(text, c.to) >= lineStartAt(text, tab.from)) return null;
+        caption = { from: c.from, to: c.to, open: a[0].from + 1, close: a[0].to - 1, line: lineStartAt(text, c.from), below: below };
+      }
+    } else if (!TABULARS.has(e.name) || inner.length) return null;
+    // \begin{tabular}[pos]{spec} on one line, with only rules after it there
+    let i = tab.beginTo;
+    const ws = () => { while (text[i] === " " || text[i] === "\t") i += 1; };
+    for (let k = TABULARS.get(tab.name); k > 0; k--) { ws(); const g = text[i] === "{" ? skipGroup(text, i, false) : -1; if (g < 0) return null; i = g; }
+    ws();
+    if (text[i] === "[") { const g = skipGroup(text, i, false); if (g < 0) return null; i = g; ws(); }
+    const sg = text[i] === "{" ? skipGroup(text, i, false) : -1;
+    if (sg < 0) return null;
+    const spec = { from: i + 1, to: sg - 1 }, specText = text.slice(spec.from, spec.to), cols = columnsOf(specText);
+    if (!cols || specText.indexOf("\n") >= 0 || cols.length > GRID_LIMIT.columns) return null;
+    const bodyCode = text.slice(sg, tab.endFrom).split("\n").map(codePart).join("\n");
+    if (GRID_UNSURE.test(bodyCode)) return null;
+    const acc = { rule: null }, headEnd = lineEndAt(text, sg), endLine = lineStartAt(text, tab.endFrom);
+    const head = codePart(text.slice(sg, headEnd));
+    if (headEnd >= endLine || head.slice(eatRules(head, 0, acc)).trim()) return null;
+    // formulas and raw text in the cells are jumped over: their & and braces are their own
+    const skips = [];
+    eachMeeting(read.maths, sg, tab.endFrom, (f) => { if (f.from >= sg && f.from < tab.endFrom) skips.push(f); });
+    eachMeeting(read.raws, sg, tab.endFrom, (r) => { if (r.kind !== "comment" && r.from >= sg && r.from < tab.endFrom) skips.push(r); });
+    skips.sort((a, b) => a.from - b.from);
+    const rows = [];
+    let at = headEnd + 1, open = false, sk = 0;
+    while (at < endLine) {
+      const lineEnd = lineEndAt(text, at), line = text.slice(at, lineEnd), code = codePart(line);
+      if (!code.trim()) { if (!line.trim()) return null; at = lineEnd + 1; continue; }   // a blank line is a paragraph: not here
+      let j = eatRules(code, 0, acc);
+      if (!code.slice(j).trim()) { at = lineEnd + 1; continue; }
+      if (open) return null;   // a row after one with no \\
+      while (code[j] === " " || code[j] === "\t") j += 1;
+      const row = { from: at, to: lineEnd, lead: at + j, cells: [], seps: [], end: -1, slashTo: -1, slash: false, above: acc.rule, below: null };
+      acc.rule = null;
+      let cell = at + j, depth = 0, k = j;
+      for (; k < code.length; k++) {
+        const p = at + k;
+        while (sk < skips.length && skips[sk].to <= p) sk += 1;
+        if (sk < skips.length && skips[sk].from === p) { if (skips[sk].to > at + code.length) return null; k = skips[sk].to - at - 1; continue; }
+        if (sk < skips.length && skips[sk].from < p) return null;   // a formula begun before the row
+        const c = code[k];
+        if (c === "\\") { if (code[k + 1] === "\\" && depth === 0) break; k += 1; continue; }
+        if (c === "{") depth += 1;
+        else if (c === "}") { if (--depth < 0) return null; }
+        else if (c === "&" && depth === 0) { row.cells.push([cell, p]); row.seps.push(p); cell = p + 1; }
+      }
+      if (depth !== 0) return null;
+      if (k < code.length) {   // \\ (\\*, \\[2pt]) ends the row; after it only rules
+        row.end = at + k;
+        let q = k + 2;
+        if (code[q] === "*") q += 1;
+        let s = q;
+        while (code[s] === " " || code[s] === "\t") s += 1;
+        if (code[s] === "[") { const close = code.indexOf("]", s); if (close < 0) return null; q = close + 1; }
+        row.slashTo = at + q;
+        row.slash = true;
+        if (code.slice(eatRules(code, q, acc)).trim()) return null;
+      } else { row.end = row.slashTo = at + code.length; open = true; }
+      row.cells.push([cell, row.end]);
+      if (row.cells.length !== cols.length || rows.length >= GRID_LIMIT.rows) return null;
+      rows.push(row);
+      at = lineEnd + 1;
+    }
+    const tail = codePart(text.slice(endLine, tab.endFrom));
+    if (!rows.length || tail.slice(eatRules(tail, 0, acc)).trim()) return null;
+    rows[rows.length - 1].below = acc.rule;
+    const widths = cols.map(() => 5);   // an empty column still a cell's width
+    rows.forEach((r) => r.cells.forEach((c, k) => { widths[k] = Math.min(30, Math.max(widths[k], shownWidth(text.slice(c[0], c[1])))); }));
+    const items = specItems(specText);
+    return { env: e, tab: tab, from: from, to: to, cols: cols, spec: spec, items: items, bars: items ? barsOf(items, cols.length) : null, rows: rows,
+      caption: caption, widths: widths, booktabs: /\\(?:toprule|midrule|bottomrule)(?![A-Za-z])/.test(bodyCode) };
+  }
+  // The grid `pos` is in (a table float's, or a tabular's alone), or null.
+  function gridAt(text, read, pos) {
+    let outer = null;
+    eachMeeting(read.envs, pos, pos, (e) => {
+      if (e.from <= pos && pos <= e.to && (TABLE_FLOATS.has(e.name) || FIGURE_FLOATS.has(e.name) || TABULARS.has(e.name)) && (!outer || e.from < outer.from)) outer = e;
+    });
+    return outer && !FIGURE_FLOATS.has(outer.name) ? gridOf(text, read, outer) : null;
+  }
+  // The grids whose lines meet [lo, hi].
+  function gridsNear(text, read, lo, hi) {
+    const out = [];
+    eachMeeting(read.envs, lo - 400, hi + 400, (e) => {
+      if (!(TABLE_FLOATS.has(e.name) || TABULARS.has(e.name))) return;
+      const g = gridOf(text, read, e);
+      if (g && g.from <= hi && g.to >= lo && !out.includes(g)) out.push(g);
+    });
+    return out;
+  }
+  // The cell `pos` is in: {g, r, c, cell: [from, to]}, or null.
+  function cellAt(text, read, pos) {
+    const g = gridAt(text, read, pos);
+    if (!g) return null;
+    for (let r = 0; r < g.rows.length; r++) {
+      const row = g.rows[r];
+      if (pos < row.from || pos > row.to) continue;
+      for (let c = 0; c < row.cells.length; c++) if (row.cells[c][0] <= pos && pos <= row.cells[c][1]) return { g: g, r: r, c: c, cell: row.cells[c] };
+    }
+    return null;
+  }
+  // The cell the cursor at `pos` is in, or at the table's last place (the end of its last row's line: words typed there
+  // go to its last cell) that last cell.
+  function cellNear(text, read, pos) {
+    const c = cellAt(text, read, pos);
+    if (c) return c;
+    const g = gridsNear(text, read, pos, pos).find((x) => x.to === pos && !(x.caption && x.caption.below));
+    if (!g) return null;
+    const r = g.rows.length - 1, k = g.cols.length - 1;
+    return { g: g, r: r, c: k, cell: g.rows[r].cells[k] };
+  }
+  // Where the cursor goes in a cell: at its words' start; an empty cell after its first space, where words typed are set
+  // apart from the & before them.
+  function cellCaret(text, cell) {
+    const s = text.slice(cell[0], cell[1]), lead = s.length - s.trimStart().length;
+    return cell[0] + (s.trim() ? lead : Math.min(1, s.length));
+  }
+  // Tab's selection in a cell, as Word: its words selected, or the cursor in it when it is empty.
+  function cellSelection(text, cell) {
+    const s = text.slice(cell[0], cell[1]), a = cell[0] + (s.length - s.trimStart().length), b = cell[1] - (s.length - s.trimEnd().length);
+    return b > a ? { anchor: a, head: b } : { anchor: cellCaret(text, cell) };
+  }
+  // The words before a figure's or a table's caption (「图 N：」, 「表 N：」 where the number is known, 22.1), one helper for both.
+  function floatWord(kind, n) {
+    if (kind === "table") return n ? t("表 {n}：", { n: n }) : t("表：");
+    return n ? t("图 {n}：", { n: n }) : t("图：");
   }
 
   // A piece of LaTeX (a title, a caption, a cell) drawn into `host`: the styles, fonts, sizes, formulas and chips the
@@ -1301,11 +1526,32 @@
       }
       ignoreEvent() { return true; }
     }
+    // an empty cell of a grid (22.12 T): a box of the cell's width where the cursor stands, drawn inside its padding
+    class CellW extends CM.WidgetType {
+      constructor(cls, style) { super(); this.cls = cls; this.style = style; this.plain = ""; }
+      eq(o) { return o.cls === this.cls && o.style === this.style; }
+      toDOM() { const el = mk("span", this.cls); if (this.style && typeof el.setAttribute === "function") el.setAttribute("style", this.style); return el; }
+      ignoreEvent() { return false; }   // a click in it puts the cursor there
+      coordsAt(dom) {
+        if (!dom || typeof dom.getBoundingClientRect !== "function" || typeof getComputedStyle !== "function") return null;
+        const r = dom.getBoundingClientRect(), cs = getComputedStyle(dom), x = r.left + (parseFloat(cs.paddingLeft) || 0);
+        return { left: x, right: x, top: r.top + (parseFloat(cs.paddingTop) || 0), bottom: r.bottom - (parseFloat(cs.paddingBottom) || 0) };
+      }
+    }
     const hooks = { title: null, preamble: null };   // set by the editor: what a click on the title block and the 导言区 line does
+    // (a grid's cells and rows carry their widths: `style`)
     const marks = new Map();
-    const mark = (cls) => { if (!marks.has(cls)) marks.set(cls, D.mark({ class: cls })); return marks.get(cls); };
+    const mark = (cls, style) => {
+      const k = style ? cls + "\u0000" + style : cls;
+      if (!marks.has(k)) marks.set(k, D.mark(style ? { class: cls, attributes: { style: style } } : { class: cls }));
+      return marks.get(k);
+    };
     const lines = new Map();
-    const lineDeco = (cls) => { if (!lines.has(cls)) lines.set(cls, D.line({ class: cls })); return lines.get(cls); };
+    const lineDeco = (cls, style) => {
+      const k = style ? cls + "\u0000" + style : cls;
+      if (!lines.has(k)) lines.set(k, D.line(style ? { class: cls, attributes: { style: style } } : { class: cls }));
+      return lines.get(k);
+    };
 
     // The pieces of the edit view that meet `within` ([from, to], whole lines; all when null).
     function viewPieces(doc, read, info, within) {
@@ -1314,8 +1560,13 @@
       const near = (from, to) => from <= W1 && to >= W0;
       // a list's items that may be near (all when drawn whole), in order: those left out would be skipped by `near`
       const nearOf = (list) => { if (!within) return list; const r = meetRange(list, W0 - 2, W1 + 2); return r[0] === 0 && r[1] === list.length ? list : list.slice(r[0], r[1]); };
-      const cand = [];
-      const atom = (from, to, widget, extra) => { if (to > from) cand.push(Object.assign({ from: from, to: to, widget: widget || null, atom: true }, extra || {})); };
+      const cand = [], grids = [];
+      const atom = (from, to, widget, extra) => {
+        if (!(to > from)) return null;
+        const p = Object.assign({ from: from, to: to, widget: widget || null, atom: true }, extra || {});
+        cand.push(p);
+        return p;
+      };
       const lineOf = (pos) => doc.lineAt(Math.min(Math.max(pos, 0), len));
       const blank = (l) => !l.text.trim();
       const commentOnly = (l) => { const at = codePart(l.text); return at.length < l.text.length && !at.trim(); };
@@ -1384,7 +1635,9 @@
         if (!(e.endFrom < e.to) || !near(e.from, e.to) || e.role === "text" || e.role === "list") continue;
         const own = alone(e.from, e.to), from = own ? lineOf(e.from).from : e.from, to = own ? lineOf(e.to).to : e.to;
         if (TABLE_FLOATS.has(e.name) || (TABULARS.has(e.name) && !inFloat)) {
-          const model = tableModel(doc, read, e), n = num.tab.get(e.from), wordOf = n ? t("表 {n}：", { n: n }) : t("表：");
+          const n = num.tab.get(e.from), wordOf = floatWord("table", n), g = gridOf(text, read, e);
+          if (g) { gridPieces(g, TABLE_FLOATS.has(e.name) ? wordOf : null); continue; }   // its cells typed in place (22.12 T)
+          const model = tableModel(doc, read, e);
           const widget = model ? new BlockW(info.typeset + "t" + wordOf + text.slice(e.from, e.to), () => tableDOM(model, wordOf), "")
             : new ChipW(TABLE_FLOATS.has(e.name) ? floatWords(read, e, t("表格"), text) : t("表格"), "unit", own);
           atom(from, to, widget, { block: own, kind: "table" });
@@ -1394,7 +1647,7 @@
           const model = figureModel(doc, read, e);
           const caps = read.cmds.filter((c) => c.name === "caption" && c.from > e.beginTo && c.to <= e.endFrom);
           const cap = caps.length === 1 && caps[0].nameTo === caps[0].from + 8 ? caps[0].args.filter((a) => !a.opt) : [];
-          const n = num.fig.get(e.from), wordOf = n ? t("图 {n}：", { n: n }) : t("图：");
+          const wordOf = floatWord("figure", num.fig.get(e.from));
           if (model && cap.length === 1) {
             const a = cap[0], pics = read.cmds.filter((c) => c.name === "includegraphics" && c.from > e.beginTo && c.to <= e.endFrom);
             const pathOf = (c) => { const x = c.args.filter((y) => !y.opt); return text.slice(x[0].from + 1, x[0].to - 1).trim(); };
@@ -1479,6 +1732,48 @@
         const said = words.length && words.every((w) => w != null) ? words.filter(Boolean).join(" ") : "";
         atom(c.from, c.to, new ChipW(said || t("LaTeX 内容"), "unit"), { kind: "unit" });
       }
+      // A table drawn as a grid (22.12 T): its markup hidden in atoms -- the lines before its first row (or its caption)
+      // with it, the lines between rows with the row before -- so each row is one line of the page, drawn as a row of
+      // cells (a line class); each cell's text marked as a cell, an empty cell a box of its own where the cursor stands;
+      // the caption's words editable after 「表 N：」. Bridges keep the cursor from stopping between a row's last cell and
+      // the next row's first. `lead` and `trail`: words typed at the table's first edge go to its first cell or caption,
+      // those typed at a row's end to its last cell.
+      function gridPieces(g, word) {
+        const rows = g.rows, last = rows.length - 1, cap = g.caption, x = { g: g, marks: [], lines: [], points: [], bridges: [] };
+        const opt = (more) => Object.assign({ kind: "grid" }, more);
+        // each column its words' width, the spaces round them and the cell's padding (about two digits a side)
+        const total = g.widths.reduce((sum, w) => sum + w + 6, 0), rowStyle = "width:min(100%," + total + "ch)";
+        const cls = g.cols.map((al, k) => "latex-cell" + (al === "l" ? "" : " latex-col-" + al) + (g.bars && g.bars[k] ? " latex-cell-bl" : "") +
+          (g.bars && k === g.cols.length - 1 && g.bars[k + 1] ? " latex-cell-br" : ""));
+        const style = g.widths.map((w) => "width:" + Math.round((w + 6) / total * 1000) / 10 + "%");
+        const capWord = word ? new TextW(word, "latex-caption-word", "") : null;
+        if (cap && !cap.below) {
+          x.first = atom(g.from, cap.open, capWord, opt({ lead: true, slotTo: true }));
+          atom(cap.close, rows[0].from - 1, null, opt({ slotFrom: true }));
+          x.lines.push([g.from, "latex-tcap-line"]);
+          x.bridges.push([cap.close, rows[0].lead]);
+        }
+        rows.forEach((r, k) => {
+          const top = k === 0 && !(cap && !cap.below), lead = atom(top ? g.from : r.from, r.lead, null, opt({ lead: true, slotTo: true }));
+          if (top) x.first = lead;
+          r.seps.forEach((p) => atom(p, p + 1, null, opt({ slotFrom: true, slotTo: true, plain: "\t" })));
+          const endTo = k < last ? rows[k + 1].from - 1 : cap && cap.below ? cap.line - 1 : g.to;
+          atom(r.end, endTo, null, opt({ trail: true, slotFrom: true }));
+          if (k < last) x.bridges.push([r.end, rows[k + 1].lead]);
+          r.cells.forEach((c, j) => {
+            if (c[1] > c[0]) x.marks.push([c[0], c[1], cls[j] + (text.slice(c[0], c[1]).trim() ? "" : " latex-cell-empty"), style[j]]);
+            else x.points.push({ at: c[0], widget: new CellW(cls[j] + " latex-cell-empty", style[j]) });
+          });
+          x.lines.push([top ? g.from : r.from, "latex-trow" + (r.above ? " latex-trule-" + r.above : "") + (r.below ? " latex-trule-below-" + r.below : ""), rowStyle]);
+        });
+        if (cap && cap.below) {
+          atom(cap.line, cap.open, capWord, opt({ slotTo: true }));
+          atom(cap.close, g.to, null, opt({ trail: true, slotFrom: true }));
+          x.lines.push([cap.line, "latex-tcap-line latex-tcap-below"]);
+          x.bridges.push([rows[last].end, cap.open]);
+        }
+        grids.push(x);
+      }
       // a line that only holds what is hidden (a \label, \noindent …) leaves no trace, its line break with it
       function hideLine(from, to) {
         const l = lineOf(from);
@@ -1518,7 +1813,7 @@
       }
       if (optSpans.length) for (let k = cand.length - 1; k >= 0; k--) if (optSpans.some((x) => x[0] <= cand[k].from && cand[k].to <= x[1])) cand.splice(k, 1);
       // the atoms kept: outermost first, none inside another
-      cand.sort((a, b) => a.from - b.from || b.to - a.to);
+      cand.sort((a, b) => a.from - b.from || (b.kind === "grid") - (a.kind === "grid") || b.to - a.to);   // a grid's own markup first (a caption below)
       const kept = [];
       let reach = -1;
       for (const p of cand) { if (p.from < reach) continue; kept.push(p); reach = p.to; }
@@ -1528,6 +1823,8 @@
         return null;
       };
       const blockLine = (l) => { const k = inside(l.from); return !!k && k.block && k.from <= l.from && k.to >= l.to; };
+      // the grids drawn (none inside an atom of something else): their spans, where the lines are theirs alone
+      const shownGrids = grids.filter((x) => x.first && kept.includes(x.first)), inGrid = (pos) => shownGrids.some((x) => x.g.from <= pos && pos <= x.g.to);
       // [from, to) cut short at the first atom kept in it (a comment after a \begin on its line)
       const upTo = (from, to) => {
         let lo = 0, hi = kept.length;
@@ -1624,7 +1921,7 @@
       const first = lineOf(W0).number, last = lineOf(W1).number, spaces = [];
       for (let k = first; k <= last && k < doc.lines; k++) {
         const L = doc.line(k);
-        if (covered(L.to)) continue;
+        if (covered(L.to) || inGrid(L.from)) continue;
         const kl = kindOf(L);
         if (kl !== "text" && kl !== "item") continue;
         if (/(?:^|[^\\])(?:\\\\)*\\\\\s*(?:\[[^\]]*\])?\s*$/.test(codePart(L.text))) continue;
@@ -1641,7 +1938,7 @@
       const lf = within ? lineOf(within[0]).number : 1, ll = within ? lineOf(within[1]).number : doc.lines;
       for (let k = lf; k <= ll; k++) {
         const L = doc.line(k);
-        if (k > 1 && covered(L.from - 1)) continue;
+        if ((k > 1 && covered(L.from - 1)) || inGrid(L.from)) continue;
         if (inside(L.from) && inside(L.from).from < L.from) continue;
         let depth = 0, cls = null;
         for (const e of lineEnvs) {
@@ -1674,12 +1971,15 @@
         const a = out[k - 1], b = out[k];
         if (a.to === b.from && !a.slotTo && !b.slotFrom) bridges.push([a.to - 1, a.to + 1]);
       }
+      const points = [];
+      for (const x of shownGrids) { bridges.push(...x.bridges); marksOut.push(...x.marks); linesOut.push(...x.lines); points.push(...x.points); }
       const meets = within ? (from, to) => from <= within[1] && to >= within[0] : () => true;
       return {
         bridges: bridges.filter((x) => meets(x[0], x[1])),
         pieces: out.filter((p) => meets(p.from, p.to)),
         marks: marksOut.filter((m) => meets(m[0], m[1])),
         lines: linesOut.filter((x) => !within || (x[0] >= within[0] && x[0] <= within[1])),
+        points: points.filter((p) => meets(p.at, p.at)),
       };
     }
     const bridge = D.mark({ bridge: true });
@@ -1691,13 +1991,15 @@
         // `fwd`: words typed at its end go further on (worked out when typed, from what is read then)
         const spec = { atom: true, kind: p.kind, lead: !!p.lead, trail: !!p.trail, fwd: p.fwd != null, slotFrom: !!p.slotFrom, slotTo: !!p.slotTo };
         if (p.widget) spec.widget = p.widget;
+        if (p.plain != null) spec.plain = p.plain;   // what copying gives for it (the tab between a grid's cells)
         if (p.block) spec.block = true;
         const r = D.replace(spec).range(p.from, p.to);
         deco.push(r);
         atoms.push(r);
       }
-      for (const m of got.marks) deco.push(mark(m[2]).range(m[0], m[1]));
-      for (const [pos, cls] of got.lines) { const k = pos + "\u0000" + cls; if (seenLines.has(k)) continue; seenLines.add(k); deco.push(lineDeco(cls).range(pos)); }
+      for (const m of got.marks) deco.push(mark(m[2], m[3]).range(m[0], m[1]));
+      for (const [pos, cls, style] of got.lines) { const k = pos + "\u0000" + cls; if (seenLines.has(k)) continue; seenLines.add(k); deco.push(lineDeco(cls, style).range(pos)); }
+      for (const p of got.points) deco.push(D.widget({ widget: p.widget, side: 1 }).range(p.at));
       for (const x of got.bridges) atoms.push(bridge.range(x[0], x[1]));
       return { deco: deco, atoms: atoms, from: got.pieces.reduce((m, p) => Math.min(m, p.from), Infinity), to: got.pieces.reduce((m, p) => Math.max(m, p.to), -1) };
     }
@@ -1810,7 +2112,8 @@
       const ctx = contextAt(value.read, pos);
       if (ctx && ctx.kind === "raw" && ctx.x && ctx.x.kind !== "comment" && pos === ctx.x.to) return pos;   // just after \verb|…|
       if (ctx && (ctx.kind === "math" || ctx.kind === "raw")) return null;
-      if (ctx && ctx.kind === "env" && ctx.x.role === "raw" && !FIGURE_FLOATS.has(ctx.x.name)) return null;
+      // in a table only a cell of a grid takes words (22.12 T); its caption is an argument, as a figure's
+      if (ctx && ctx.kind === "env" && ctx.x.role === "raw" && !FIGURE_FLOATS.has(ctx.x.name) && !cellAt(value.info.text, value.read, pos)) return null;
       if (ctx && ctx.kind === "env" && ctx.x.role === "list") {
         const first = ctx.x.itemCmds[0];
         if (!first || pos < first.nameTo) return null;
@@ -1932,13 +2235,14 @@
     function literal(text, ctx, br, indent) {
       let s = String(text).replace(/\r\n?/g, "\n").replace(/[%$&#_{}~^\\<>|]/g, (c) => TYPE_ESCAPES[c]);
       if (s.indexOf("\n") < 0) return s;
-      if (ctx === "inline") return s.replace(/[ \t]*\n\s*/g, " ");
+      if (ctx === "inline" || ctx === "cell") return s.replace(/[ \t]*\n\s*/g, " ");
       if (ctx === "list") return s.split(/\n+/).map((x) => x.trim()).filter(Boolean).join(br + indent + "\\item ");
       return s.replace(/[ \t]*\n\s*/g, br + br);
     }
     function placeOf(value, pos) {
       const text = value.info.text, inline = framesOf(value, pos, pos).some((f) => (f.kind === "inline" || f.kind === "heading" || f.kind === "caption") && f.openTo <= pos && pos <= f.closeFrom);
       if (inline) return { ctx: "inline", indent: "" };
+      if (cellAt(text, value.read, pos)) return { ctx: "cell", indent: "" };
       const ctx = contextAt(value.read, pos);
       if (ctx && ctx.kind === "env" && ctx.x.role === "list") {
         const item = ctx.x.itemCmds.filter((c) => c.from < pos).pop();
@@ -1971,12 +2275,15 @@
       const br = state.lineBreak, compose = /compose/.test(ev), parts = [];
       tr.changes.iterChanges((fa, ta, fb, tb, ins) => parts.push({ from: fa, to: ta, text: ins.sliceString(0, ins.length, "\n") }));
       if (compose && parts.every((p) => p.to === p.from)) return tr;   // its words are seen to when it ends (`composeFix`)
+      if (/^input\.paste/.test(ev) && parts.length === 1) { const f = gridPaste(state, value, parts[0], br); if (f) return Object.assign(f, f.changes ? { userEvent: ev, scrollIntoView: true } : {}); }
       const specs = [];
       let caret = null, risky = false;
       for (const p of parts) {
         let at = p.from;
         if (p.to > p.from) {
-          const D = uncommented(value, protect(value, p.from, p.to, !p.text));
+          const cut = gridCut(value, p.from, p.to, ev, !p.text);
+          if (cut && !cut.length && !p.text) return { refused: "" };   // nothing but a table's markup: nothing goes
+          const D = cut || uncommented(value, protect(value, p.from, p.to, !p.text));
           if (D.length !== 1 || D[0][0] !== p.from || D[0][1] !== p.to || /\n/.test(value.info.text.slice(p.from, p.to))) risky = true;
           value.atoms.between(p.from, p.to, (f, t2, v) => { if (v.spec.atom && f < p.to && t2 > p.from) risky = true; });
           D.forEach((d) => specs.push({ from: d[0], to: d[1], insert: "" }));
@@ -1999,6 +2306,9 @@
         if (p.text) {
           const place = placeOf(value, at), s2 = compose ? p.text : literal(p.text, place.ctx, br, place.indent);
           if (s2 !== p.text || /\n/.test(p.text)) risky = true;
+          // typed into an empty cell, the words are set apart from the & on each side: "a & b & c" (22.12 T)
+          const pad = !compose && p.to === p.from && place.ctx === "cell" ? cellPad(value, at) : null;
+          if (pad) { specs.push({ from: pad.from, to: pad.to, insert: pad.before + s2 + pad.after }); caret = { at: pad.from, len: (pad.before + s2).split(br).join("\n").length }; risky = true; continue; }
           const same = specs.find((x) => x.to != null && x.from === at && x.insert === "");
           if (same) same.insert = s2; else specs.push({ from: at, insert: s2 });
           caret = { at: at, len: s2.split(br).join("\n").length };   // a line break is one position in the editor
@@ -2019,6 +2329,75 @@
         if (!commentsKept(value.read, ch, read2)) return { refused: t("这样改会让后面的文字变成注释，没有改。") };
       }
       return { changes: ch, selection: { anchor: Math.min(anchor, nd.length) }, userEvent: ev, scrollIntoView: true };
+    }
+
+    // A deletion (or what typing over a selection deletes) that meets a table drawn as a grid but does not cover it whole
+    // (22.12 T): only the words of the cells and the caption it covers go -- each made whole as anywhere (`protect`) --,
+    // the grid's & and \\, its rules and its markup stay, so the grid keeps its rows and columns; what it covers outside
+    // the table goes as anywhere, but never the line break beside the table (the table stays on lines of its own). A key's
+    // own deletion (Backspace, Delete, a word's) never reaches across a cell's edge. Null when it meets no grid; [] when
+    // nothing is to go.
+    function gridCut(value, from, to, ev, pure) {
+      const text = value.info.text, read = value.read;
+      const met = gridsNear(text, read, from, to).filter((g) => from <= g.to && to >= g.from && !(from <= g.from && to >= g.to)).sort((a, b) => a.from - b.from);
+      if (!met.length) return null;
+      const out = [], key = /^delete\.(?:backward|forward)$/.test(ev || "");
+      const outside = (a, b) => { if (b > a) out.push(...uncommented(value, protect(value, a, b, pure))); };
+      let at = from;
+      for (const g of met) {
+        // the line break before the table stays (what is kept of the text before may be words: a figure's markup)
+        let end = Math.min(to, g.from);
+        if (end === g.from && text[g.from - 1] === "\n") end = g.from - 1;
+        outside(at, end);
+        if (from < g.to && to > g.from) {
+          const lo = Math.max(from, g.from), hi = Math.min(to, g.to), regions = [];
+          if (g.caption) regions.push([g.caption.open, g.caption.close]);
+          g.rows.forEach((r) => r.cells.forEach((c) => regions.push(c)));
+          if (key && !regions.some((r) => r[0] <= lo && hi <= r[1])) return [];
+          for (const r of regions) {
+            const a = Math.max(lo, r[0]), b = Math.min(hi, r[1]);
+            if (b > a) out.push(...protect(value, a, b, pure));
+          }
+        }
+        // and the line break after it
+        at = Math.max(at, g.to);
+        if (at === g.to && text[g.to] === "\n" && to > g.to) at = g.to + 1;
+      }
+      outside(at, to);
+      out.sort((a, b) => a[0] - b[0]);
+      const merged = [];
+      out.forEach((d) => { const l = merged[merged.length - 1]; if (l && d[0] <= l[1]) l[1] = Math.max(l[1], d[1]); else if (d[1] > d[0]) merged.push(d.slice()); });
+      return merged;
+    }
+    // An empty cell typed into: the whole of it replaced, the words with a space toward each & (none at a line's start).
+    function cellPad(value, at) {
+      const text = value.info.text, c = cellAt(text, value.read, at);
+      if (!c || text.slice(c.cell[0], c.cell[1]).trim()) return null;
+      const row = c.g.rows[c.r], before = c.c > 0 || /[A-Za-z@]$/.test(text.slice(Math.max(0, c.cell[0] - 1), c.cell[0])) ? " " : "";
+      return { from: c.cell[0], to: c.cell[1], before: before, after: c.c < row.cells.length - 1 || row.slash ? " " : "" };
+    }
+    // Pasted text with tabs or line breaks (copied from a spreadsheet or a table) into a cell fills the cells from there,
+    // as a spreadsheet does: each line a row, each tab the next cell, each value escaped as typing is and put in place of
+    // the cell's words; values past the last column go into the row's last cell, a space between; rows past the last
+    // are added. One step of ⌘Z. Null when it is not such a paste into a cell (it is then pasted as anywhere).
+    function gridPaste(state, value, p, br) {
+      const raw = p.text.replace(/\r\n?/g, "\n").replace(/\n+$/, "");
+      if (!/[\t\n]/.test(raw)) return null;
+      const text = value.info.text, c = cellAt(text, value.read, p.from);
+      if (!c || p.to > c.cell[1]) return null;
+      const g = c.g, n = g.cols.length, specs = [], extra = [];
+      raw.split("\n").forEach((line, i) => {
+        const vals = line.split("\t").map((v) => literal(v, "cell", br, "").trim()), fit = vals.slice(0, n - c.c);
+        if (vals.length > n - c.c) fit[fit.length - 1] = vals.slice(n - c.c - 1).filter(Boolean).join(" ");
+        if (c.r + i < g.rows.length) fit.forEach((v, j) => { const x = cellFill(text, g, c.r + i, c.c + j, v); if (!i && !j) x.first = true; specs.push(x); });
+        else extra.push(new Array(c.c).fill("").concat(fit, new Array(Math.max(0, n - c.c - fit.length)).fill("")));
+      });
+      if (g.rows.length + extra.length > GRID_LIMIT.rows) return { refused: t("表格最多 {n} 行。", { n: GRID_LIMIT.rows }) };
+      if (extra.length) specs.push(rowsAfter(text, g, g.rows.length - 1, extra, br));
+      specs.sort((a, b) => a.from - b.from);
+      const ch = state.changes(specs), nd = ch.apply(state.doc).toString(), first = specs.find((x) => x.first);
+      if (unsureWhy(nd, readLatex(nd))) return { refused: t("这样改会让 LaTeX 的结构不完整，没有改。") };
+      return { changes: ch, selection: { anchor: ch.mapPos(first.from, -1) + first.shown } };
     }
 
     // An input method's composition is left as typed while it composes (moving or escaping its text in the middle would
@@ -2107,7 +2486,7 @@
       if (!/^(?:input$|input\.(?:type|paste|drop)\b|delete\.(?:backward|forward|selection|cut|line)$)/.test(ev)) return {};
       const r = w.userEdit(tr.startState, value, tr, ev);
       if (r === tr) return tr;
-      if (r.refused) { say(r.refused); return {}; }
+      if (r.refused != null) { if (r.refused) say(r.refused); return {}; }
       return r;
     });
     // (a test's stand-in view has neither the atomic ranges nor the clipboard's filter)
@@ -2117,6 +2496,12 @@
       { key: "Shift-Enter", run: (view) => runSpec(w, view, (st, v) => enterSpec(CM, st, v, true), say) },
       { key: "Backspace", run: (view) => runSpec(w, view, (st, v) => backSpec(CM, st, v, -1), say, true) },
       { key: "Delete", run: (view) => runSpec(w, view, (st, v) => backSpec(CM, st, v, 1), say, true) },
+      // in a table's cell, the next or previous cell (22.12 T); elsewhere Tab is the page's
+      { key: "Tab", run: (view) => runSpec(w, view, (st) => gridSpec(st, "next"), say, true) },
+      { key: "Shift-Tab", run: (view) => runSpec(w, view, (st) => gridSpec(st, "prev"), say, true) },
+      // the up and down arrow keys in a table: the cell above or below (its rows are lines of their own, laid out as a grid)
+      { key: "ArrowUp", run: (view) => runSpec(w, view, (st) => (st.selection.main.empty ? gridSpec(st, "up") : null), say, true) },
+      { key: "ArrowDown", run: (view) => runSpec(w, view, (st) => (st.selection.main.empty ? gridSpec(st, "down") : null), say, true) },
     ]);
     const copy = CM.EditorView.clipboardOutputFilter ? [CM.EditorView.clipboardOutputFilter.of((text, state) => {
       const v = state.field(w.field, false);
@@ -2168,7 +2553,9 @@
   function plainOf(value, from, to, quiet) {
     const text = value.info.text, atoms = [];
     // a range set yields overlapping ranges layer by layer: put the replaces in order first
-    value.deco.between(from, to, (f, t2, v) => { if (v.spec.atom) atoms.push([f, t2, quiet && v.spec.kind === "math" ? { plain: t("公式") } : v.spec.widget]); });
+    value.deco.between(from, to, (f, t2, v) => {
+      if (v.spec.atom) atoms.push([f, t2, quiet && v.spec.kind === "math" ? { plain: t("公式") } : v.spec.widget || (v.spec.plain != null ? { plain: v.spec.plain } : null)]);
+    });
     atoms.sort((a, b) => a[0] - b[0]);
     let out = "", at = from;
     atoms.forEach(([f, t2, w]) => {
@@ -2186,7 +2573,8 @@
   // the paragraph and opened again after it. ⇧Return: a line break \\, only inside a paragraph that has words before it.
   // A selection is deleted first (as a deletion is), in the same step.
   function enterSpec(CM, state, value, shift) {
-    const w = wordField(CM), br = state.lineBreak;
+    const w = wordField(CM), br = state.lineBreak, grid = gridEnter(state, value, shift);
+    if (grid) return grid;
     let st = state, val = value, first = null;
     if (!state.selection.main.empty) {
       const sel = state.selection.main, D = w.protect(value, sel.from, sel.to, true);
@@ -2272,6 +2660,8 @@
   function backSpec(CM, state, value, dir) {
     const w = wordField(CM), sel = state.selection.main, text = value.info.text;
     if (!sel.empty) return null;
+    const grid = gridBack(value, sel.head, dir);
+    if (grid) return grid;
     const pos = sel.head, frames = w.framesOf(value, pos, pos);
     const f = frames.filter((x) => (x.kind === "inline" || x.kind === "heading") && (dir < 0 ? x.openTo === pos : x.closeFrom === pos)).pop();
     if (!f) return null;
@@ -2382,6 +2772,160 @@
     };
   }
   function returnKeys(CM) { return CM.keymap.of([{ key: "Enter", run: onReturn(CM, false) }, { key: "Shift-Enter", run: onReturn(CM, true) }]); }
+
+  // -- a grid's cells, rows and columns (22.12 T) -----------------------------------------------------------------
+  //
+  // Each change is one transaction of the editor's own (one step of ⌘Z, saved as typed edits, the passages carried
+  // through it); every line break it writes is the file's own. A new row is "& & \\" as 表格 writes it, on a line of
+  // its own with the row's indent; a new column is an "l" in the spec (with "|" when every column is ruled) and an empty
+  // cell in each row; the researcher's spec letters for the other columns are kept.
+
+  // A row's line of `vals` (escaped words): "a & & c \\", an empty one "& & \\".
+  function rowLine(vals) { return vals.reduce((s, v, k) => s + (k ? "& " : "") + (v ? v + " " : ""), "") + "\\\\"; }
+  // The change that puts `v` in place of the words of cell (r, k): an empty cell's spaces with them, a space toward each &.
+  // `shown`: where the words end, counted from its `from`.
+  function cellFill(text, g, r, k, v) {
+    const row = g.rows[r], cell = row.cells[k], s = text.slice(cell[0], cell[1]);
+    if (s.trim()) {
+      const a = cell[0] + (s.length - s.trimStart().length), b = cell[1] - (s.length - s.trimEnd().length);
+      return { from: a, to: b, insert: v, shown: v.length };
+    }
+    const before = v && (k > 0 || /[A-Za-z@]$/.test(text.slice(Math.max(0, cell[0] - 1), cell[0]))) ? " " : "", after = v && (k < row.cells.length - 1 || row.slash) ? " " : "";
+    return { from: cell[0], to: cell[1], insert: v ? before + v + after : s, shown: (before + v).length };
+  }
+  // The change that adds rows of `valsList` after row `r`: on the lines before the next row (after the rules between,
+  // so a header keeps its rule under it), or after the last row's \\ (before rules on its line), its \\ written first
+  // when it had none.
+  function rowsAfter(text, g, r, valsList, br) {
+    const rows = g.rows, row = rows[r], next = rows[r + 1], indent = (x) => /^[ \t]*/.exec(text.slice(x.from, x.to))[0];
+    const lines = valsList.map((vals) => rowLine(vals));
+    if (next) return { from: next.lead, insert: lines.join(br + indent(next)) + br + indent(next) };
+    return { from: row.slashTo, insert: (row.slash ? "" : " \\\\") + br + lines.map((l) => indent(row) + l).join(br) };
+  }
+  // The rules between the first row and the second (\midrule or \hline): the header's, [from, to] each.
+  function headerRules(text, g) {
+    const hits = [], a0 = g.rows[0].slashTo, b0 = g.rows[1] ? g.rows[1].lead : a0;
+    for (let a = a0; a < b0;) {
+      const e = Math.min(lineEndAt(text, a), b0), code = codePart(text.slice(a, e)), re = /\\(?:midrule|hline)(?![A-Za-z])[ \t]*(?:\[[^\]\n]*\])?/g;
+      for (let m = re.exec(code); m; m = re.exec(code)) hits.push([a + m.index, a + m.index + m[0].length]);
+      a = e + 1;
+    }
+    return hits;
+  }
+  // 表格's actions (the right column) and Tab: `act` is rowAbove, rowBelow, colLeft, colRight, rowDelete, colDelete,
+  // header (第一行是表头, on or off), next or prev (Tab, ⇧Tab: the next or previous cell, as Word with its words selected;
+  // Tab in the last cell adds a row), up or down (the up and down arrow keys: the cell above or below; past the first or last row, the caption or
+  // the line beside the table). {changes, selection}, {selection}, {refused}, or null when the cursor is in no
+  // grid's cell. The cursor ends in the cell the action is about, read again after the change.
+  function gridSpec(state, act) {
+    const text = state.doc.toString(), read = readLatex(text), sel = state.selection.main, br = state.lineBreak;
+    const at = cellNear(text, read, sel.head);
+    if ((act === "up" || act === "down") && !at) {   // from a caption to the row beside it
+      const g = gridAt(text, read, sel.head), cap = g && g.caption;
+      if (!cap || sel.head < cap.open || sel.head > cap.close || (act === "down") === cap.below) return null;
+      const row = g.rows[cap.below ? g.rows.length - 1 : 0];
+      return { selection: { anchor: cellCaret(text, row.cells[0]) }, userEvent: "select", scrollIntoView: true };
+    }
+    if (!at) return null;
+    const g = at.g, rows = g.rows, n = g.cols.length, last = rows.length - 1, row = rows[at.r];
+    const go = (r, c) => ({ selection: cellSelection(text, rows[r].cells[c]), userEvent: "select", scrollIntoView: true });
+    const done = (specs, r, c) => {
+      specs.sort((a, b) => a.from - b.from || (a.to == null ? a.from : a.to) - (b.to == null ? b.from : b.to));
+      const changes = state.changes(specs), text2 = changes.apply(state.doc).toString(), read2 = readLatex(text2);
+      const g2 = gridAt(text2, read2, changes.mapPos(g.env.from, 1));
+      if (!g2 || unsureWhy(text2, read2)) return { refused: t("这样改会让 LaTeX 的结构不完整，没有改。") };
+      const r2 = Math.max(0, Math.min(r, g2.rows.length - 1)), cell = g2.rows[r2].cells[Math.max(0, Math.min(c, g2.cols.length - 1))];
+      return { changes: changes, selection: { anchor: cellCaret(text2, cell) }, userEvent: "input.format.table", scrollIntoView: true };
+    };
+    const empty = () => new Array(n).fill("");
+    const tooMany = () => rows.length >= GRID_LIMIT.rows ? { refused: t("表格最多 {n} 行。", { n: GRID_LIMIT.rows }) } : null;
+    if (act === "next") {
+      if (at.c < n - 1) return go(at.r, at.c + 1);
+      if (at.r < last) return go(at.r + 1, 0);
+      return tooMany() || done([rowsAfter(text, g, last, [empty()], br)], last + 1, 0);
+    }
+    if (act === "up" || act === "down") {   // the cell above or below, as a spreadsheet; past the table's edge, out of it
+      const r = at.r + (act === "down" ? 1 : -1), cap = g.caption;
+      if (r >= 0 && r <= last) return { selection: { anchor: cellCaret(text, rows[r].cells[at.c]) }, userEvent: "select", scrollIntoView: true };
+      if (cap && (r < 0) !== cap.below) return { selection: { anchor: cap.close }, userEvent: "select", scrollIntoView: true };
+      const out = r < 0 ? g.from - 1 : g.to + 1;
+      return out >= 0 && out <= text.length ? { selection: { anchor: out }, userEvent: "select", scrollIntoView: true } : { selection: { anchor: sel.head } };
+    }
+    if (act === "prev") {
+      if (at.c > 0) return go(at.r, at.c - 1);
+      if (at.r > 0) return go(at.r - 1, n - 1);
+      return { selection: { anchor: sel.anchor, head: sel.head } };   // the first cell: nowhere before it in the table
+    }
+    if (act === "rowAbove") return tooMany() || done([at.r ? rowsAfter(text, g, at.r - 1, [empty()], br) :
+      { from: row.lead, insert: rowLine(empty()) + br + /^[ \t]*/.exec(text.slice(row.from, row.to))[0] }], at.r, at.c);
+    if (act === "rowBelow") return tooMany() || done([rowsAfter(text, g, at.r, [empty()], br)], at.r + 1, at.c);
+    if (act === "rowDelete") {
+      if (!last) return { refused: t("表格至少要有一行。") };
+      // the row's line goes whole, unless it holds rules too (they stay, on their line)
+      const own = !text.slice(row.from, row.lead).trim() && !codePart(text.slice(row.slashTo, row.to)).trim();
+      return done([own ? { from: row.from, to: Math.min(text.length, row.to + 1) } : { from: row.lead, to: row.slashTo }], Math.min(at.r, last - 1), at.c);
+    }
+    if (act === "colLeft" || act === "colRight" || act === "colDelete") {
+      if (!g.items) return { refused: t("这个表格的列格式比较特别，加减列要在「显示代码」里改。") };
+      const cols = g.items.filter((x) => x.col), sf = g.spec.from;
+      const ruled = n >= 2 ? g.bars.slice(1, n).every(Boolean) : g.bars[0] && g.bars[1];
+      const specs = [];
+      if (act === "colDelete") {
+        if (n === 1) return { refused: t("表格至少要有一列。") };
+        const k = at.c, item = cols[k], after = g.items[g.items.indexOf(item) + 1];
+        specs.push({ from: sf + item.from, to: sf + (ruled && after && after.bar ? after.to : item.to) });
+        rows.forEach((r) => specs.push(k < n - 1 ? { from: r.cells[k][0], to: r.cells[k + 1][0] } : { from: r.seps[k - 1], to: r.cells[k][1] }));
+        return done(specs, at.r, Math.min(at.c, n - 2));
+      }
+      if (n >= GRID_LIMIT.columns) return { refused: t("表格最多 {n} 列。", { n: GRID_LIMIT.columns }) };
+      const k = act === "colRight" ? at.c : at.c - 1;   // the new column comes after column k (-1: first)
+      specs.push(k >= 0 ? { from: sf + cols[k].to, insert: ruled ? "|l" : "l" } : { from: sf + cols[0].from, insert: ruled ? "l|" : "l" });
+      rows.forEach((r) => specs.push(k < 0 ? { from: r.cells[0][0], insert: "& " } : k < n - 1 ? { from: r.cells[k + 1][0], insert: " &" } : { from: r.cells[k][1], insert: "& " }));
+      return done(specs, at.r, k + 1);
+    }
+    if (act === "header") {
+      if (!last) return { refused: t("表格要有两行以上，才能把第一行设成表头。") };
+      const hits = headerRules(text, g);
+      if (!hits.length) return done([{ from: rows[0].to, insert: br + /^[ \t]*/.exec(text.slice(rows[0].from, rows[0].to))[0] + (g.booktabs ? "\\midrule" : "\\hline") }], at.r, at.c);
+      return done(hits.map((h) => {
+        const ls = lineStartAt(text, h[0]), le = lineEndAt(text, h[0]), rest = codePart(text.slice(ls, h[0]) + text.slice(h[1], le));
+        if (ls > rows[0].to && le < rows[1].from && !rest.trim()) return { from: ls, to: Math.min(text.length, le + 1) };   // its line
+        let a = h[0];
+        while (a > rows[0].slashTo && (text[a - 1] === " " || text[a - 1] === "\t")) a -= 1;   // "\\ \hline": the space too
+        return { from: a, to: h[1] };
+      }), at.r, at.c);
+    }
+    return null;
+  }
+  // Whether the first row is a header: a \midrule or \hline under it (第一行是表头 pressed).
+  function gridHeader(text, g) { return g.rows.length > 1 && headerRules(text, g).length > 0; }
+  // Return in a grid's cell: the cursor goes to the cell below, as a spreadsheet's (in the last row it stays); ⇧Return
+  // is refused there (a line break would end the row). At the very start of a table (before its caption or its first
+  // cell), Return makes an empty paragraph above it, as Word does. Null elsewhere.
+  function gridEnter(state, value, shift) {
+    const text = value.info.text, read = value.read, sel = state.selection.main, head = sel.head;
+    if (sel.empty && !shift && gridsNear(text, read, head, head).some((g) => g.from === head)) {
+      const blankBefore = head === 0 || !text.slice(lineStartAt(text, head - 1), head - 1).trim();
+      return { changes: state.changes({ from: head, insert: blankBefore ? state.lineBreak : state.lineBreak + state.lineBreak }),
+        selection: { anchor: blankBefore ? head : head + 1 }, userEvent: "input.enter", scrollIntoView: true };
+    }
+    const c = cellNear(text, read, head);
+    if (!c) return null;
+    if (shift) return { refused: t("表格的格子里不能换行。") };
+    if (c.r === c.g.rows.length - 1) return { selection: { anchor: sel.anchor, head: sel.head } };
+    return { selection: { anchor: cellCaret(text, c.g.rows[c.r + 1].cells[c.c]) }, userEvent: "select", scrollIntoView: true };
+  }
+  // Backspace and Delete at a grid's edges do nothing: at a cell's start (end), the table's first place, before its
+  // caption's words or after them, and where they would join the table's lines with the text before or after it.
+  function gridBack(value, pos, dir) {
+    const text = value.info.text, read = value.read, c = cellAt(text, read, pos);
+    if (c && pos === (dir < 0 ? c.cell[0] : c.cell[1])) return { refused: "" };
+    for (const g of gridsNear(text, read, pos - 1, pos + 1)) {
+      if (dir < 0 ? pos === g.from || (pos === g.to + 1 && text.slice(pos, lineEndAt(text, pos)).trim()) : pos === g.to || (pos === g.from - 1 && text.slice(lineStartAt(text, pos), pos).trim())) return { refused: "" };
+      if (g.caption && pos === (dir < 0 ? g.caption.open : g.caption.close)) return { refused: "" };
+    }
+    return null;
+  }
 
   // -- 格式与插入: the tools (22.12) ----------------------------------------------------------------------------------
   //
@@ -4761,6 +5305,14 @@
       url: tool(t("网址"), () => openPicker(me, "url")),
     };
     Object.keys(ui.openers).forEach((k) => ui.openers[k].setAttribute("aria-expanded", "false"));
+    // 表格 (22.12 T): shown while the cursor is in a table's cell; each action one step of ⌘Z
+    const gridTool = (label, act) => tool(label, run((st) => gridSpec(st, act)));
+    ui.grid = { box: mk("div", "latex-format-group latex-grid-tools hidden"), header: gridTool(t("第一行是表头"), "header") };
+    ui.grid.header.setAttribute("aria-pressed", "false");
+    ui.grid.box.append(mk("h4", "latex-format-title", t("表格")),
+      row(gridTool(t("在上方插入行"), "rowAbove"), gridTool(t("在下方插入行"), "rowBelow")),
+      row(gridTool(t("在左侧插入列"), "colLeft"), gridTool(t("在右侧插入列"), "colRight")),
+      row(gridTool(t("删除行"), "rowDelete"), gridTool(t("删除列"), "colDelete")), row(ui.grid.header));
     ui.picker = mk("div", "latex-picker hidden");
     // 22.1 (B1): 「显示代码」 heads the column, above the tabs; under it what the edit view says about where the cursor is
     ui.code = mkButton(t("显示代码"), "latex-switch", () => toggleSource(me));
@@ -4771,7 +5323,7 @@
     ui.context.setAttribute("role", "status");
     const head = mk("div", "latex-switch-row");
     head.append(ui.code);
-    panes.format.append(ui.reason, ui.note,
+    panes.format.append(ui.reason, ui.note, ui.grid.box,
       group(t("文字"), row(ui.styles.textbf, ui.styles.textit, ui.styles.underline), row(ui.font.field, ui.size.field)),
       group(t("章节标题"), row(ui.heading.field)),
       group(t("段落"), row(ui.align.field, ui.quote)),
@@ -5042,6 +5594,15 @@
     ui.font.select.value = offered(ui.font.select, st.font) ? st.font : "";
     ui.size.select.value = offered(ui.size.select, st.size) ? st.size : "";
     ui.heading.select.value = offered(ui.heading.select, st.heading || "") ? st.heading || "" : "other";
+    // 表格: while the cursor is in a cell of a table drawn as a grid
+    const cell = off || !value ? null : cellNear(value.info.text, value.read, me.view.state.selection.main.head);
+    ui.grid.box.classList.toggle("hidden", !cell);
+    if (cell) {
+      const head = gridHeader(value.info.text, cell.g);
+      ui.grid.header.setAttribute("aria-pressed", String(head));
+      ui.grid.header.classList.toggle("is-on", head);
+      ui.grid.header.disabled = cell.g.rows.length < 2;
+    }
     drawContext(me);
     drawLayout(me);
   }
@@ -5949,6 +6510,7 @@
       bodyWords: bodyWords, tabularGrid: tabularGrid, columnsOf: columnsOf, inlineInto: inlineInto, preambleWords: preambleWords,
       unsureWhy: unsureWhy, enterSpec: enterSpec, backSpec: backSpec, plainOf: plainOf, numbersOf: numbersOf, plainWords: plainWords,
       docInfoOf: docInfoOf, docInfoSpec: docInfoSpec, unescapeTex: unescapeTex, escapeTyped: escapeTyped,
-      quietLine: quietLine, paraReach: paraReach, pageIndent: pageIndent, historyOf: historyOf, heldIn: heldIn, newLabel: newLabel, passageField: passageField }),
+      quietLine: quietLine, paraReach: paraReach, pageIndent: pageIndent, historyOf: historyOf, heldIn: heldIn, newLabel: newLabel, passageField: passageField,
+      gridOf: gridOf, gridAt: gridAt, cellAt: cellAt, gridSpec: gridSpec, gridHeader: gridHeader, specItems: specItems, floatWord: floatWord }),
   });
 })();

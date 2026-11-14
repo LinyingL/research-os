@@ -342,8 +342,9 @@ def test_cite_and_ref_are_quiet_chips_and_unknown_commands_a_chip_of_their_words
     assert [x["widget"] for x in _find(d, "\\label{sec:i}")] == [None]              # hidden
     assert _find(d, "\\newcommand{\\R}{\\mathbb{R}}")[0]["widget"]["text"] == "LaTeX 内容"
     assert _find(d, "\\unknown{x}")[0]["widget"]["text"] == "x"                     # its plain words, never its name
-    grid = _find(d, "\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}", block=True)
-    assert grid and grid[0]["widget"]["cls"] == "latex-table-preview"
+    # 22.12 T: a tabular the grid reader is sure of is its cells, typed in place; its markup hidden
+    assert [x["text"] for x in d if x["cls"] and x["cls"].startswith("latex-cell")] == ["a ", " b "]
+    assert _find(d, "&") and _find(d, "\\\\\n\\end{tabular}")
     comment = [x for x in d if x["text"].startswith("% a comment")]
     assert comment and comment[0]["widget"] is None                                   # a comment leaves no trace
 

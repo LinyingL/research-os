@@ -555,3 +555,23 @@ span.latex-abstract-head { display: block; }
 .latex-editor .cm-content.latex-word .cm-line { min-height: calc(1.8em * var(--latex-stretch, 1)); }   /* a line of only what is hidden */
 .latex-editor .cm-content.latex-word .latex-chip { -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 .latex-editor .cm-content.latex-word .latex-chip-ref { white-space: nowrap; }
+/* 22.12 T (acceptance, 2026-11-14: tables are filled in like Word): a table the reader is sure of is a grid of the text
+   itself -- each row one line of the page drawn as a row of cells (a table of its own, its columns' widths set by the
+   editor the same in every row, so they line up), each cell's words typed in place; rules as the PDF draws them, a
+   column rule where the spec has "|"; an empty cell keeps a cell's size, the cursor standing in it. The caption's line is
+   centred over it, as a figure's. Tokens only. */
+.latex-editor .cm-content.latex-word .cm-line.latex-trow { display: table; table-layout: fixed; margin: 0 auto; padding: 0; text-indent: 0;
+  border-collapse: separate; border-spacing: 0; font-size: .9rem; line-height: 1.5; }
+/* what CodeMirror puts in a row for the hidden & and \\ (empty placeholders) stays out of the grid's flow */
+.latex-editor .cm-content.latex-word .cm-line.latex-trow > br { display: none; }
+.latex-editor .cm-content.latex-word .cm-line.latex-trow > :not(.latex-cell) { position: absolute; }
+.latex-word .latex-cell { display: table-cell; box-sizing: border-box; height: 1.9em; padding: .15rem .6rem; vertical-align: top; text-align: left; }
+.latex-word .latex-cell.latex-col-c { text-align: center; } .latex-word .latex-cell.latex-col-r { text-align: right; }
+.latex-word .latex-cell-empty { background: var(--paper-alt); background-clip: content-box; }
+.latex-word .latex-cell-bl { border-left: 1px solid var(--line-strong); } .latex-word .latex-cell-br { border-right: 1px solid var(--line-strong); }
+.latex-editor .cm-content.latex-word .cm-line.latex-trule-heavy { border-top: 2px solid var(--ink); }
+.latex-editor .cm-content.latex-word .cm-line.latex-trule-light { border-top: 1px solid var(--line-strong); }
+.latex-editor .cm-content.latex-word .cm-line.latex-trule-below-heavy { border-bottom: 2px solid var(--ink); }
+.latex-editor .cm-content.latex-word .cm-line.latex-trule-below-light { border-bottom: 1px solid var(--line-strong); }
+.latex-editor .cm-content.latex-word .cm-line.latex-tcap-line { text-align: center; font-size: .85rem; color: var(--ink-soft); padding-top: .4rem; }
+.latex-editor .cm-content.latex-word .cm-line.latex-tcap-below { padding-top: .2rem; padding-bottom: .4rem; }

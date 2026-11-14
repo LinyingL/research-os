@@ -331,9 +331,11 @@ def test_a_figure_shows_its_images_and_numbered_caption_and_only_the_caption_is_
     assert figure[0]["text"].startswith("\\begin{figure}") and figure[0]["text"].endswith("\\caption{")
     assert figure[1]["text"].startswith("}\n\\label{fig:a}") and figure[1]["text"].endswith("\\end{figure}")
     assert [x["shown"] for x in f if x["kind"] == "ref"] == ["图 1"]
-    t = [x for x in shown["table"] if x["kind"] == "table"]
-    assert len(t) == 1 and t[0]["text"].startswith("\\begin{table}") and t[0]["text"].endswith("\\end{table}")   # one unit
-    assert t[0]["shown"].startswith("表 1：Results")
+    # 22.12 T: a table the grid reader is sure of is its caption's words after 「表 1：」 and its cells, typed in place; only
+    # its markup is hidden, in pieces of its own
+    t = [x for x in shown["table"] if x["kind"] == "grid"]
+    assert [x["text"] for x in t] == ["\\begin{table}\n\\caption{", "}\n\\begin{tabular}{ll}", "&", "\\\\\n\\end{tabular}\n\\end{table}"]
+    assert t[0]["shown"] == "表 1：" and [x["shown"] for x in t[1:]] == [None, None, None]
 
 
 @needs_node
@@ -601,7 +603,8 @@ const doc = () => view().state.doc.toString();
 const f = (path, text, extra) => Object.assign({path, text, revision: 'r1', line_ending: 'lf', read_only: false, read_only_reason: null, links: [], mains: []}, extra);
 const openFile = async (path, text, extra) => { L.open(path); await tick(); gets.shift().res(f(path, text, extra)); await tick(); await tick(); };
 const context = () => inside(side(), (e) => e.classList.contains('latex-context'))[0];
-const TEXT = '\\documentclass{article}\n\\title{Old \\& title}\n\\author{Ann}\n\\begin{document}\n\\maketitle\nSome text.\\footnote{A plain note}\n\\begin{table}\n\\caption{T}\n\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}\n\\end{table}\nA formula $x$ here.\n\\end{document}\n';
+// (a table with merged cells: one unit, changed in 显示代码 -- 22.12 T fills the others in like Word)
+const TEXT = '\\documentclass{article}\n\\title{Old \\& title}\n\\author{Ann}\n\\begin{document}\n\\maketitle\nSome text.\\footnote{A plain note}\n\\begin{table}\n\\caption{T}\n\\begin{tabular}{ll}\n\\multicolumn{2}{c}{ab} \\\\\n\\end{tabular}\n\\end{table}\nA formula $x$ here.\n\\end{document}\n';
 await openFile('a.tex', TEXT, {mains: ['a.tex'], format: {main: 'a.tex', engine: 'pdflatex', folder: '', preamble: null, local: []}});
 const s0 = sw();
 out.atTop = side().children[0].className === 'latex-format' && side().children[0].children[0].className === 'latex-switch-row';

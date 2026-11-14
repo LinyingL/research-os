@@ -7467,7 +7467,8 @@ presentation; 22.8 batches and acceptance; 22.9 what the review changed; 22.10
 source; only how it looks changes. The researcher, 2026-11-14: **"我的想法是，编辑的时候是看不到latex代码的，右侧的选项
 打开才能看到代码"**. Asked how, they chose: (1) a 「显示代码」 switch in the right column -- on, the **whole file** is its
 LaTeX code, edited as plain text as before; off, back to the edit view, with **no code anywhere**; (2) formulas are
-typeset in the edit view and **changed only in the code** (not editable there, no formula popup). This replaces the
+typeset in the edit view and **changed only in the code** (not editable there, no formula popup) -- formulas only: tables
+are filled in in the edit view (22.12 T, found at acceptance 2026-11-14). This replaces the
 earlier rule -- "a construct shows its source as soon as the selection touches it" and "everything else is shown as
 written" -- which B3 and 22.12 B had followed.
 
@@ -7487,9 +7488,14 @@ nothing to type between, they are one). What each construct is shown as:
   the lines styled (an abstract under a quiet 「摘要」, a theorem under its title);
 - **figures**: the images (21.5's thumbnails) and 「图 N：」 before the caption, whose words are editable; the rest
   hidden and atomic. A figure the reader doubts (subfigures, no caption) is one unit, its caption's words in a chip;
-- **tables**: a read-only preview with 「表 N：caption」, the table **one atomic unit** (selected and deleted whole; its
-  cells changed in 显示代码, which the right column says, with a link that turns the code on at the table); one the
-  grid reader doubts is a chip 「表格：caption」;
+- **tables** (*amended by T of 22.12, browser acceptance 2026-11-14: the researcher restricted only formulas to the code*):
+  a table the grid reader is sure of is **filled in like Word** -- a grid whose cells are the text itself, each cell's
+  words typed in place, the caption's words editable after 「表 N：」, the markup (`\begin`/`\end`, the column spec, `&`,
+  `\\`, the rules, `\centering`, `\label`) hidden and atomic; Tab, ⇧Tab and the arrow keys go from cell to cell, and the
+  right column's 「表格」 group adds and deletes rows and columns (22.12 T). A table with merged cells or anything else the
+  grid reader is unsure of stays a read-only preview, **one atomic unit** (selected and deleted whole; its cells changed
+  in 显示代码, which the right column says, with a link that turns the code on at the table); one the preview's reader
+  doubts too is a chip 「表格：caption」;
 - **formulas** (`$…$`, `\(…\)`, `\[…\]`, `equation`, `align`, `gather` …): typeset by KaTeX (HTML only, so no TeX
   reaches the page's text), each **one atomic unit**; one KaTeX cannot typeset, or before KaTeX has loaded, a quiet
   「公式」 -- never the code. A click selects it, and the right column says 「公式要在「显示代码」里改。」 with the link;
@@ -8789,7 +8795,8 @@ typeset in the edit view and changed only in the code. 22.1 states the rule; how
   command (`\thanks`, `\and`, `\\`): the person's own, disabled, with 「导言区第 {n} 行已有自己写的设置」 and 看这一行. A chapter
   shows its main file's, unchangeable. A click on the title block opens 版式 at 标题; one on the 导言区 line opens 版式.
 - **Tools in the edit view**: each still writes the same LaTeX (22.12); a cursor a tool leaves in what is hidden moves to
-  its edge; 表格 leaves the cursor beside the new table (the column says where its cells are filled in); 公式 inserts its
+  its edge; 表格 leaves the cursor beside the new table (the column says where its cells are filled in; *T: in its first
+  cell*); 公式 inserts its
   formula, turns 显示代码 on with the cursor in it (with words selected it asks for none: they would be its code).
   显示代码 turns 「格式」 off and leaves 「版式」 on.
 - *Chosen while building:* an empty item and an unknown no-argument command (`\mystery`) are 「LaTeX 内容」 chips; a
@@ -8799,7 +8806,8 @@ typeset in the edit view and changed only in the code. 22.1 states the rule; how
   off (dropped text from elsewhere is pasted plain), as are CodeMirror's own moving of lines (⌥↑ ⌥↓) and commenting
   them out (⌘/), which would move or hide what the edit view does not show; two authors read 「A 和 B」.
 - *Not done in B1:* a heading's short title is shown, not editable, in the edit view; a description list's term and a
-  theorem's title are read-only; tables and figures with subfigures are changed in the code; the first-line indent of
+  theorem's title are read-only; tables (*T: only those with merged cells and the like*) and figures with subfigures are
+  changed in the code; the first-line indent of
   22.12 B is still left (done in B2); this was tested under node and a stand-in page, not yet in the app's window with a real paper.
 - **Measured** (`tests/test_v17_no_code_view.py`): over three papers -- the Chinese and English templates of 新建文稿 with
   every tool of A, A2 and A3 applied, and a hand-written paper with comments, unknown macros, tikz, verbatim, align,
@@ -8938,7 +8946,8 @@ with the reason below. The rules that changed:
   than it at 900 px (selects shrink, fields and labels wrap, file names break anywhere and are sans words); the table
   picker's chosen cells are ink, not ochre (21.8); 其它 is 13.4's word.
 - *Set aside, with the reason:* showing source on touch (the earlier reviews) -- B1 shows no code at all; ArrowUp and
-  ArrowDown passing a table -- the table is one atomic unit, changed in 显示代码; the header's 「尚未保存」 beside the status
+  ArrowDown passing a table -- the table is one atomic unit, changed in 显示代码 (*T: now only a table with merged cells
+  and the like; the up and down arrow keys go from row to row of the others*); the header's 「尚未保存」 beside the status
   line's 「有未保存的改动」 -- B's own ruling, for the researcher; `--`, ``` `` ''' ```, `?``, `!`` printing as TeX's ligatures --
   what the researcher typed, as Word's own autoformat; a bare `&`, `^`, `_` or `#` in running text -- shown as typed, the
   export names its line; an environment the reader does not know (a `\newenvironment`, `keywords`) stays a chip -- it may be
@@ -8958,3 +8967,102 @@ with the reason below. The rules that changed:
   the right column's passages in their own box (`test_v17_page_look.py`, `test_v17_latex_passages.py`), sans file names
   (`test_v17_editor_fixes.py`), a cite chip's note (`test_v17_latex_word.py`), and `test_v9_language.py`'s allowance of
   图 and 表, now only as the two whole lines 图表名称 writes.
+
+**Tables filled in like Word (T; browser acceptance, 2026-11-14, finding F1).** In a real browser, 插入 > 表格 wrote the
+right source, but in the edit view the new table was one atomic read-only preview: its empty cells collapsed to three
+short rules, the cursor could not enter a cell, and "Var" typed right after inserting it landed after `\end{table}`. A
+researcher had to turn on 显示代码 to fill any table. B1 had made tables code-only by mistake: asked how the edit view
+should work, the researcher chose that **formulas** are changed only in the code (22.1: "公式要在「显示代码」里改"), and
+said nothing of tables -- the edit view is where a paper's words are written, and a table's cells are words. Changed:
+22.1's tables bullet, B1's notes on 表格 and on what is changed in the code, and B3's ArrowDown note now say so.
+
+- **What is a grid** (`readGrid`, kept once a reading): a `table` float holding exactly one `tabular`, `tabular*` or
+  `tabularx` (and only `\centering`, a size switch, one `\caption`, `\label` and comments, as B's preview), or such a
+  tabular alone, standing alone on its lines; its `\begin{tabular}{spec}` on one line, with only rules after it there;
+  each row on a line of its own, ended by `\\` (`\\*`, `\\[2pt]`; the last row may end without one), with exactly as many
+  cells as the spec has columns (cells split on `&` outside braces, formulas and `\verb`), only rules (`\toprule`,
+  `\midrule`, `\bottomrule`, `\hline`, `\addlinespace`) after its `\\` on its line; between rows only rules and comments;
+  the caption on lines of its own, above the tabular or below it, on one line; at most 20 columns and 200 rows.
+  **Anything else stays B's read-only preview, one unit**, with 「表格内容要在「显示代码」里改。」 and the link:
+  `\multicolumn`, `\multirow`, `\cline`, `\cmidrule`, `\hhline`, `\noalign`, `\cr`, `\tabularnewline`, `\newline`, `\par`, a nested
+  environment, a blank line inside, two rows on one line or one row over two lines, a row with fewer cells than columns,
+  a column type the spec reader does not know, a caption on the tabular's own lines, `longtable`, `tabu` and any other
+  environment (they stay 「LaTeX 内容」 chips). *Chosen:* `p{}`, `m{}`, `b{}`, `X`, `>{}`, `<{}`, `@{}`, `!{}` and `|` are read
+  (a cell is still the words between two `&`), so a booktabs table with `@{}lcr@{}` is filled in too; `*{n}{…}` is read
+  for the cells but columns are added and deleted in 显示代码 (「这个表格的列格式比较特别，加减列要在「显示代码」里改。」).
+- **How it is drawn.** Each row is one line of the page: the lines before the first row (or the caption), and those
+  between rows (rules, comments), are hidden with the row before, in atoms of the table's own (`kind: grid`, drawn
+  before any other piece starting at the same place, so a caption below keeps its words); the `&` and the row's end are
+  atoms; every hidden range is atomic. A row's line is a table of its own (`display: table`, fixed layout, centred),
+  each cell's text a mark that is a table cell; the columns' widths are set by the editor from the widest cell's words of
+  each column, the same in every row, so the columns line up. A cell holds its spaces, so all a row shows is in a cell
+  (CodeMirror's placeholders for what is hidden are taken out of the flow); an empty cell with no character is a box of
+  the cell's width (a point widget) where the cursor stands, drawn inside its padding; an empty cell keeps a cell's
+  size and a quiet fill (`--paper-alt`). Rules as the PDF draws them: `\toprule`, `\bottomrule` heavy, `\midrule`,
+  `\hline` light, above or below the row; a column rule where the spec has `|`. The caption's line is centred over (or
+  under) the grid, its words after 「表 N：」 (`floatWord`, the one helper for the figure's 「图 N：」 too, so the document's
+  own words can be put there in one place). A formula, a style, a citation or an escape in a cell is drawn as in the text,
+  the formula still one atomic unit. Whenever a change reaches a table it is drawn again whole.
+- **The cursor.** Every place it stops in a table is in a cell or the caption, or at the table's two edges, where typed
+  words go to the caption (or first cell) and to the last cell; between a row's last cell and the next row's first the
+  cursor never stops (a bridge). **Tab** and **⇧Tab** go to the next and previous cell, selecting its words as Word does;
+  Tab in the last cell adds a row, its cursor in the new first cell; ⇧Tab in the first cell stays. The **left and right
+  arrow keys** go through the cells in reading order; **up and down** go to the cell above or below (past the first or
+  last row, to the caption or the line beside the table): CodeMirror's own vertical motion does not follow a row laid out
+  as a table, so the edit view moves by rows -- a long cell's wrapped lines are passed over. **Return** in a cell goes to
+  the cell below, as a spreadsheet (in the last row it stays); ⇧Return there is refused (「表格的格子里不能换行。」: a line
+  break would end the row); Return at the very start of a table makes an empty paragraph above it, as Word does.
+- **Typing and pasting** in a cell are plain text, escaped as anywhere (`& % $ # _ { } ~ ^ \ < > |`), a line break a
+  space; typed into an empty cell, the words are set apart from the `&` on each side (`a & b & c`). A paste holding tabs
+  or line breaks -- a spreadsheet's or a table's -- fills the cells from the cursor's, as a spreadsheet does: each line a
+  row, each tab the next cell, each value in place of that cell's words; values past the last column go into the row's
+  last cell, a space between; rows past the last are added; one step of ⌘Z. Copying a table gives its words with a tab
+  between cells.
+- **Deleting.** A selection inside one cell edits that cell. A selection over several cells clears the words it covers in
+  each (each made whole as anywhere) and keeps every `&`, `\\`, rule and line; the line break beside the table is never
+  deleted with text before or after it, so the table stays on lines of its own. A selection over the whole table deletes
+  it whole. Backspace at a cell's start and Delete at its end do nothing; so do Backspace at the table's start, at its
+  caption's start or where it would join the table's lines to the text after it, and Delete where it would join them to
+  the text before. Rows and columns are deleted with 删除行 and 删除列.
+- **The right column's 「表格」**, at the top of 「格式」, shown while the cursor is in a cell (or at the table's end): 在上方
+  插入行, 在下方插入行, 在左侧插入列, 在右侧插入列, 删除行, 删除列 and 第一行是表头 (pressed while a `\midrule` or `\hline` is
+  under the first row; on, it writes `\midrule` where the table uses booktabs rules, else `\hline`, on a line of its own;
+  off, it takes it away). Each is one transaction of the editor's own -- one step of ⌘Z, the save, the passages and the
+  line-break filter as every tool -- and the cursor ends in the cell it is about. A new row is `& & \\` on a line of its
+  own with the row's indent, put above the next row's first cell (after the rules between, so a header keeps its rule
+  under it) or after the last row's `\\` (written first when the last row had none, before the rules on its line); a new
+  column is an empty cell in every row and an `l` in the spec next to its neighbour, with `|` when every column is
+  ruled; the researcher's letters for the other columns are kept, and deleting a column takes its letter (and its rule
+  where every column is ruled). Refused, with a sentence: deleting the last row or column, a 21st column or a 201st row,
+  a header in a one-row table. The group goes with the edit view (显示代码 hides it); no primary (22.7).
+- **Insert.** 表格 now leaves the cursor in the new table's first cell, so "Var" typed at once goes there.
+- **Measured** (`tests/test_v17_table_edit.py`, node on the vendored CodeMirror and KaTeX): seven tables (表格's own with and
+  without booktabs and with one column, a hand-written one with `|l|c|r|`, `\hline` after `\\`, `\\[2pt]`, a comment
+  between rows, a formula, a citation, `\%`, `\&`, a tie and an accent, one with its caption below and no final `\\`, a bare
+  tabular in `center` with `@{}lc@{}`, a `tabularx`): no markup character in the source shown, no command name in what is
+  drawn, every caret stop in a cell, the caption or an edge, and a letter typed at each one going into a cell or the
+  caption with the grid unchanged; the stops of 表格's 3 by 3 table in reading order; Tab, ⇧Tab, Return, ⇧Return; every
+  action's exact source and one ⌘Z back byte for byte; columns in a ruled and a `*{2}{c}` spec; deleting across cells;
+  each special character typed; the paste; 13 kinds of table that stay one unit. A seeded fuzz of 1,080 edits inside
+  the tables of the English and Chinese templates (typing, pasting, deleting and replacing across cells, Backspace and
+  Delete, Return and ⇧Return, Tab and every action, in chains of 90 with ⌘Z back to the start after each): 836
+  changed the text, none left it unsure, none left a row with an `&` count other than the columns less one, none showed
+  markup or changed a character outside the tables; 20 of the results compiled by latexmk (10 pdfLaTeX, 10 XeLaTeX with
+  ctexart), no TeX error. Typing in a cell of 22.1's 3,000-line paper with a table every 50 lines: median 2.0 to 2.2 ms,
+  p95 3.8 to 4.4 ms (three runs); Tab median 1.4 to 1.6 ms; on the 2 MB paper, in a cell 17.7 to 21.0 ms against 18.3 to
+  20.2 ms in its running text (22.1's own 2 MB measure unchanged: 15.8 to 17.0 ms).
+  *Seen in a browser* (Chromium, the engine's own page on a scratch project, 1,280 by 860): the empty 3 by 3 table of
+  新建文稿's English paper drawn as a grid of three ruled rows of empty cells; a click in an empty cell puts the cursor in
+  it (drawn inside the padding); "Var", Tab, "Mean", the down key, "50%", the right key three times, "R", the up key twice, "C" wrote `Var & Mean &`,
+  `& 50\% & R` and `C` at the caption's end; in another run 在下方插入行 and 在右侧插入列, clicked and then typed into, wrote
+  the row and the column where the cursor showed them; the hand-written table's three columns line up in every row.
+- **Words** (13.4 rows): 在上方插入行 Insert row above; 在下方插入行 Insert row below; 在左侧插入列 Insert column left; 在右侧插入列
+  Insert column right; 删除行 Delete row; 删除列 Delete column; and the sentences above, each with its English in `i18n.js`.
+- **Tests changed on purpose:** `test_v17_no_code_view.py` (the figure test's table is now its pieces; the page's table
+  for the 「在「显示代码」里改」 hint has merged cells), `test_v17_page_look.py` (the tables drawn as grids; the preview kept
+  for merged cells and a row with fewer cells; a click selecting a table whole is on one with merged cells),
+  `test_v17_latex_word.py` (a tabular is its cells), `test_v17_format_panel.py` (表格 heads 「格式」, hidden out of a table).
+- *Not done in T:* a row with fewer cells than columns, `\multicolumn` and `\multirow` stay one unit; a cell's own line
+  break (`\makecell`, a `p{}` column's `\newline`) is not offered; a long cell's wrapped lines are passed over by the up
+  and down keys; selecting a row or a column as such (Word's) is not there -- 删除行 and 删除列 are; F4 (the document's own
+  word for 表 / Table) is left to its own step, through `floatWord`.

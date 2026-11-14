@@ -426,6 +426,7 @@ tool('版式').fire('click');
 out.layoutShown = [hidden(inside(side(), (e) => e.classList.contains('latex-tab-pane'))[0]), words(inside(side(), (e) => e.classList.contains('latex-tab-pane'))[1])];
 tool('格式').fire('click');
 out.groups = inside(side(), (e) => e.tag === 'h4').map((h) => h.textContent);
+out.gridHidden = hidden(inside(side(), (e) => e.classList.contains('latex-grid-tools'))[0]);
 out.fontOptions = options(selects()[0]); out.sizeOptions = options(selects()[1]); out.headingOptions = options(selects()[2]);
 out.shortcut = ['加粗', '斜体', '下划线'].map((w) => [tool(w).textContent + tool(w).children.map((c) => typeof c === 'string' ? c : c.textContent).join(''), tool(w).attrs['aria-keyshortcuts']]);
 // 加粗 on a selection: one transaction, pressed after; ⌘Z takes it back; the save sends it as typed
@@ -559,7 +560,8 @@ def test_the_panel_is_at_the_top_of_the_right_column_with_two_word_tabs_and_layo
     # A2 fills 版式 (test_v17_layout_settings.py): in a chapter file it says where the layout is set
     assert panel["layoutHidden"] is True and panel["layout"] == ["版式在主文件 paper/main.tex 里设置。", "打开 paper/main.tex"]
     assert panel["layoutShown"][0] is True and panel["layoutShown"][1][:2] == panel["layout"]
-    assert panel["groups"][:4] == ["文字", "章节标题", "段落", "插入"]
+    # 22.12 T: 表格 heads the pane, shown only while the cursor is in a table's cell (here it is not)
+    assert panel["groups"][:5] == ["表格", "文字", "章节标题", "段落", "插入"] and panel["gridHidden"] is True
 
 
 @needs_node
