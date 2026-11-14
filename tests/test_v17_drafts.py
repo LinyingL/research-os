@@ -128,7 +128,8 @@ def test_an_empty_project_lists_nothing(tmp_path):
     root.mkdir()
     project.init_project(root)
     assert latex_edit.drafts(root) == {"groups": [], "others": [], "generated": 0, "truncated": False,
-                                       "limit": latex_edit.TEX_FILE_LIMIT, "message": None, "new_folder": "reports"}
+                                       "limit": latex_edit.TEX_FILE_LIMIT, "message": None, "new_folder": "reports",
+                                       "can_write": True}
 
 
 def test_the_walk_stops_at_the_limit_and_says_so(root, monkeypatch):

@@ -4267,6 +4267,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 if "project" in query:
                     self._workspace_target({"project": query["project"][0]})
                 payload = self._workspace_api(lambda: latex_edit.drafts(served.root, self._lang()))
+                # 22.11: 新建文稿 is offered only where 创建 could write (a project opened read-only refuses it)
+                payload["can_write"] = bool(payload.get("can_write")) and not (served.read_only or served.needs_migration)
                 self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
             elif path == "/api/latex/export":
                 # 22.4: the export's settings line -- main file, engine, the last exported PDF. Runs nothing.

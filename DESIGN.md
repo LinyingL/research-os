@@ -8018,29 +8018,45 @@ project, so a paper had to be started outside Research OS. Now it starts here.
     types one. `.tex` is added when the name has none.
   - 标题（可选）: for a paper the `\title{}`, for a chapter the `\section{}`
     (else the file's name); written escaped, so it cannot break the file.
-    `\author{}` is left empty for the person.
+    `\author{}` is left empty for the person. In a pdfLaTeX file (an English
+    paper, a chapter of a main file without ctex, xeCJK or fontspec) a title
+    with a character beyond Latin-1 cannot be set: it is kept in a comment
+    line above (「% 标题：{title}（pdfLaTeX 排不出其中的字符，请改写成英文）」) and
+    the heading is `\title{}` or `\section{Section}`.
   - 加入主文件 (a chapter only): 「不加入」 and the main files 正文 lists; the only
     main file is chosen when there is one.
 - **The engine.** `POST /api/latex/new` `{project, kind, folder, name, title?,
   main?}`, a person's write like a save (the session, the origin, the project
   echo's 409; a read-only project and a member outside the working copy
-  refused). The path keeps 22.1's rules but existence: inside the project; no
-  component starting with `.` (no `.researchos/`, no `.git/`) or `-`; no control
-  character or backslash; no symbolic link anywhere on it; not only in the
-  cloud (409 `cloud`); lower-case `.tex` (`x.TEX` is refused, not renamed);
-  every existing folder spelt as on disk; at most one new folder; never over a
-  file that exists, 409 「已经有这个文件了：{path}」. The file is written from a
+  refused). `GET /api/latex/drafts` answers `can_write`; where it is false
+  (a project opened read-only, a member outside the working copy) 新建文稿 is
+  disabled, as 新建笔记 and 写报告 are. The path keeps 22.1's rules but
+  existence: inside the project; no component starting with `.` (no
+  `.researchos/`, no `.git/`) or `-`; none with TeX's `% { } # ~ $ ^ &` (the
+  `\input` line would break the paper), a slash or backslash, or a character one
+  cannot see (Unicode Cc, Cf, Cs, Zl, Zp: a control, a direction mark, a line
+  separator); none over 180 bytes (a save's backup and its temporary copy add
+  some 70 to the volume's 255); no symbolic link anywhere on it; not only in
+  the cloud (409 `cloud`); lower-case `.tex` (`x.TEX` is refused, not renamed);
+  an existing folder typed in another case or Unicode form is taken as it is
+  spelt on disk; at most one new folder; never over a file that exists, 409
+  「已经有这个文件了：{path}」. Each refusal says what is wrong, in either
+  language, and is made before anything is written. The file is written from a
   template kept in the code (no bibliography), UTF-8 with LF, through the human
   write path: `write_guard(human=True)`, exclusive creation, a history entry,
   `watcher.record_write`; the answer first, then a scan, as a save.
 - **A chapter into its main file.** With a main file chosen, the line
   `\input{<the chapter from the main file's folder, without .tex>}` is put on a
-  line of its own just before the main file's first `\end{document}` outside a
-  comment, as a save of that file (22.1: its revision checked, a backup, a
-  history entry, its own line ending). When it cannot be -- the main file is
-  read-only by 22.1 (a script writes it, mixed endings, …), has no
-  `\end{document}`, changed meanwhile -- the chapter is still made and the
-  editor says, above the text, 「没有在 {main} 里加入 {line}：{why}」. A chapter's
+  line of its own just before the main file's `\end{document}`: the only one
+  outside a comment after its `\begin{document}`, as a save of that file
+  (22.1: its revision checked, a backup, a history entry, its own line ending).
+  When it cannot be -- the main file is not one 正文 could open, is read-only by
+  22.1 (a script writes it, mixed endings, …), has no `\begin{document}` or no
+  `\end{document}` after it, has more than one (one in `\verb`, verbatim or
+  `\iffalse`, which this reading cannot tell from the one TeX ends on), changed
+  meanwhile -- the chapter is still made and the editor says, above the text,
+  「没有在 {main} 里加入 {line}：{why}」 (「这个章节没有加入主文件 {main}：{why}」
+  when the main file is not one 正文 could open). A chapter's
   placeholder line is Chinese only for a XeLaTeX main file (or none, in
   Chinese): pdfLaTeX cannot set Chinese.
 - **After.** The editor opens on the new file (the chapter, when one was

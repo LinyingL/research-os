@@ -1659,6 +1659,9 @@
     const opener = mkButton(t("新建文稿"), "btn btn-primary", () => { newForm = newDraftForm(data); place(); });
     bar.appendChild(opener);
     page.append(mk("p", "node-sub", t("项目里的 LaTeX 文稿。点一份就在编辑器里打开；改动保存回原文件。")), bar, slot);
+    // where 创建 could not write (a project opened read-only, a member outside their working copy) it is not offered,
+    // as 新建笔记 and 写报告 are not
+    if (data.can_write === false) { opener.disabled = true; newForm = null; }
     if (newForm) place();   // a redraw keeps the open form and what is typed in it
     if (data.message) page.appendChild(mk("p", "notice-status err", data.message));
     (data.groups || []).forEach((g) => {

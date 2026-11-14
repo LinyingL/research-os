@@ -12,9 +12,11 @@ import hashlib
 import http.client
 import json
 import os
+import shutil
 import subprocess
 import threading
 import time
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -128,7 +130,23 @@ def test_the_default_folder_is_the_document_folder_else_paper_else_manuscript(ro
     ("paper", "-x", "path"),
     ("paper", ".tex", "path"),
     ("paper", "", "path"),
-    ("Paper", "x", "path"),                  # a folder spelt otherwise than on disk
+    ("paper", "50%", "path"),                # TeX's special characters: \input{50%} ends the paper's compile
+    ("paper", "a}b", "path"),
+    ("paper", "a{b", "path"),
+    ("paper", "a#b", "path"),
+    ("paper", "a~b", "path"),
+    ("paper", "a$b", "path"),
+    ("paper", "a^b", "path"),
+    ("paper", "a&b", "path"),
+    ("50% done", "x", "path"),               # in a folder too
+    ("paper", "a\u2028b", "path"),            # a line separator: the history could not name it
+    ("paper", "a\x85b", "path"),              # NEL, a C1 control
+    ("paper", "a\u202eb", "path"),            # a right-to-left override: the path would read otherwise
+    ("paper", "a\u200bb", "path"),            # a zero-width space
+    ("paper", "\udc80", "path"),              # a lone surrogate: it does not encode
+    ("paper", "x" * 177, "path"),            # 181 bytes with .tex: 180 leave room for a save's backup and its temporary copy
+    ("paper", "引" * 59, "path"),             # 177 bytes, 181 with .tex
+    ("x" * 181, "x", "path"),                # a folder too
     ("paper/main.tex", "x", "path"),         # a file is not a folder
     ("cloudy", "x", "cloud"),                # a folder only in the cloud
     ("/etc", "x", "path"),                   # an absolute folder is not read as one inside the project
@@ -154,9 +172,48 @@ def test_every_path_the_editor_could_not_open_is_refused_and_nothing_is_written(
     assert _files(root) == before and list(outside.iterdir()) == []
 
 
+def test_each_refusal_says_what_is_wrong_in_english_too(root):
+    for folder, name, en, zh in [
+        ("paper", "50%", "cannot contain % { } # ~ $ ^ &", "不能含 % { } # ~ $ ^ &"),
+        ("paper", "a\u2028b", "an invisible character", "看不见的字符"),
+        ("paper", "-x", "cannot start with . or -", "不能以 . 或 - 开头"),
+        ("paper", "x.TEX", "lower-case .tex", "小写的 .tex"),
+        ("paper", "x" * 300, "at most 180 bytes", "最多 180 字节"),
+    ]:
+        with pytest.raises(latex_edit.WorkspaceError) as caught:
+            latex_edit.new_tex(root, {"kind": "chapter", "folder": folder, "name": name}, "en")
+        assert en in str(caught.value) and zh in caught.value.message_zh, str(caught.value)
+        assert "cannot be a new draft" not in str(caught.value) and "\\u" not in str(caught.value)
+
+
+def test_an_existing_folder_typed_in_another_case_or_unicode_form_is_taken_as_it_is_spelt_on_disk(root):
+    nfd = unicodedata.normalize("NFD", "résumé")
+    (root / nfd).mkdir()
+    got = _new(root, kind="chapter", folder=unicodedata.normalize("NFC", "résumé"), name="b")
+    assert got["path"] == nfd + "/b.tex" and got["folder_created"] is None and os.listdir(root / nfd) == ["b.tex"]
+    got = _new(root, kind="chapter", folder="Paper", name="x")
+    assert got["path"] == "paper/x.tex" and (root / "paper/x.tex").is_file() and got["folder_created"] is None
+    # and the file itself is still never written over in another case or form
+    for name in ("X.tex", "B"):
+        with pytest.raises(latex_edit.WorkspaceError) as caught:
+            _new(root, kind="chapter", folder="paper" if name == "X.tex" else nfd, name=name)
+        assert caught.value.code == "exists"
+
+
+def test_a_name_with_a_space_and_one_of_180_bytes_are_made_and_saved(root):
+    assert _new(root, kind="chapter", name="my chap")["path"] == "paper/my chap.tex"
+    long = _new(root, kind="chapter", name="x" * 176)
+    assert long["path"] == "paper/" + "x" * 176 + ".tex"
+    # a save of it (a temporary copy and a backup beside it) still has room for their names
+    saved = latex_edit.save_tex(root, {"path": long["path"], "revision": long["revision"],
+                                       "edits": [{"from": 0, "to": 0, "insert": "% x\n"}]})
+    assert saved["backup"] and (root / long["path"]).read_text().startswith("% x\n")
+
+
 def test_a_kind_or_title_that_does_not_hold_and_a_main_for_a_paper_are_refused(root):
     for body in ({"kind": "slides", "name": "x"}, {"kind": "zh_paper", "name": "x", "title": "a\nb"},
                  {"kind": "zh_paper", "name": "x", "title": "x" * 201}, {"kind": "zh_paper", "name": "x", "main": "paper/m.tex"},
+                 {"kind": "zh_paper", "name": "x", "title": "a\u2028b"}, {"kind": "zh_paper", "name": "x", "title": "\udc80"},
                  {"kind": "chapter", "name": "x", "main": 3}):
         with pytest.raises(latex_edit.WorkspaceError) as caught:
             _new(root, **body)
@@ -165,12 +222,14 @@ def test_a_kind_or_title_that_does_not_hold_and_a_main_for_a_paper_are_refused(r
 
 
 def test_a_member_outside_their_working_copy_cannot_create_a_draft(root):
+    assert latex_edit.drafts(root)["can_write"] is True
     people.team_path(root).write_text('[[member]]\nid="pi@example.com"\nname="PI"\nrole="pi"\n\n'
                                       '[[member]]\nid="member@example.com"\nname="Member"\nrole="member"\n')
     people.write_me("Member", "member@example.com")
     with pytest.raises(latex_edit.WorkspaceError) as caught:
         _new(root, kind="zh_paper", name="main")
     assert (caught.value.code, caught.value.status) == ("read_only", 403) and not (root / "paper/main.tex").exists()
+    assert latex_edit.drafts(root)["can_write"] is False   # so the page does not offer 新建文稿
 
 
 # -- a chapter into its main file ------------------------------------------------------------------------------------------
@@ -205,7 +264,11 @@ def test_the_input_is_relative_to_the_main_files_folder_and_splits_a_line_it_sha
 
 
 @pytest.mark.parametrize("main, why", [
-    (b"\\documentclass{article}\n\\begin{document}\nno end\n", "它里面没有 \\end{document}"),
+    (b"\\documentclass{article}\n\\begin{document}\nno end\n", "它的 \\begin{document} 之后没有 \\end{document}"),
+    # the only one is in a definition in the preamble: not where the body ends
+    (b"\\documentclass{article}\n\\newcommand{\\finish}{\\end{document}}\n\\begin{document}\nText.\n\\finish\n",
+     "它的 \\begin{document} 之后没有 \\end{document}"),
+    (b"\\documentclass{article}\n\\end{document}\n", "它里面没有 \\begin{document}"),
     (b"\\documentclass{article}\r\n\\begin{document}\n\\end{document}\n", latex_edit.READ_ONLY["mixed"][0]),
     (b"\\documentclass{article}\n\\begin{document}\n\\end{document}\n", latex_edit.READ_ONLY["generated"][0]),
 ])
@@ -226,7 +289,75 @@ def test_a_main_file_that_cannot_take_the_line_is_left_alone_and_the_chapter_is_
 def test_the_reason_is_said_in_english_on_an_english_screen(root):
     _put(root, "paper/main.tex", b"\\documentclass{article}\n\\begin{document}\n")
     got = latex_edit.new_tex(root, {"kind": "chapter", "folder": "paper", "name": "intro", "main": "paper/main.tex"}, "en")
-    assert got["input"]["message"] == "\\input{intro} was not added to paper/main.tex: it has no \\end{document}"
+    assert got["input"]["message"] == ("\\input{intro} was not added to paper/main.tex: "
+                                       "it has no \\end{document} after \\begin{document}")
+
+
+# Where TeX does not end on the first \end{document} outside a comment: the line is not added, and the editor says why.
+SEVERAL_ENDS = {
+    "verb": "\\documentclass{article}\n\\begin{document}\nUse \\verb|\\end{document}| to end.\nText.\n\\end{document}\n",
+    "verbatim": "\\documentclass{article}\n\\begin{document}\n\\begin{verbatim}\n\\end{document}\n\\end{verbatim}\nText.\n"
+                "\\end{document}\n",
+    "iffalse": "\\documentclass{article}\n\\begin{document}\nText.\n\\iffalse\n\\end{document}\n\\fi\nMore.\n\\end{document}\n",
+}
+
+
+@pytest.mark.parametrize("case", sorted(SEVERAL_ENDS))
+def test_a_main_with_an_end_document_in_verb_verbatim_or_iffalse_is_left_alone_and_says_why(root, case):
+    _put(root, "paper/main.tex", SEVERAL_ENDS[case].encode())
+    got = _new(root, kind="chapter", name="ch", main="paper/main.tex")
+    assert got["input"]["added"] is False and "不止一处 \\end{document}" in got["input"]["message"]
+    assert (root / "paper/main.tex").read_text() == SEVERAL_ENDS[case] and (root / "paper/ch.tex").is_file()
+
+
+def test_a_main_file_outside_the_project_is_named_as_typed_never_through_the_engines_folder(root):
+    for main, lang, words in (("../x.tex", "zh", "这个章节没有加入主文件 ../x.tex："),
+                              ("../x.tex", "en", "The chapter was not added to ../x.tex: ")):
+        got = latex_edit.new_tex(root, {"kind": "chapter", "folder": "paper", "name": "q" + lang, "main": main}, lang)
+        assert got["input"]["added"] is False and got["input"]["line"] is None
+        assert got["input"]["message"].startswith(words) and "\\input" not in got["input"]["message"]
+        assert os.path.basename(os.getcwd()) not in got["input"]["message"]
+
+
+def test_a_title_pdflatex_cannot_set_is_kept_in_a_comment_and_a_neutral_heading_written(root):
+    _new(root, kind="en_paper", name="main")
+    ch = _new(root, kind="chapter", name="引言", main="paper/main.tex")
+    assert (root / ch["path"]).read_text() == ("% 标题：引言（pdfLaTeX 排不出其中的字符，请改写成英文）\n"
+                                               "\\section{Section}\nWrite this section here.\n")
+    typed = latex_edit.new_tex(root, {"kind": "chapter", "folder": "paper", "name": "data", "title": "数据",
+                                      "main": "paper/main.tex"}, "en")
+    assert (root / typed["path"]).read_text().startswith(
+        "% Title: 数据 (pdfLaTeX cannot set its characters; write it in English)\n\\section{Section}\n")
+    en = _new(root, kind="en_paper", name="english", title="人民币 & Trade")
+    assert "% 标题：人民币 & Trade（pdfLaTeX 排不出其中的字符，请改写成英文）\n\\title{}\n" in (root / en["path"]).read_text()
+    # Latin-1 is set by T1; a XeLaTeX paper takes any title
+    assert "\\title{Café}" in (root / _new(root, kind="en_paper", name="cafe", title="Café")["path"]).read_text()
+    assert "\\title{人民币}" in (root / _new(root, kind="zh_paper", name="zh", title="人民币")["path"]).read_text()
+
+
+PDFLATEX = shutil.which("pdflatex") or ("/Library/TeX/texbin/pdflatex" if os.access("/Library/TeX/texbin/pdflatex", os.X_OK)
+                                        else None)
+
+
+def _pdflatex(folder: Path, main: str) -> subprocess.CompletedProcess:
+    return subprocess.run([PDFLATEX, "-interaction=nonstopmode", "-halt-on-error", "-no-shell-escape", main], cwd=folder,
+                          capture_output=True, text=True, timeout=120, env={**os.environ, "HOME": str(folder)})
+
+
+@pytest.mark.skipif(PDFLATEX is None, reason="needs pdfLaTeX (TeX Live)")
+def test_a_main_file_compiles_with_the_input_lines_just_added_to_it(root, tmp_path):
+    _new(root, kind="en_paper", name="main", title="Currency & Trade")
+    for name, title in (("my chap", ""), ("引言", ""), ("data", "数据"), ("résumé", "")):
+        assert _new(root, kind="chapter", name=name, title=title, main="paper/main.tex")["input"]["added"]
+    text = (root / "paper/main.tex").read_text()
+    assert "\\input{my chap}\n\\input{引言}\n\\input{data}\n\\input{résumé}\n\\end{document}\n" in text
+    build = tmp_path / "build"   # a copy: TeX writes nothing in the project
+    shutil.copytree(root / "paper", build)
+    done = _pdflatex(build, "main.tex")
+    assert done.returncode == 0, done.stdout[-3000:]
+    log = (build / "main.log").read_text(errors="replace")
+    for chapter in ("my chap.tex", "data.tex"):
+        assert chapter in log.replace("\n", "")
 
 
 # -- the two papers export for real ---------------------------------------------------------------------------------------
@@ -282,6 +413,17 @@ def _post(port: int, body: dict, lang: str = "zh"):
         conn.close()
 
 
+def _get(port: int, path: str) -> dict:
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+    try:
+        conn.request("GET", path)
+        resp = conn.getresponse()
+        assert resp.status == 200
+        return json.loads(resp.read())
+    finally:
+        conn.close()
+
+
 def test_the_endpoint_creates_answers_then_scans_and_refuses_another_project_an_existing_file_and_a_read_only_one(served):
     httpd, root, scans = served
     port = httpd.server_address[1]
@@ -299,7 +441,14 @@ def test_the_endpoint_creates_answers_then_scans_and_refuses_another_project_an_
     assert status == 200 and got["input"]["added"] and "\\input{intro}\n\\end{document}" in (root / "paper/main.tex").read_text()
     status, refused = _post(port, {"project": "/elsewhere", "kind": "zh_paper", "folder": "paper", "name": "other"})
     assert (status, refused["state"]) == (409, "workspace_project_changed")
+    # a name the history could not record, or one that does not encode, is refused before anything is written
+    for name in ("a\u2028b", "\udc80", "x" * 300):
+        status, refused = _post(port, {"project": str(root), "kind": "chapter", "folder": "paper", "name": name}, "en")
+        assert (status, refused["state"]) == (400, "workspace_path"), refused
+    assert sorted(os.listdir(root / "paper")) == ["intro.tex", "main.tex"]
+    assert _get(port, "/api/latex/drafts")["can_write"] is True
     httpd.set_served(dataclasses.replace(httpd.get_served(), read_only=True))
+    assert _get(port, "/api/latex/drafts")["can_write"] is False   # 新建文稿 is not offered
     status, refused = _post(port, {"project": str(root), "kind": "zh_paper", "folder": "paper", "name": "other"})
     assert (status, refused["state"]) == (409, "read_only")
     assert not (root / "paper/other.tex").exists() and len(scans) == 2
@@ -351,6 +500,13 @@ gets.shift().res({path: 'paper/intro-2.tex', text: '\\section{intro-2}\n', revis
 await tick(); await tick();
 out.note = byClass('latex-new-note').textContent;
 out.noteHidden = byClass('latex-new-note').classList.contains('hidden');
+// where the person cannot write, 新建文稿 is disabled and an open form is not kept
+await show();
+visible(host).find((e) => e.textContent === '新建文稿').fire('click');
+answer.can_write = false;
+await show();
+out.readOnly = {disabled: visible(host).find((e) => e.textContent === '新建文稿').disabled === true, inputs: inputs().length,
+  primaries: primaries()};
 console.log(JSON.stringify(out));
 """
 
@@ -390,6 +546,10 @@ def test_create_posts_the_form_says_a_refusal_and_opens_the_new_file_saying_when
                                           "title": "", "main": "paper/main.tex"}
     assert form["opened"] == "/api/latex/file?path=paper%2Fintro-2.tex" and form["section"] == "drafts"
     assert form["note"].startswith("没有在 paper/main.tex 里加入") and form["noteHidden"] is False
+
+
+def test_new_draft_is_disabled_where_the_person_cannot_write(form):
+    assert form["readOnly"] == {"disabled": True, "inputs": 0, "primaries": ["新建文稿"]}
 
 
 def test_every_word_of_the_form_has_its_english():
