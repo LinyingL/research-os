@@ -7857,6 +7857,7 @@ emoji, arrow or glyph.
   closes a picker and opening a picker closes the link panel, so 「插入」 and
   「确认关联」 are never shown together. The tools are small quiet buttons; a
   pressed one (aria-pressed) has an ink edge on the paper, never a colour.
+  「版式」 (A2) has no primary: its settings are selects that write when chosen.
 
 ### 22.8 Batches and acceptance
 
@@ -8092,8 +8093,8 @@ page's look.
 - **Where.** At the top of the editor's right column (`aside.latex-side`),
   above what the column already shows (the passages' counts, the link panel, a
   passage's panel), which keeps its behaviour. Two word tabs head it,
-  **「格式」** and **「版式」** (`role="tab"`, `aria-selected`); 「版式」 says
-  「（下一步加入）」 until A2 fills it. The panel is there whenever a file is
+  **「格式」** and **「版式」** (`role="tab"`, `aria-selected`): 「格式」 acts where
+  the cursor is, 「版式」 on the whole document (below). The panel is there whenever a file is
   open. It is disabled, its reason above the groups, in a read-only file
   (「这个文件只能查看，不能用格式与插入。」) and while 「显示源码」 shows the source
   (「正在显示源码。关掉「显示源码」后可以用格式与插入。」): 显示源码 turns "like
@@ -8206,6 +8207,202 @@ cursor in it.
   "cites".)
 
 One picker is open at a time; pressing its button again closes it.
+
+**段落** (A2; in 「格式」 after 章节标题, since it acts where the cursor is, as
+Word's Home tab does; 「版式」 is the whole document):
+
+- **对齐**, a select showing the alignment of the paragraph the cursor is in:
+  两端对齐 (LaTeX's own, justified: an alignment environment the paragraph is in
+  is taken away), 左对齐 (`flushleft`), 居中 (`center`), 右对齐 (`flushright`).
+  *Chosen while building:* four, as Word has them, not three: LaTeX's running
+  text is justified and `flushleft` is ragged right, so "左对齐 removes the
+  environment" would have named two different things with one word. The
+  paragraphs the selection touches (blank lines between them kept) are wrapped,
+  `\begin{…}` and `\end{…}` on lines of their own; inside another alignment the
+  environment is renamed. A heading, a line that is a command or an environment
+  of its own, and a selection holding one are refused with a sentence.
+- **引文块** toggles a `quote` environment the same way (pressed while the cursor
+  is in a `quote` or `quotation`).
+
+**插入** gains (A2):
+
+- **分页**: `\clearpage` on a line of its own after the selection. *Chosen:*
+  `\clearpage`, not `\newpage`: whether figures or tables are still waiting to be
+  placed cannot be seen from the text, and `\newpage` leaves them to drift past
+  the break, while `\clearpage` sets them first -- what a page break in Word
+  means: what is before it stays before it. The cost is a page that may end
+  short.
+- **目录**: `\tableofcontents` on the line after `\maketitle` when the file has
+  one, else after the selection; refused with 「文稿里已经有目录（第 {n} 行）。」
+  when the file has one (a commented one does not count).
+- **交叉引用**: a picker of the `\label{}` keys -- the open file's, read from what
+  it holds, and those of the other files of its paper, `GET
+  /api/latex/insert?what=labels` (the main file the export would compile it in
+  and the files it brings in, as 正文 groups them) -- grouped as 图, 表, 公式, 节
+  and 其他: by the key's prefix (`fig:`, `tab:`, `eq:`, `sec:` and their like),
+  else the environment it sits in (a figure, a table, a displayed formula), else
+  节 right after a heading. The page (`labelsOf`) and the engine (`labels_in`)
+  read them alike. The key picked goes in as `\ref{key}`, or `\eqref{key}` for a
+  formula where the main file loads amsmath (or mathtools, or an ams class).
+- **网址**: a picker with one field (the selection filled in when it is one
+  word); `\url{…}` in place of the selection when the selection is that address,
+  else after it. An address with a space, a brace or a backslash is refused; one
+  with `%` or `#` inside a command's argument (a footnote) too, since `\url`
+  cannot read them there. `\url` needs url, xurl or hyperref: the open main file
+  gets `\usepackage{url}` as it gets graphicx; else the panel names the line in
+  ochre.
+
+**版式** (A2; the researcher, 2026-11-14: "论文排版类似的常用功能都需要加上去，行间距之类的").
+The document's settings, as Word's page and paragraph settings, each a select
+under two quiet headings:
+
+| 页面 | | 文字与段落 | |
+|---|---|---|---|
+| 纸张 | 默认, A4, Letter, B5 | 正文字号 | 默认, 10pt, 11pt, 12pt; with ctex also 五号, 小四 |
+| 页边距 | 默认, 窄（2 厘米）, 适中（2.5 厘米）, 宽（3 厘米）, 自定义 (上, 下, 左, 右 in cm) | 行距 | 默认, 单倍, 1.25 倍, 1.5 倍, 双倍, 自定义 (a number of lines) |
+| 分栏 | 单栏, 双栏 | 首行缩进 | 默认, 无, 2 字 |
+| 页码 | 默认, 页脚居中, 不显示 | 段间距 | 无, 半行, 一行 |
+| 超链接 | 关, 开 | | |
+
+They live in the **main file's preamble**. In a chapter file 「版式」 says
+「版式在主文件 {main} 里设置。」 with 「打开 {main}」 (a text link that opens the main
+file; unsaved text asks first, as every other way of leaving the file does) and
+shows the main file's settings, none changeable. With no main file:
+「没有找到主文件。版式在主文件的导言区里设置。」 A read-only main file and 显示源码
+turn the tab off with the panel's own reasons; a beamer class with
+「幻灯片（beamer）不用这些版式设置。」.
+
+- **Read before write.** The preamble is read with its comments masked: the
+  class and its options, each `\usepackage`, `\geometry`, and the setting lines.
+  Each control shows the value the file has. *Recognised:* 纸张 as the class
+  option `a4paper`, `letterpaper`, `b5paper` or geometry's (also `paper=`);
+  页边距 as geometry's `margin`, `top`, `bottom`, `left`, `right` in cm, mm or in,
+  in `\usepackage[…]{geometry}` or `\geometry{…}` (`margin=X` with X a preset is
+  that preset, anything else 自定义 with its four numbers); 正文字号 as the class
+  option `10pt`, `11pt`, `12pt` or, for a ctex class or the ctex package,
+  `zihao=5` or `zihao=-4`; 分栏 as `twocolumn` / `onecolumn`; 行距 as
+  `\setstretch{x}`, `\linespread{x}`, setspace's `\singlespacing`,
+  `\onehalfspacing`, `\doublespacing` and options, or ctex's `linespread=`;
+  首行缩进 as `\setlength{\parindent}{0pt}` or `{2em}` (also `2\ccwd`); 段间距 as
+  `\setlength{\parskip}{…}` or the parskip package; 页码 as `\pagestyle{plain}`,
+  `\pagestyle{empty}` or the nopageno package; 超链接 as hyperref loaded.
+- **The person's own.** A setting written in a form 版式 does not take is shown
+  as 「自定义」, disabled, with 「导言区第 {n} 行已有自己写的设置」 and 「看这一行」 (a
+  text link: the cursor goes to that line, which opens the folded preamble; in a
+  chapter it opens the main file there) -- never guessed, never written a second
+  time: inside a macro (`\newcommand`, `\def`, `\AtBeginDocument{…}`: anything in
+  braces); inside a condition (`\if…` to its `\fi`; `\newif` and the
+  brace-taking `\ifthenelse` and `\ifdef` open none); a line holding more than
+  the one command; places that disagree (two places that agree are one setting,
+  changed together); a value not offered (`a5paper`, `9pt`,
+  `\pagestyle{headings}`, `1.5em`); geometry with a key that places the text
+  another way (`includehead`, `textwidth`, …) or with only some margins; a
+  package that sets margins itself (fullpage, a4wide, typearea, …); a primitive
+  assignment (`\parindent=0pt`); parskip without `indent` (it sets the indent to
+  0); `zihao` on a class that is not ctex; a pt size and a `zihao` together. A
+  project `.cls` or `.sty` the main file loads (from its folder, as TeX finds it;
+  `format.local`, read as a draft is read, no link followed) that mentions a
+  setting makes it its own: 「{file} 第 {n} 行已有自己写的设置」, with no link (the
+  editor opens `.tex` only). A class 版式 does not know (it knows article, report,
+  book, amsart, amsbook, ctexart, ctexrep and ctexbook) leaves 纸张, 正文字号 and
+  分栏 to the class's own line: 「文档类 {cls} 的选项这里不认识，请在 \documentclass
+  那一行自己改。」; the other settings still work.
+- **Writing.** A choice is the editor's own transaction, as every tool of 22.12:
+  undone by ⌘Z in one step, unsaved until 保存, mapped through the passages, in
+  the file's line ending; nothing else is written. A setting already there is
+  changed in place, only its option or its line, the other options and their
+  comments kept. A new one goes on a line of its own after the last `\usepackage`
+  (or the `\documentclass` line) -- hyperref last of all, but before a package
+  that must follow it (cleveref, hypcap, bookmark, glossaries) -- or into the
+  class's options. Back to 默认 (or 无, 单栏, 关) removes only what the tool would
+  have written: the option, or the setting's own line; `\usepackage{setspace}`
+  stays (another part of the paper may use its environments), and a geometry
+  line goes only when nothing else needs geometry (a `\newgeometry` in the body
+  keeps it). The lines written: `\usepackage[margin=2.5cm]{geometry}` (or
+  `top=…,bottom=…,left=…,right=…`); `\usepackage{setspace}` and `\setstretch{x}`
+  (in a ctex document `\linespread{x}`); `\setlength{\parindent}{0pt|2em}`;
+  `\usepackage[skip=0.5\baselineskip,indent]{parskip}`; `\pagestyle{plain}`;
+  `\usepackage{nopageno}`; `\usepackage[hidelinks]{hyperref}`. 关 for hyperref is
+  refused while the main file uses `\href`, `\hypersetup`, `\autoref` and their
+  like, `\url` without url, or loads bookmark or hypcap
+  (「文稿用到了 {command}，它需要 hyperref，不能关掉超链接。」).
+- **行距, measured** (TeX Live 2023; `\the\baselineskip` printed by probe
+  compiles in `tests/test_v17_layout_settings.py`). "N 倍" is Word's: N times
+  the document's single line. The single line is the class's own: LaTeX's at the
+  body size (12, 13.6 and 14.5 pt at 10, 11 and 12 pt, 1.2 times the size, as
+  Word's Times New Roman single line is 1.15 times), and in a ctex document
+  ctex's, which loads `\linespread{1.3}` itself (16.44 pt at 五号, 18.79 pt at
+  小四: 1.56 times the size). So the stretch written is N for a standard class and
+  1.3 N for ctex. Measured, 单倍 / 1.5 倍 / 双倍: article 10 pt 12 / 18 / 24 pt,
+  11 pt 13.6 / 20.4 / 27.2 pt, 12 pt 14.5 / 21.75 / 29 pt; ctexart 五号 16.44 /
+  24.66 / 32.88 pt, 小四 18.79 / 28.19 / 37.58 pt, 12pt 18.85 / 28.27 / 37.70 pt.
+  *Why not setspace's own commands:* `\onehalfspacing` and `\doublespacing` make
+  the line 1.5 and 2 times the **font size** (setspace.sty: "one and a half
+  spacing is 1.5 x pt size"), which is 1.25 and 1.67 single lines -- the
+  typewriter's sense, not Word's, and 1.5 倍 would equal 1.25 倍 at 10 pt. With
+  ctex it is worse: setspace counts from LaTeX's single line, not ctex's, so
+  `\singlespacing` shrinks ctex's 16.44 pt to 12.65 pt and `\onehalfspacing` gives
+  15.81 pt, less than ctex's own single line (measured). A hand-written setspace
+  command is still read, as what it measures (`\onehalfspacing` at 10 pt reads
+  1.25 倍). *Why `\linespread` in ctex:* setspace sets footnotes and floats at its
+  single stretch 1, which in a ctex document would set them tighter than ctex's
+  own 1.3; `\linespread` scales them with the text, as ctex itself does. 1.25 倍
+  and 自定义 (0.5 to 4 lines) follow the same rule. *For the researcher's word:*
+  this reads "1.5 倍" as Word does rather than as setspace's `\onehalfspacing`
+  does; the measured numbers above are what each choice gives.
+- **正文字号**: never a pt option and a `zihao` together (choosing one removes the
+  other). 四号 is not offered: ctex's `zihao` takes only 5, -4 and false
+  (measured: `zihao=4` stops with "accepts only a fixed set of choices").
+- **段间距 is the parskip package, not `\setlength{\parskip}`.** Measured in an
+  article at 10 pt with a one-line skip: the bare length spreads the table of
+  contents (four entries 103 pt high become 175 pt) and adds two skips round
+  every heading (55 pt from text to text across a heading becomes 79 pt); the
+  parskip package leaves both as they were (it patches `\@starttoc` and
+  `\@startsection`) and spaces list items as paragraphs. `indent` keeps the
+  class's indent (parskip alone sets it to 0). Its skip is taken when the line is
+  read, and the tool places it before the 行距 line, so 半行 is half the
+  document's single line (article 10 pt 6 pt, ctexart 8.22 pt).
+- **页码 不显示 is `\usepackage{nopageno}`, not `\pagestyle{empty}`.** LaTeX sets
+  the title page (`\maketitle`) and each chapter's first page to `plain` itself,
+  so `\pagestyle{empty}` alone leaves numbers there; nopageno makes `plain`
+  empty too, in one line (`\let\ps@plain\ps@empty`). A hand-written
+  `\pagestyle{empty}` reads as 不显示.
+- **超链接 开** loads hyperref with `hidelinks`: references, citations and the
+  table of contents are links in the PDF, with no coloured boxes.
+- **Like Word** (22.1): the editor's lines follow 行距, roughly: the line height of
+  the text shown like Word is its own times the number of lines
+  (`--latex-stretch`, kept between 0.8 and 2.5). The first-line indent is left to
+  step B, which draws the page.
+- **Engine.** `GET /api/latex/file`'s `format` gains `local`: the project's own
+  `.cls`/`.sty` the main file's preamble loads, `{name, path, text}` (at most 20,
+  each at most 64 KB, a regular file in the main file's folder, never a link).
+  `GET /api/latex/insert` gains `what=labels`. Both read only.
+- **Words** (13.4 rows): 段落 Paragraph; 对齐 Alignment; 两端对齐 Justified;
+  左对齐 Flush left; 居中 Centred; 右对齐 Flush right; 引文块 Block quote; 分页
+  Page break; 目录 Table of contents; 交叉引用 Cross-reference; 网址 Web address;
+  页面 Page; 文字与段落 Text and paragraphs; 纸张 Paper; 页边距 Margins; 分栏
+  Columns; 页码 Page numbers; 超链接 Links in the PDF; 正文字号 Body text size
+  (not 正文, "Manuscript"); 行距 Line spacing; 首行缩进 First-line indent; 段间距
+  Space between paragraphs; 自定义 Custom; 单栏 One column; 双栏 Two columns;
+  页脚居中 Centred in the footer; 不显示 None; 开 On; 关 Off; 五号 Wuhao (10.5 pt);
+  小四 Xiaosi (12 pt); 单倍 Single; N 倍 N lines; 双倍 Double; 无 None; 2 字 2
+  characters; 半行 Half a line; 一行 One line; 上, 下, 左, 右 Top, Bottom, Left,
+  Right; 看这一行 Show the line. A4, Letter, B5 and the pt sizes are not words.
+- **Presentation** (22.7): 「版式」 has no primary button; its selects are the
+  panel's quiet fields; 「自定义」's fields appear under their select; a setting's
+  own line is a quiet sentence with a text link.
+- **Tests** (`tests/test_v17_layout_settings.py`): every recognised form and every
+  form 版式 does not take, with its line; writing, changing and removing each
+  setting with the other options kept, ctex's sizes and line spread, CRLF, ⌘Z;
+  the paragraph tools and labels, on the page and in the engine alike; the tab on
+  the page (a chapter read-only with its link, a main file's choices as one
+  unsaved undoable step, 自定义's fields, 看这一行, 显示源码, a read-only main);
+  and real compiles by latexmk: every value of every setting on a ctexart
+  (XeLaTeX) and an article (pdfLaTeX) document (six combinations so each value
+  appears at least once, and all on at once), every paragraph tool applied, each
+  a PDF with no error and its paper, text width, size, `\baselineskip`,
+  `\parindent`, `\parskip`, columns, hyperref and page style measured as set;
+  and the 行距 probes above at every body size.
 
 - **The engine.** `GET /api/latex/file` gives, for a file that is not
   read-only, `format`: the main file the export would compile it in (the

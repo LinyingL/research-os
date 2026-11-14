@@ -473,7 +473,9 @@ Endpoints (all GET unless noted):
                             includes (input, include, subfile, import) open
                             (`links`, resolved from its main files, `mains`)
                             and, for a writable file, what 格式与插入 needs of
-                            its main file (`format`, DESIGN.md 22.12);
+                            its main file (`format`, DESIGN.md 22.12: its
+                            preamble and the project's own .sty/.cls it
+                            loads, for 版式);
                             `&links=0` leaves those out (the revision check
                             on focus). Reads only.
     GET  /api/latex/drafts -- 正文 (DESIGN.md 22.10): the project's .tex drafts,
@@ -508,11 +510,13 @@ Endpoints (all GET unless noted):
                             the other drafts of its paper or the PDF exported
                             from it. Reads directory listings, the paper's
                             .tex files and papers.toml.
-    GET  /api/latex/insert -- `?path=<.tex>&what=images|bib`: what 格式与插入's
-                            pickers offer (DESIGN.md 22.12): the project's
-                            image files (never a PDF exported from the
-                            draft's paper), or the entries of its .bib files.
-                            Reads directory listings and those files only.
+    GET  /api/latex/insert -- `?path=<.tex>&what=images|bib|labels`: what
+                            格式与插入's pickers offer (DESIGN.md 22.12): the
+                            project's image files (never a PDF exported from
+                            the draft's paper), the entries of its .bib files,
+                            or the \\label keys of the paper's other .tex files
+                            (交叉引用). Reads directory listings and those files
+                            only.
     POST /api/latex/evidence/<link|reanchor|withdraw|undo> -- `{project, …}`:
                             one entry in `.researchos/evidence.toml`, the PI or
                             a single researcher only (a member's links wait

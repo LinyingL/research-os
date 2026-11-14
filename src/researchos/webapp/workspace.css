@@ -444,3 +444,10 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-grid-cell { width: .9rem; height: .9rem; padding: 0; background: var(--paper); border: 1px solid var(--line-strong); cursor: pointer; }
 .latex-grid-cell.is-on { background: var(--ochre-soft); border-color: var(--ochre); }
 .latex-format-check { display: inline-flex; align-items: center; gap: .3rem; font-size: .8rem; }
+/* 22.12 A2: 版式 -- each setting a labelled select, its 自定义 fields under it, and a quiet line where the setting is
+   the person's own; like Word, the editor's lines follow the main file's 行距, roughly (--latex-stretch, set by the page). */
+.latex-layout-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .6rem; }
+.latex-layout-head p { margin: 0; }
+.latex-layout-item { display: flex; flex-direction: column; align-items: flex-start; gap: .2rem; }
+.latex-layout-note { margin: 0; font-size: .76rem; }
+.latex-editor .cm-content.latex-word { line-height: calc(1.7 * var(--latex-stretch, 1)); }

@@ -197,13 +197,48 @@ def format_facts(root: Path, rel: str, mains: list[str]) -> dict[str, Any]:
     from researchos import latex_export   # it imports this module
 
     main, engine = latex_export.planned(root, rel, mains)
-    facts: dict[str, Any] = {"main": main, "engine": engine, "folder": posixpath.dirname(main or rel), "preamble": None}
-    if main and main != rel:
+    facts: dict[str, Any] = {"main": main, "engine": engine, "folder": posixpath.dirname(main or rel), "preamble": None,
+                             "local": []}
+    if main:
         _known, text_of = tex_reader(root, [main])
         text = text_of(main)
         at = text.find("\\begin{document}")
-        facts["preamble"] = (text if at < 0 else text[:at])[:PREAMBLE_LIMIT]
+        preamble = (text if at < 0 else text[:at])[:PREAMBLE_LIMIT]
+        if main != rel:
+            facts["preamble"] = preamble
+        facts["local"] = local_styles(root, main, preamble)
     return facts
+
+
+_CLASS_RE = re.compile(r"\\documentclass\s*(?:\[[^\]]*\])?\s*\{([^{}]*)\}")
+_PACKAGE_RE = re.compile(r"\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^{}]*)\}")
+#: The most project `.sty`/`.cls` files 版式 reads (22.12, A2).
+LOCAL_STYLE_LIMIT = 20
+
+
+def local_styles(root: Path, main: str, preamble: str) -> list[dict[str, Any]]:
+    """The project's own `.cls` and `.sty` files the main file's preamble loads (`\\documentclass`, `\\usepackage`,
+    `\\RequirePackage`), found in the main file's folder as TeX finds them (it runs there, 22.4): each `{name, path,
+    text}`, the text at most `PREAMBLE_LIMIT`, read as a draft is read (a regular file, no link, not only in the cloud).
+    版式 (22.12) shows a setting one of them makes as the file's own, never as a value it can change. Reads only."""
+    code = uncommented(preamble)
+    wanted: list[str] = []
+    for m in _CLASS_RE.finditer(code):
+        wanted.append(m.group(1).strip() + ".cls")
+    for m in _PACKAGE_RE.finditer(code):
+        wanted.extend(name.strip() + ".sty" for name in m.group(1).split(","))
+    folder = posixpath.dirname(main)
+    found: list[dict[str, Any]] = []
+    for name in dict.fromkeys(wanted):
+        stem = name[:-4]
+        if not stem or stem.startswith((".", "-")) or any(c in stem for c in "/\\%#{}$~^&") or len(found) >= LOCAL_STYLE_LIMIT:
+            continue
+        path = posixpath.join(folder, name) if folder else name
+        _known, text_of = tex_reader(root, [path])
+        text = text_of(path)
+        if text:
+            found.append({"name": name, "path": path, "text": text[:PREAMBLE_LIMIT]})
+    return found
 
 
 # -- includes and the main file (22.1 "One file at a time", 22.4 "Which file") --------------------------------------
@@ -1053,7 +1088,10 @@ def insertables(root: str | Path, rel: Any, what: Any) -> dict[str, Any]:
     project's image files as the scan walks it (no hidden folder, no symlink), never a PDF exported from the draft's
     paper (`_own_paper`), each with `thumb` when the asset route can show it (21.5); `bib`, the entries of the
     project's `.bib` files (key, author, year, title, the file), each file read as `tex_reader` reads a draft (a
-    regular file, not only in the cloud, at most 2 MB), the first entry of a key kept. At most `INSERT_LIMIT` (`more`)."""
+    regular file, not only in the cloud, at most 2 MB), the first entry of a key kept; `labels` (A2's 交叉引用), the
+    `\\label{}` keys of the other files of the paper -- the main file the export would compile `rel` in and the files it
+    brings in, as 正文 groups them (`_closure`) -- each with its kind (`labels_in`); the open file's own the page reads
+    from what it holds. At most `INSERT_LIMIT` (`more`)."""
     from researchos import kind_rows
     from researchos.ingest import latex as latex_ingest
 
@@ -1088,7 +1126,72 @@ def insertables(root: str | Path, rel: Any, what: Any) -> dict[str, Any]:
                                 "year": _bib_text(entry.fields.get("year"), 12),
                                 "title": _bib_text(entry.fields.get("title"), 160), "file": bib})
         return {"files": bibs, "entries": entries[:INSERT_LIMIT], "more": len(entries) > INSERT_LIMIT}
+    if what == "labels":
+        from researchos import latex_export   # it imports this module
+
+        main, _engine = latex_export.planned(root, rel, main_files(root, rel))
+        known, text_of = tex_reader(root)
+        files = [main] + _closure(main, set(known), text_of) if main else []
+        labels: list[dict[str, Any]] = []
+        for path in files:
+            if path != rel:
+                labels.extend({**found, "file": path} for found in labels_in(text_of(path)))
+        return {"main": main, "labels": labels[:INSERT_LIMIT], "more": len(labels) > INSERT_LIMIT}
     raise _refuse("invalid", f"{what!r} is not a list 格式与插入 offers", "内容格式不对，请检查后重试")
+
+
+_LABEL_RE = re.compile(r"\\label\s*\{([^{}]+)\}|\\(begin|end)\s*\{([^{}]+)\}")
+_LABEL_PREFIXES = (("figure", re.compile(r"(?:fig|figure)[:_-]", re.I)), ("table", re.compile(r"(?:tab|table|tbl)[:_-]", re.I)),
+                   ("equation", re.compile(r"(?:eq|eqn|equation)[:_-]", re.I)),
+                   ("section", re.compile(r"(?:sec|ssec|subsec|chap|ch|chapter|section|part|app)[:_-]", re.I)))
+_LABEL_ENVS = {"figure": "figure", "figure*": "figure", "wrapfigure": "figure", "subfigure": "figure",
+               "table": "table", "table*": "table", "longtable": "table", "sidewaystable": "table"}
+_EQUATION_ENV_RE = re.compile(r"(?:equation|align|alignat|flalign|gather|multline|eqnarray)\*?\Z")
+_HEADING_START_RE = re.compile(r"\\(?:part|chapter|section|subsection|subsubsection|paragraph)\*?\s*(?:\[[^\]]*\])?\s*\{")
+
+
+def _after_heading(code: str, at: int) -> bool:
+    """Whether only spaces lie between the end of a heading's argument and `at`."""
+    for m in _HEADING_START_RE.finditer(code, max(0, at - 2000), at):
+        depth, j = 1, m.end()
+        while j < at and depth:
+            if code[j] == "\\":
+                j += 2
+                continue
+            depth += {"{": 1, "}": -1}.get(code[j], 0)
+            j += 1
+        if not depth and not code[j:at].strip():
+            return True
+    return False
+
+
+def labels_in(text: str) -> list[dict[str, str]]:
+    """The `\\label{}` keys of `text` outside comments, each with its kind for 交叉引用 (22.12, A2): by its prefix
+    (`fig:`, `tab:`, `eq:`, `sec:` and their like), else by the environment it sits in (a figure, a table, a formula),
+    else `section` right after a heading, else `other`. The page reads the open file the same way (`labelsOf`)."""
+    code = uncommented(text)
+    stack: list[str] = []
+    found: list[dict[str, str]] = []
+    for m in _LABEL_RE.finditer(code):
+        if m.group(2):
+            env = m.group(3).strip()
+            if m.group(2) == "begin":
+                stack.append(env)
+            elif env in stack:
+                del stack[len(stack) - 1 - stack[::-1].index(env):]
+            continue
+        key = m.group(1).strip()
+        kind = next((k for k, rx in _LABEL_PREFIXES if rx.match(key)), None)
+        if kind is None:
+            for env in reversed(stack):
+                if env in _LABEL_ENVS or _EQUATION_ENV_RE.match(env):
+                    kind = _LABEL_ENVS.get(env, "equation")
+                    break
+        if kind is None:
+            kind = "section" if _after_heading(code, m.start()) else "other"
+        if key:
+            found.append({"key": key, "kind": kind})
+    return found
 
 
 def supporting_files(root: str | Path, query: Any, limit: int = 50, draft: Any = None) -> dict[str, Any]:

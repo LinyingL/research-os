@@ -299,7 +299,7 @@ def test_chapter_is_only_for_a_class_with_chapters_and_a_heading_with_a_blank_li
 def test_the_chapter_classes_and_the_packages_are_read_from_the_preamble_outside_comments(pure):
     ctexbook, demo, beamer, report, empty = pure["facts"]
     assert ctexbook == {"cls": "ctexbook", "chapters": True, "ctex": True, "graphicx": False, "booktabs": True,
-                        "graphicspath": ["fig/", "../img/"]}
+                        "amsmath": True, "url": False, "graphicspath": ["fig/", "../img/"]}   # amsmath and url: A2
     assert demo["graphicx"] is True and demo["chapters"] is False and demo["ctex"] is False
     assert beamer["graphicx"] is True
     assert report["chapters"] is True and report["ctex"] is True and report["graphicx"] is True   # tikz loads graphicx
@@ -405,7 +405,9 @@ const words = (root) => shown(root).map((e) => e.textContent).filter(Boolean);
 const allWords = (root) => inside(root, () => true).map((e) => e.textContent).filter(Boolean);
 const primaries = () => shown(side()).filter((e) => e.tag === 'button' && e.classList.contains('btn-primary')).map((e) => e.textContent);
 const tool = (label) => inside(side(), (e) => e.tag === 'button' && e.textContent === label).pop();
-const selects = () => inside(side(), (e) => e.tag === 'select');
+const panes = () => inside(side(), (e) => e.classList.contains('latex-tab-pane'));
+const selects = () => inside(panes()[0], (e) => e.tag === 'select');   // 格式's own (版式's are in the other pane, A2)
+const picker = () => inside(side(), (e) => e.classList.contains('latex-picker'))[0];
 const options = (s) => s.children.map((o) => [o.value, o.textContent].concat(o.disabled ? ['disabled'] : []));
 const doc = () => view().state.doc.toString();
 const pick = (word, n) => { const at = doc().indexOf(word); view().dispatch({selection: {anchor: at, head: at + (n == null ? word.length : n)}}); };
@@ -416,7 +418,7 @@ await openFile('paper/ch.tex', 'Some text here.\nSecond line.\n', {mains: ['pape
 const V = view();
 out.firstIsPanel = side().children[0] === inside(side(), (e) => e.classList.contains('latex-format'))[0];
 out.tabs = inside(side(), (e) => e.attrs && e.attrs.role === 'tab').map((b) => [b.textContent, b.attrs['aria-selected']]);
-out.layout = allWords(inside(side(), (e) => e.classList.contains('latex-tab-pane'))[1]);
+out.layout = allWords(inside(side(), (e) => e.classList.contains('latex-tab-pane'))[1]).slice(0, 2);
 out.layoutHidden = hidden(inside(side(), (e) => e.classList.contains('latex-tab-pane'))[1]);
 tool('版式').fire('click');
 out.layoutShown = [hidden(inside(side(), (e) => e.classList.contains('latex-tab-pane'))[0]), words(inside(side(), (e) => e.classList.contains('latex-tab-pane'))[1])];
@@ -467,9 +469,9 @@ out.items = items().map((b) => [b.children.map((c) => c.tag === 'img' ? 'img:' +
 out.pickerPrimaries = primaries();
 out.insertDisabled = tool('插入').disabled;
 items()[0].fire('click');
-const inputs = inside(side(), (e) => e.tag === 'input' && e.type === 'text');
+const inputs = inside(picker(), (e) => e.tag === 'input' && e.type === 'text');
 inputs[1].value = 'Effects & sizes';
-inside(side(), (e) => e.tag === 'select')[3].value = 'half';
+inside(picker(), (e) => e.tag === 'select')[0].value = 'half';
 tool('插入').fire('click');
 out.afterFigure = {doc: doc(), note: note.textContent, warn: note.classList.contains('latex-export-warn'), pickerOpen: !hidden(inside(side(), (e) => e.classList.contains('latex-picker'))[0]), primaries: primaries()};
 // 表格: 行 / 列 by the grid, header off; booktabs from the main file's preamble
@@ -477,7 +479,7 @@ tool('表格').fire('click');
 const cells = inside(side(), (e) => e.classList.contains('latex-grid-cell'));
 out.grid = {cells: cells.length, tabindex: cells[0].attrs.tabindex};
 cells[8 + 2].fire('click');   // row 2, column 3
-const numbers = inside(side(), (e) => e.tag === 'input' && e.type === 'number');
+const numbers = inside(picker(), (e) => e.tag === 'input' && e.type === 'number');
 out.numbers = numbers.map((i) => [i.value, i.min, i.max, i.attrs['aria-label']]);
 inside(side(), (e) => e.tag === 'input' && e.type === 'checkbox')[0].checked = false;
 out.tablePrimaries = primaries();
@@ -552,9 +554,10 @@ def panel() -> dict:
 def test_the_panel_is_at_the_top_of_the_right_column_with_two_word_tabs_and_layout_waiting_for_its_step(panel):
     assert panel["firstIsPanel"] is True
     assert panel["tabs"] == [["格式", "true"], ["版式", "false"]]
-    assert panel["layoutHidden"] is True and panel["layout"] == ["（下一步加入）"]
-    assert panel["layoutShown"] == [True, ["（下一步加入）"]]
-    assert panel["groups"] == ["文字", "章节标题", "插入"]
+    # A2 fills 版式 (test_v17_layout_settings.py): in a chapter file it says where the layout is set
+    assert panel["layoutHidden"] is True and panel["layout"] == ["版式在主文件 paper/main.tex 里设置。", "打开 paper/main.tex"]
+    assert panel["layoutShown"][0] is True and panel["layoutShown"][1][:2] == panel["layout"]
+    assert panel["groups"][:4] == ["文字", "章节标题", "段落", "插入"]
 
 
 @needs_node
@@ -671,7 +674,7 @@ def test_every_new_word_has_its_english_and_none_is_a_glyph():
 
 def test_the_pickers_share_one_primary_insert_and_cancel_is_a_text_link():
     src = _panel_source()
-    assert src.count("btn-primary") == 1 and src.count("insertButton(") == 4      # the helper and its three pickers
+    assert src.count("btn-primary") == 1 and src.count("insertButton(") == 6      # the helper and its five pickers (A2: 交叉引用, 网址)
     assert 'mkButton(t("取消"), "ws-text-link"' in src
     design = (WEBAPP.parents[2] / "DESIGN.md").read_text(encoding="utf-8")
     present = design[design.index("### 22.7 Presentation"):design.index("### 22.8 Batches")]
@@ -708,14 +711,14 @@ def test_the_file_read_carries_the_main_files_facts_for_a_writable_chapter_and_n
     root = _project(tmp_path)
     got = latex_edit.read_tex(root, "paper/chapters/one.tex")
     assert got["format"] == {"main": "paper/main.tex", "engine": "xelatex", "folder": "paper",
-                             "preamble": "\\documentclass{ctexrep}\n\\usepackage{booktabs}\n"}
+                             "preamble": "\\documentclass{ctexrep}\n\\usepackage{booktabs}\n", "local": []}
     main = latex_edit.read_tex(root, "paper/main.tex")
-    assert main["format"] == {"main": "paper/main.tex", "engine": "xelatex", "folder": "paper", "preamble": None}
+    assert main["format"] == {"main": "paper/main.tex", "engine": "xelatex", "folder": "paper", "preamble": None, "local": []}
     assert "format" not in latex_edit.read_tex(root, "paper/main.tex", links=False)
     (root / "loose.tex").write_bytes(b"a\r\nb\nc")                       # mixed endings: read-only
     assert "format" not in latex_edit.read_tex(root, "loose.tex")
     (root / "alone.tex").write_text("Text.\n", encoding="utf-8")
-    assert latex_edit.read_tex(root, "alone.tex")["format"] == {"main": None, "engine": None, "folder": "", "preamble": None}
+    assert latex_edit.read_tex(root, "alone.tex")["format"] == {"main": None, "engine": None, "folder": "", "preamble": None, "local": []}
 
 
 def test_the_pickers_list_the_projects_images_and_bib_entries_and_write_nothing(tmp_path):
