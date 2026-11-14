@@ -1,10 +1,11 @@
-"""DESIGN.md 22.12 「版式」 (task V17, step A2): the document's layout settings -- 纸张, 页边距, 分栏, 页码, 超链接, 正文字号,
-行距, 首行缩进, 段间距 -- read from the main file's preamble and written as the editor's own transaction; a setting written
+"""DESIGN.md 22.12 「版式」 (task V17, steps A2 and A3): the document's layout settings -- 页边距, 分栏, 页码, 超链接, 正文字号,
+行距, 首行缩进, 段间距, 章节编号, 图表名称, 图表编号 (纸张 taken out by the researcher, A3) -- read from the main file's preamble and written as the editor's own transaction; a setting written
 in a form 版式 does not take shown as 「自定义」 with its line, never guessed; a chapter file's layout shown and not changed;
 and the paragraph tools of 格式 (对齐, 引文块, 分页, 目录, 交叉引用, 网址). Run under node on the vendored CodeMirror, the
 panel on the page as test_v17_format_panel drives it, the engine's facts, and real compiles: every setting at every value
-on a ctexart (XeLaTeX) and an article (pdfLaTeX) document, and probe compiles that measure the paper, the text width,
-\\baselineskip, \\parindent and \\parskip. Every test names its scenario."""
+on a ctexart (XeLaTeX) and an article (pdfLaTeX) document, probe compiles that measure the paper, the text width,
+\\baselineskip, \\parindent and \\parskip, and the numbering styles compiled on ctexart, ctexrep, article and report and
+read back from the PDF by pdftotext. Every test names its scenario."""
 
 from __future__ import annotations
 
@@ -75,6 +76,7 @@ out.recognised = read('\\documentclass[a4paper, 12pt,twocolumn]{article}\n\\usep
 out.otherForms = read('\\documentclass[b5paper,onecolumn,11pt]{article}\n\\usepackage{geometry}\n\\geometry{top=2cm,bottom=25mm,left=1in,right=3cm}\n' +
   '\\usepackage[doublespacing]{setspace}\n\\setlength\\parindent{2em}\n\\setlength{\\parskip}{0.5\\baselineskip}\n\\pagestyle{plain}\n\\usepackage{amsmath,hyperref}\n');
 out.geometryPaper = read('\\documentclass{article}\n\\usepackage[paper=a4paper,margin=3cm]{geometry}\n');
+out.paperUntouched = read('\\documentclass{article}\n\\setlength{\\paperwidth}{20cm}\n\\paperheight=25cm\n\\usepackage{a4wide}\n');
 out.named = [10, 11, 12].map((pt) => read('\\documentclass[' + pt + 'pt]{article}\n\\usepackage{setspace}\n\\onehalfspacing\n').n);
 out.ctex = read('\\documentclass[zihao=-4]{ctexart}\n\\linespread{1.95}\n');
 out.ctexOwn = read('\\documentclass{ctexart}\n\\usepackage{setspace}\n\\setstretch{1.3}\n');
@@ -88,8 +90,8 @@ out.conditional = read('\\documentclass{article}\n\\ifdefined\\draft\n\\pagestyl
 out.newif = read('\\documentclass{article}\n\\newif\\ifdraft\n\\pagestyle{empty}\n');
 out.ifthenelse = read('\\documentclass{article}\n\\usepackage{ifthen}\n\\ifthenelse{\\equal{a}{b}}{}{}\n\\pagestyle{empty}\n');
 out.conflicting = read('\\documentclass{article}\n\\usepackage{setspace}\n\\setstretch{1.5}\n\\setstretch{2}\n');
-out.agreeing = read('\\documentclass[a4paper]{article}\n\\usepackage[a4paper,margin=2cm]{geometry}\n');
-out.disagreeing = read('\\documentclass[a4paper]{article}\n\\usepackage[letterpaper]{geometry}\n');
+out.agreeing = read('\\documentclass[a4paper]{article}\n\\usepackage[margin=2cm]{geometry}\n\\geometry{margin=2cm}\n');
+out.disagreeing = read('\\documentclass[a4paper]{article}\n\\usepackage[margin=2cm]{geometry}\n\\geometry{margin=3cm}\n');
 out.zihaoOnArticle = read('\\documentclass[zihao=-4]{article}\n');
 out.zihaoFour = read('\\documentclass[zihao=4]{ctexart}\n');
 out.bothSizes = read('\\documentclass[12pt,zihao=5]{ctexart}\n');
@@ -106,6 +108,47 @@ out.local = read('\\documentclass{article}\n\\usepackage{mystyle}\n', [{path: 'p
 out.unknownClass = read('\\documentclass[12pt,twocolumn]{elsarticle}\n\\usepackage{setspace}\n\\setstretch{2}\n');
 out.beamer = read('\\documentclass{beamer}\n');
 out.noClass = read('\\usepackage{amsmath}\n');
+// 章节编号, 图表名称, 图表编号 (A3)
+const ZH = '\\renewcommand{\\thesection}{\\chinese{section}}\n\\renewcommand{\\thesubsection}{（\\chinese{subsection}）}\n' +
+  '\\renewcommand{\\thesubsubsection}{\\arabic{subsubsection}}\n\\ctexset{section/name={,、},section/aftername={},subsection/aftername={},subsubsection/name={,.}}\n';
+const WITHIN = '\\counterwithin{figure}{section}\n\\counterwithin{table}{section}\n\\renewcommand{\\thefigure}{\\arabic{section}-\\arabic{figure}}\n' +
+  '\\renewcommand{\\thetable}{\\arabic{section}-\\arabic{table}}\n';
+const THEH = '\\providecommand{\\theHfigure}{\\theHsection.\\arabic{figure}}\n\\providecommand{\\theHtable}{\\theHsection.\\arabic{table}}\n';
+out.numbers = {
+  ctexDefault: read('\\documentclass{ctexart}\n'), articleDefault: read('\\documentclass{article}\n'),
+  zh: read('\\documentclass{ctexart}\n' + ZH), zhSpaced: read('\\documentclass{ctexrep}\n' + ZH.replace('{\\chinese{section}}', '{ \\chinese {section} }').replace(',section/aftername', ', section/aftername')),
+  zhShared: read('\\documentclass{ctexart}\n' + ZH.replace('\\ctexset{', '\\ctexset{section/format+=\\raggedright,')),
+  zhPackage: read('\\documentclass{article}\n\\usepackage[heading=true]{ctex}\n' + ZH),
+  zhPartial: read('\\documentclass{ctexart}\n' + ZH.split('\n').slice(0, 2).join('\n') + '\n'),
+  zhNoKeys: read('\\documentclass{ctexart}\n' + ZH.split('\n').slice(0, 3).join('\n') + '\n'),
+  zhOnArticle: read('\\documentclass{article}\n\\usepackage{xeCJK}\n' + ZH),
+  none: read('\\documentclass{article}\n\\setcounter{secnumdepth}{0}\n'), noneLower: read('\\documentclass{ctexart}\n\\setcounter{secnumdepth}{-2}\n'),
+  noneReport: read('\\documentclass{report}\n\\setcounter{secnumdepth}{-1}\n'), zeroReport: read('\\documentclass{ctexrep}\n\\setcounter{secnumdepth}{0}\n'),
+  depth: read('\\documentclass{article}\n\\setcounter{secnumdepth}{2}\n'), depthMacro: read('\\documentclass{article}\n\\AtBeginDocument{\\setcounter{secnumdepth}{0}}\n'),
+  roman: read('\\documentclass{article}\n\\renewcommand{\\thesection}{\\Roman{section}}\n'), seccnt: read('\\documentclass{article}\n\\makeatletter\n\\def\\@seccntformat#1{}\n\\makeatother\n'),
+  titlesec: read('\\documentclass{article}\n\\usepackage{titlesec}\n'), nested: read('\\documentclass{ctexart}\n\\ctexset{section={name={第,节}}}\n'),
+  ctexDepth: read('\\documentclass{ctexart}\n\\ctexset{secnumdepth=0}\n'), both: read('\\documentclass{ctexart}\n' + ZH + '\\setcounter{secnumdepth}{0}\n'),
+  unknown: read('\\documentclass{elsarticle}\n\\setcounter{secnumdepth}{0}\n'),
+};
+out.names = {
+  en: read('\\documentclass{ctexart}\n\\renewcommand{\\figurename}{Figure}\n\\renewcommand{\\tablename}{Table}\n'),
+  ctexKeys: read('\\documentclass{ctexrep}\n\\ctexset{figurename = Figure, tablename={Table}}\n'),
+  zh: read('\\documentclass{article}\n\\usepackage{xeCJK}\n\\renewcommand\\figurename{图}\n\\renewcommand\\tablename{表}\n'),
+  zhNoCJK: read('\\documentclass{article}\n\\renewcommand{\\figurename}{图}\n\\renewcommand{\\tablename}{表}\n'),
+  one: read('\\documentclass{article}\n\\renewcommand{\\figurename}{Fig.}\n'), def: read('\\documentclass{article}\n\\def\\figurename{Figure}\n'),
+  babel: read('\\documentclass{article}\n\\usepackage[english]{babel}\n'), captionsetup: read('\\documentclass{article}\n\\usepackage{caption}\n\\captionsetup[figure]{name=Fig.}\n'),
+  captionOption: read('\\documentclass{article}\n\\usepackage[figurename=Fig.]{caption}\n'), captionPlain: read('\\documentclass{article}\n\\usepackage[font=small]{caption}\n'),
+};
+out.capnum = {
+  within: read('\\documentclass{article}\n' + WITHIN + THEH), withoutAnchors: read('\\documentclass{ctexart}\n' + WITHIN),
+  chapter: read('\\documentclass{ctexrep}\n\\renewcommand{\\thefigure}{\\thechapter-\\arabic{figure}}\n\\renewcommand{\\thetable}{\\thechapter-\\arabic{table}}\n'),
+  continuous: read('\\documentclass{report}\n\\counterwithout{figure}{chapter}\n\\counterwithout{table}{chapter}\n'),
+  onlyFigure: read('\\documentclass{article}\n\\counterwithin{figure}{section}\n'), numberwithin: read('\\documentclass{article}\n\\usepackage{amsmath}\n\\numberwithin{figure}{section}\n'),
+  starred: read('\\documentclass{article}\n\\counterwithin*{figure}{section}\n'), dotted: read('\\documentclass{article}\n\\counterwithin{figure}{section}\n\\counterwithin{table}{section}\n'),
+  articleForm: read('\\documentclass{report}\n' + WITHIN), twice: read('\\documentclass{article}\n' + WITHIN + WITHIN),
+  equation: read('\\documentclass{article}\n\\counterwithin{equation}{section}\n'),
+};
+out.localNumbers = read('\\documentclass{ctexart}\n\\usepackage{mystyle}\n', [{path: 'paper/mystyle.sty', text: '\\ProvidesPackage{mystyle}\n\\fancyhead[L]{\\thesection}\n\\renewcommand\\thefigure{\\thesection-\\arabic{figure}}\n\\ctexset{figurename=Fig.}\n\\setcounter{secnumdepth}{1}\n'}]);
 console.log(JSON.stringify(out));
 """
 
@@ -117,22 +160,22 @@ def readings() -> dict:
 
 @needs_node
 def test_with_nothing_written_every_setting_reads_as_the_class_default(readings):
-    assert readings["none"] == {"paper": "", "margin": "", "columns": "", "pagestyle": "", "hyperref": "off", "size": "",
-                                "spacing": "", "indent": "", "parskip": ""}
+    assert readings["none"] == {"margin": "", "columns": "", "pagestyle": "", "hyperref": "off", "size": "",
+                                "spacing": "", "indent": "", "parskip": "", "secnum": "", "capname": "en", "capnum": ""}
 
 
 @needs_node
 def test_each_recognised_form_is_read_as_its_value(readings):
-    assert readings["recognised"] == {"paper": "a4paper", "margin": "2.5", "margins": [2.5, 2.5, 2.5, 2.5], "columns": "twocolumn",
+    assert readings["recognised"] == {"margin": "2.5", "margins": [2.5, 2.5, 2.5, 2.5], "columns": "twocolumn",
                                       "pagestyle": "empty", "hyperref": "on", "size": "12pt", "spacing": "1.5", "n": 1.5,
-                                      "indent": "0pt", "parskip": "one"}
+                                      "indent": "0pt", "parskip": "one", "secnum": "", "capname": "en", "capnum": ""}
     other = readings["otherForms"]
-    assert other["paper"] == "b5paper" and other["columns"] == "" and other["size"] == "11pt"
+    assert "paper" not in other and other["columns"] == "" and other["size"] == "11pt"
     assert other["margin"] == "custom" and other["margins"] == [2, 2.5, 2.54, 3]            # cm, mm and in, in \geometry{}
     assert other["spacing"] == "custom" and other["n"] == 1.62                               # setspace's own double at 11pt
     assert other["indent"] == "2em" and other["parskip"] == "half" and other["pagestyle"] == "plain"
     assert other["hyperref"] == "on"                                                         # in a shared \usepackage
-    assert readings["geometryPaper"]["paper"] == "a4paper" and readings["geometryPaper"]["margin"] == "3"
+    assert readings["geometryPaper"]["margin"] == "3"                                        # geometry's paper is no margin
     assert readings["commented"]["margin"] == "" and readings["commented"]["spacing"] == ""
 
 
@@ -154,10 +197,10 @@ def test_a_setting_in_a_form_layout_does_not_take_is_the_persons_own_with_its_li
     assert readings["newif"]["pagestyle"] == "empty"                          # \newif\ifdraft opens no condition
     assert readings["ifthenelse"]["pagestyle"] == "empty"                     # \ifthenelse takes braces, no \fi
     assert readings["conflicting"]["spacing"] == "mine:4"
-    assert readings["agreeing"]["paper"] == "a4paper"                         # two places that agree are one setting
-    assert readings["disagreeing"]["paper"] == "mine:2"
+    assert readings["agreeing"]["margin"] == "2"                              # two places that agree are one setting
+    assert readings["disagreeing"]["margin"] == "mine:3"
     odd = readings["odd"]
-    assert odd["paper"] == "mine:1" and odd["size"] == "mine:1" and odd["margin"] == "mine:2" and odd["spacing"] == "custom"
+    assert odd["size"] == "mine:1" and odd["margin"] == "mine:2" and odd["spacing"] == "custom"
     assert odd["indent"] == "mine:4" and odd["parskip"] == "mine:5" and odd["pagestyle"] == "mine:6"
     assert readings["halfMargins"]["margin"] == "mine:2"                      # top and bottom unsaid
     assert readings["marginPackage"]["margin"] == "mine:2"
@@ -174,7 +217,8 @@ def test_class_options_are_read_only_where_the_class_takes_them(readings):
     assert readings["zihaoFour"]["size"] == "mine:1"                          # ctex refuses zihao=4 (measured)
     assert readings["bothSizes"]["size"] == "mine:1"                          # never a pt and a zihao
     unknown = readings["unknownClass"]
-    assert unknown["size"] == "mine:1:class" and unknown["columns"] == "mine:1:class" and unknown["paper"] == "mine:1:class"
+    assert unknown["size"] == "mine:1:class" and unknown["columns"] == "mine:1:class"
+    assert unknown["secnum"] == "mine:1:class" and unknown["capnum"] == "mine:1:class"      # chapters or not: unknown
     assert unknown["spacing"] == "2"                                          # what does not touch the class still works
     assert readings["beamer"] == {"why": "幻灯片（beamer）不用这些版式设置。"}
     assert readings["noClass"] == {"why": "主文件里没有找到 \\documentclass。"}
@@ -185,6 +229,57 @@ def test_a_project_sty_that_touches_a_setting_makes_it_its_own_with_file_and_lin
     local = readings["local"]
     assert local["hyperref"] == "mine:paper/mystyle.sty:3" and local["indent"] == "mine:paper/mystyle.sty:4"
     assert local["margin"] == ""                                              # its comment is not a setting
+
+
+@needs_node
+def test_paper_is_no_setting_any_more_and_a_paper_written_by_hand_is_left_alone(readings):
+    # the researcher, 2026-11-14: 纸张 "这个不需要！" -- no control, and nothing about the paper makes another setting its own
+    for name in ("none", "recognised", "otherForms", "geometryPaper", "odd", "unknownClass"):
+        assert "paper" not in readings[name]
+    assert readings["paperUntouched"]["margin"] == "mine:4"                   # a4wide sets the margins; the paper lines are ignored
+    assert set(readings["paperUntouched"]) == {"margin", "columns", "pagestyle", "hyperref", "size", "spacing", "indent", "parskip",
+                                               "secnum", "capname", "capnum"}
+
+
+@needs_node
+def test_heading_numbers_read_as_the_tools_own_lines_or_the_persons_own_with_their_line(readings):
+    n = readings["numbers"]
+    assert n["ctexDefault"]["secnum"] == "" and n["articleDefault"]["secnum"] == ""
+    # 一、（一）1.: the three \renewcommand lines and ctex's four keys, spaces aside, the keys among others of a \ctexset
+    assert n["zh"]["secnum"] == "zh" and n["zhSpaced"]["secnum"] == "zh" and n["zhShared"]["secnum"] == "zh"
+    assert n["zhPackage"]["secnum"] == "zh"                                   # the ctex package with heading=true
+    assert n["zhPartial"]["secnum"] == "mine:2" and n["zhNoKeys"]["secnum"] == "mine:2"
+    assert n["zhOnArticle"]["secnum"] == "mine:3"                             # \chinese and \ctexset are ctex's
+    # 不编号: secnumdepth at or below a section's level (0), with chapters below a chapter's (-1)
+    assert n["none"]["secnum"] == "none" and n["noneLower"]["secnum"] == "none" and n["noneReport"]["secnum"] == "none"
+    assert n["zeroReport"]["secnum"] == "mine:2"                              # chapters still numbered: not offered
+    assert n["depth"]["secnum"] == "mine:2" and n["depthMacro"]["secnum"] == "mine:2"
+    assert n["roman"]["secnum"] == "mine:2" and n["seccnt"]["secnum"] == "mine:3" and n["titlesec"]["secnum"] == "mine:2"
+    assert n["nested"]["secnum"] == "mine:2" and n["ctexDepth"]["secnum"] == "mine:2"
+    assert n["both"]["secnum"] == "mine:6"                                    # 一、 and 不编号 at once disagree
+    assert n["unknown"]["secnum"] == "mine:1:class"                           # with chapters or without: not known
+
+
+@needs_node
+def test_caption_names_and_numbers_read_as_the_tools_own_lines_or_the_persons_own(readings):
+    nm = readings["names"]
+    assert readings["numbers"]["ctexDefault"]["capname"] == "zh" and readings["numbers"]["articleDefault"]["capname"] == "en"
+    assert nm["en"]["capname"] == "en" and nm["ctexKeys"]["capname"] == "en" and nm["zh"]["capname"] == "zh"
+    assert nm["zhNoCJK"]["capname"] == "mine:2"                               # 图 cannot be set without a Chinese font
+    assert nm["one"]["capname"] == "mine:2" and nm["def"]["capname"] == "mine:2"
+    assert nm["babel"]["capname"] == "mine:2:class"                           # babel names them again at \begin{document}
+    assert nm["captionsetup"]["capname"] == "mine:3" and nm["captionOption"]["capname"] == "mine:2"
+    assert nm["captionPlain"]["capname"] == "en"
+    c = readings["capnum"]
+    assert c["within"]["capnum"] == "within" and c["withoutAnchors"]["capnum"] == "within"
+    assert c["chapter"]["capnum"] == "within" and c["continuous"]["capnum"] == "continuous"
+    assert c["onlyFigure"]["capnum"] == "mine:2" and c["numberwithin"]["capnum"] == "mine:3" and c["starred"]["capnum"] == "mine:2"
+    assert c["dotted"]["capnum"] == "mine:2"                                  # 图 1.1 is no choice offered
+    assert c["articleForm"]["capnum"] == "mine:2" and c["twice"]["capnum"] == "mine:2"
+    assert c["equation"]["capnum"] == ""                                      # equations are not 图表编号's
+    local = readings["localNumbers"]
+    assert local["capnum"] == "mine:paper/mystyle.sty:3" and local["capname"] == "mine:paper/mystyle.sty:4"
+    assert local["secnum"] == "mine:paper/mystyle.sty:5"                      # \thesection only read on line 2: not a setting
 
 
 # -- writing: in place, new lines after the last \usepackage, removing only what the tool writes --------------------
@@ -204,7 +299,7 @@ const FULL = '\\documentclass[a4paper,12pt]{article}\n\\usepackage[margin=2cm]{g
   '\\setlength{\\parindent}{0pt}\n\\usepackage[skip=0.5\\baselineskip,indent]{parskip}\n\\pagestyle{plain}\n\\usepackage[hidelinks]{hyperref}\n\\title{T}\n';
 const out = {};
 out.add = {
-  paper: write(A, 'paper', 'a4paper'), margin: write(A, 'margin', {preset: '2.5'}),
+  margin: write(A, 'margin', {preset: '2.5'}),
   custom: write(A, 'margin', {preset: 'custom', top: 2, bottom: 2.5, left: 3, right: 1.75}),
   columns: write(A, 'columns', 'twocolumn'), plain: write(A, 'pagestyle', 'plain'), empty: write(A, 'pagestyle', 'empty'),
   hyperref: write(A, 'hyperref', 'on'), size: write(A, 'size', '11pt'), spacing: write(A, 'spacing', '1.5'),
@@ -219,7 +314,7 @@ out.add = {
   geometryBare: write('\\documentclass{article}\n\\usepackage{geometry}\n', 'margin', {preset: '2'}),
 };
 out.change = {
-  paper: write(FULL, 'paper', 'b5paper'), margin: write(FULL, 'margin', {preset: '3'}), size: write(FULL, 'size', '10pt'),
+  margin: write(FULL, 'margin', {preset: '3'}), size: write(FULL, 'size', '10pt'),
   spacing: write(FULL, 'spacing', '2'), indent: write(FULL, 'indent', '2em'), parskip: write(FULL, 'parskip', 'one'),
   pagestyle: write(FULL, 'pagestyle', 'empty'), columns: write(FULL, 'columns', 'twocolumn'),
   marginCustom: write(FULL, 'margin', {preset: 'custom', top: 1, bottom: 2, left: 3, right: 4}),
@@ -229,10 +324,10 @@ out.change = {
   setspaceOption: write('\\documentclass{article}\n\\usepackage[onehalfspacing]{setspace}\n', 'spacing', '2'),
   ctexOption: write('\\documentclass[linespread=1.3]{ctexart}\n', 'spacing', '1.5'),
   nopagenoToPlain: write('\\documentclass{article}\n\\usepackage{nopageno}\n', 'pagestyle', 'plain'),
-  same: write(FULL, 'paper', 'a4paper'),
+  same: write(FULL, 'size', '12pt'),
 };
 out.remove = {
-  paper: write(FULL, 'paper', ''), margin: write(FULL, 'margin', null), size: write(FULL, 'size', ''), spacing: write(FULL, 'spacing', ''),
+  margin: write(FULL, 'margin', null), size: write(FULL, 'size', ''), spacing: write(FULL, 'spacing', ''),
   indent: write(FULL, 'indent', ''), parskip: write(FULL, 'parskip', ''), pagestyle: write(FULL, 'pagestyle', ''),
   hyperref: write(FULL, 'hyperref', 'off'), columns: write('\\documentclass[twocolumn]{article}\n', 'columns', ''),
   marginKeepsPaper: write('\\documentclass{article}\n\\usepackage[a4paper,margin=2cm]{geometry}\n', 'margin', null),
@@ -249,9 +344,46 @@ out.refused = {
   zihaoArticle: write(A, 'size', 'zihao=5'),
   margin: write(A, 'margin', {preset: 'custom', top: 2, bottom: 2, left: 12, right: 2}),
   spacing: write(A, 'spacing', 'custom', {n: 9}),
-  noBegin: (() => { const st = CM.EditorState.create({doc: '\\documentclass{article}\nText.'}); return P.layoutSpec(st, 'paper', 'a4paper', {}); })(),
+  noBegin: (() => { const st = CM.EditorState.create({doc: '\\documentclass{article}\nText.'}); return P.layoutSpec(st, 'columns', 'twocolumn', {}); })(),
+  paper: write(A, 'paper', 'a4paper'),
   unknownClass: write('\\documentclass{elsarticle}\n', 'columns', 'twocolumn'),
 };
+// 章节编号, 图表名称, 图表编号 (A3): new lines after the last \usepackage and before hyperref, changed and removed whole
+const C = '\\documentclass[a4paper]{ctexart}\n\\usepackage{amsmath}\n\\usepackage[hidelinks]{hyperref}\n';
+const R = '\\documentclass{report}\n\\usepackage{amsmath}\n';
+const step = (pre, key, value) => { const w = write(pre, key, value); return w && w.pre != null ? w.pre : w; };
+const zh = step(C, 'secnum', 'zh'), none = step(zh, 'secnum', 'none'), within = step(C, 'capnum', 'within');
+out.numbers = {
+  zh: zh, zhToNone: none, noneToDefault: step(none, 'secnum', ''), zhToDefault: step(zh, 'secnum', ''), sameZh: write(zh, 'secnum', 'zh'),
+  noneArticle: step(A, 'secnum', 'none'), noneReport: step(R, 'secnum', 'none'), zhPackage: step('\\documentclass{article}\n\\usepackage[heading]{ctex}\n', 'secnum', 'zh'),
+  zhShared: step(zh.replace('\\ctexset{', '\\ctexset{section/format+=\\raggedright,'), 'secnum', ''),
+  refusedArticle: write(A, 'secnum', 'zh'), refusedPackage: write('\\documentclass{article}\n\\usepackage{ctex}\n', 'secnum', 'zh'),
+  refusedMine: write('\\documentclass{article}\n\\setcounter{secnumdepth}{2}\n', 'secnum', 'none'), unknownValue: write(A, 'secnum', 'roman'),
+  noneWithin: write(within, 'secnum', 'none'), withinNone: write(none, 'capnum', 'within'), noneReportDefault: step('\\documentclass{report}\n', 'secnum', 'none'),
+};
+out.names = {
+  en: step(C, 'capname', 'en'), back: step(step(C, 'capname', 'en'), 'capname', 'zh'), sameDefault: write(C, 'capname', 'zh'),
+  zhXe: step('\\documentclass{article}\n\\usepackage{xeCJK}\n', 'capname', 'zh'),
+  inPlace: step('\\documentclass{article}\n\\usepackage{xeCJK}\n\\renewcommand\\figurename{图} % 图名\n\\renewcommand\\tablename{表}\n', 'capname', 'en'),
+  ctexKeys: step('\\documentclass{ctexart}\n\\ctexset{figurename=Figure, tablename=Table, section/format+=\\raggedright}\n', 'capname', 'zh'),
+  ctexKeysAlone: step('\\documentclass{ctexart}\n\\ctexset{figurename=Figure, tablename=Table}\n\\title{T}\n', 'capname', 'zh'),
+  refused: write(A, 'capname', 'zh'), babel: write('\\documentclass{article}\n\\usepackage[english]{babel}\n', 'capname', 'zh'),
+};
+out.capnum = {
+  within: within, back: step(within, 'capnum', ''), chapterWithin: step(R, 'capnum', 'within'), chapterContinuous: step(R, 'capnum', 'continuous'),
+  chapterSwitch: step(step(R, 'capnum', 'continuous'), 'capnum', 'within'), noContinuousWithoutChapters: write(A, 'capnum', 'continuous'),
+  afterCleveref: step('\\documentclass{article}\n\\usepackage{hyperref}\n\\usepackage{cleveref}\n', 'capnum', 'within'),
+};
+// one transaction each, undone in one step; CRLF kept
+(() => {
+  const st = make(C), r = P.layoutSpec(st, 'secnum', 'zh', {});
+  const v = {state: st.update({changes: r.changes, selection: r.selection, userEvent: 'input.format'}).state};
+  v.dispatch = (tr) => { v.state = tr.state; };
+  out.numbersUndo = {depth: CM.undoDepth(v.state)};
+  CM.undo(v);
+  out.numbersUndo.back = v.state.doc.toString() === st.doc.toString();
+})();
+out.numbersCrlf = write(C, 'capnum', 'within', {}, '\r\n');
 // CRLF: every line written in the file's own ending
 out.crlf = write(A, 'spacing', '1.5', {}, '\r\n');
 out.crlfRemove = write(FULL, 'hyperref', 'off', {}, '\r\n');
@@ -282,7 +414,6 @@ FULL = ("\\documentclass[a4paper,12pt]{article}\n\\usepackage[margin=2cm]{geomet
 @needs_node
 def test_a_new_setting_goes_on_a_line_of_its_own_after_the_last_usepackage_or_into_the_class_options(writes):
     add = writes["add"]
-    assert add["paper"]["pre"] == "\\documentclass[a4paper]{article}\n\\usepackage{amsmath}\n"
     assert add["margin"]["pre"] == A + "\\usepackage[margin=2.5cm]{geometry}\n"
     assert add["custom"]["pre"] == A + "\\usepackage[top=2cm,bottom=2.5cm,left=3cm,right=1.75cm]{geometry}\n"
     assert add["columns"]["pre"] == "\\documentclass[twocolumn]{article}\n\\usepackage{amsmath}\n"
@@ -298,7 +429,7 @@ def test_a_new_setting_goes_on_a_line_of_its_own_after_the_last_usepackage_or_in
     assert add["setspaceLoaded"]["pre"] == "\\documentclass{article}\n\\usepackage{setspace}\n\\setstretch{2}\n\\title{x}\n"
     assert add["geometryShared"]["pre"] == "\\documentclass{article}\n\\usepackage{amsmath,geometry}\n\\geometry{margin=2cm}\n"
     assert add["geometryBare"]["pre"] == "\\documentclass{article}\n\\usepackage[margin=2cm]{geometry}\n"
-    assert add["add" if False else "paper"]["cursor"] == "Text."                       # the cursor stays where it was
+    assert add["columns"]["cursor"] == "Text."                                       # the cursor stays where it was
 
 
 @needs_node
@@ -321,7 +452,6 @@ def test_hyperref_is_loaded_last_but_before_a_package_that_must_follow_it(writes
 @needs_node
 def test_a_setting_already_there_is_changed_in_place_and_the_other_options_are_kept(writes):
     ch = writes["change"]
-    assert ch["paper"]["pre"] == FULL.replace("a4paper", "b5paper")
     assert ch["margin"]["pre"] == FULL.replace("margin=2cm", "margin=3cm")                  # its comment kept
     assert ch["marginCustom"]["pre"] == FULL.replace("margin=2cm", "top=1cm,bottom=2cm,left=3cm,right=4cm")
     assert ch["size"]["pre"] == FULL.replace("12pt", "10pt")
@@ -343,7 +473,6 @@ def test_a_setting_already_there_is_changed_in_place_and_the_other_options_are_k
 @needs_node
 def test_back_to_default_removes_only_what_the_tool_would_have_written(writes):
     rm = writes["remove"]
-    assert rm["paper"]["pre"] == FULL.replace("a4paper,", "")
     assert rm["margin"]["pre"] == FULL.replace("\\usepackage[margin=2cm]{geometry} % page\n", "")
     assert rm["size"]["pre"] == FULL.replace(",12pt", "")
     assert rm["spacing"]["pre"] == FULL.replace("\\onehalfspacing\n", "")                   # \usepackage{setspace} stays
@@ -371,6 +500,7 @@ def test_a_write_is_refused_with_a_reason_where_it_cannot_be_made_and_never_dupl
     assert ref["spacing"] == {"refused": "行距要在 0.5 到 4 倍之间。"}
     assert ref["noBegin"] == {"refused": "主文件里没有 \\begin{document}，版式还不能设置。"}
     assert ref["unknownClass"]["refused"].startswith("文档类 elsarticle 的选项这里不认识")
+    assert ref["paper"] is None                                               # 纸张 is no setting: nothing is written
 
 
 @needs_node
@@ -379,6 +509,64 @@ def test_every_line_written_keeps_the_files_line_ending_and_undo_takes_it_back_i
     assert "\n" not in writes["crlf"]["file"].replace("\r\n", "")
     assert "hyperref" not in writes["crlfRemove"]["file"] and "\n" not in writes["crlfRemove"]["file"].replace("\r\n", "")
     assert writes["undo"] == {"depth": 1, "after": True, "back": True}
+
+
+ZH_LINES = ("\\renewcommand{\\thesection}{\\chinese{section}}\n\\renewcommand{\\thesubsection}{（\\chinese{subsection}）}\n"
+            "\\renewcommand{\\thesubsubsection}{\\arabic{subsubsection}}\n"
+            "\\ctexset{section/name={,、},section/aftername={},subsection/aftername={},subsubsection/name={,.}}\n")
+C_PRE = "\\documentclass[a4paper]{ctexart}\n\\usepackage{amsmath}\n\\usepackage[hidelinks]{hyperref}\n"
+HYPER = "\\usepackage[hidelinks]{hyperref}\n"
+
+
+@needs_node
+def test_heading_numbers_write_their_lines_before_hyperref_and_take_back_only_their_own(writes):
+    n = writes["numbers"]
+    assert n["zh"] == C_PRE.replace(HYPER, ZH_LINES + HYPER)
+    assert n["zhToNone"] == C_PRE.replace(HYPER, "\\setcounter{secnumdepth}{0}\n" + HYPER)
+    assert n["noneToDefault"] == C_PRE and n["zhToDefault"] == C_PRE and n["sameZh"] is None
+    assert n["zhShared"] == C_PRE.replace(HYPER, "\\ctexset{section/format+=\\raggedright}\n" + HYPER)   # only its own keys go
+    assert n["noneArticle"] == A + "\\setcounter{secnumdepth}{0}\n"
+    assert n["noneReport"] == "\\documentclass{report}\n\\usepackage{amsmath}\n\\setcounter{secnumdepth}{-1}\n"   # a chapter's level is 0
+    assert n["zhPackage"] == "\\documentclass{article}\n\\usepackage[heading]{ctex}\n" + ZH_LINES
+    assert n["refusedArticle"] == {"refused": "中文编号需要中文文档类"}
+    assert n["refusedPackage"] == {"refused": "中文编号需要 ctex 宏包的 heading=true 选项"}
+    assert n["refusedMine"] == {"refused": "导言区第 2 行已有自己写的设置"}
+    assert n["unknownValue"] is None
+    # 不编号 and 按章或节编号 refuse each other: no heading number, so 图 0-1 (measured below); report's own 图 2.3 drops the 0
+    assert n["noneWithin"] == {"refused": "图表按章或节编号时，章节不能不编号：没有章节号，图表会印成 0-1。"}
+    assert n["withinNone"] == {"refused": "章节不编号时，图表不能按章或节编号：没有章节号，图表会印成 0-1。"}
+    assert n["noneReportDefault"] == "\\documentclass{report}\n\\setcounter{secnumdepth}{-1}\n"
+
+
+@needs_node
+def test_caption_names_are_the_classs_own_unless_set_and_change_in_place(writes):
+    nm = writes["names"]
+    assert nm["en"] == C_PRE.replace(HYPER, "\\renewcommand{\\figurename}{Figure}\n\\renewcommand{\\tablename}{Table}\n" + HYPER)
+    assert nm["back"] == C_PRE and nm["sameDefault"] is None                  # 图 / 表 is ctex's own: the lines go
+    assert nm["zhXe"] == "\\documentclass{article}\n\\usepackage{xeCJK}\n\\renewcommand{\\figurename}{图}\n\\renewcommand{\\tablename}{表}\n"
+    assert nm["inPlace"] == "\\documentclass{article}\n\\usepackage{xeCJK}\n"                 # Figure / Table is article's own
+    assert nm["ctexKeys"] == "\\documentclass{ctexart}\n\\ctexset{section/format+=\\raggedright}\n"   # the other key kept
+    assert nm["ctexKeysAlone"] == "\\documentclass{ctexart}\n\\title{T}\n"
+    assert nm["refused"] == {"refused": "中文图表名需要中文文档类"}
+    assert nm["babel"] == {"refused": "文稿用 babel 设置语言，图表名称由它决定。"}
+
+
+@needs_node
+def test_caption_numbers_write_by_section_or_chapter_and_continuous_only_where_chapters_reset_them(writes):
+    c = writes["capnum"]
+    within = ("\\counterwithin{figure}{section}\n\\counterwithin{table}{section}\n\\renewcommand{\\thefigure}{\\arabic{section}-\\arabic{figure}}\n"
+              "\\renewcommand{\\thetable}{\\arabic{section}-\\arabic{table}}\n\\providecommand{\\theHfigure}{\\theHsection.\\arabic{figure}}\n"
+              "\\providecommand{\\theHtable}{\\theHsection.\\arabic{table}}\n")
+    assert c["within"] == C_PRE.replace(HYPER, within + HYPER) and c["back"] == C_PRE
+    R = "\\documentclass{report}\n\\usepackage{amsmath}\n"
+    assert c["chapterWithin"] == R + "\\renewcommand{\\thefigure}{\\thechapter-\\arabic{figure}}\n\\renewcommand{\\thetable}{\\thechapter-\\arabic{table}}\n"
+    assert c["chapterContinuous"] == R + "\\counterwithout{figure}{chapter}\n\\counterwithout{table}{chapter}\n"
+    assert c["chapterSwitch"] == c["chapterWithin"] and c["noContinuousWithoutChapters"] is None
+    # no other package: after \\documentclass, hyperref and cleveref still after them
+    assert c["afterCleveref"] == "\\documentclass{article}\n" + within + "\\usepackage{hyperref}\n\\usepackage{cleveref}\n"
+    assert writes["numbersUndo"] == {"depth": 1, "back": True}
+    crlf = writes["numbersCrlf"]["file"]
+    assert "\\counterwithin{figure}{section}\r\n" in crlf and "\n" not in crlf.replace("\r\n", "")
 
 
 # -- 段落 and the further insertions -------------------------------------------------------------------------------
@@ -513,7 +701,8 @@ const tab = (label) => inside(side(), (e) => e.attrs && e.attrs.role === 'tab' &
 const item = (label) => inside(layoutPane(), (e) => e.classList.contains('latex-layout-item') && e.children[0].children[0].textContent === label)[0];
 const sel = (label) => item(label).children[0].children[1];
 const choose = (label, value) => { const s = sel(label); s.value = value; s.fire('change'); };
-const row = (label) => { const s = sel(label); return {value: s.value, disabled: !!s.disabled, options: s.children.map((o) => o.value), note: words(item(label).children[2])}; };
+const row = (label) => { const s = sel(label); return {value: s.value, disabled: !!s.disabled, options: s.children.map((o) => o.value), note: words(item(label).children[2]),
+  labels: s.children.map((o) => o.textContent), off: s.children.filter((o) => o.disabled).map((o) => o.value)}; };
 const doc = () => view().state.doc.toString();
 const pre = () => doc().slice(0, doc().indexOf('\\begin{document}'));
 const f = (path, text, extra) => Object.assign({path, text, revision: 'r1', line_ending: 'lf', read_only: false, read_only_reason: null, links: [], mains: []}, extra);
@@ -525,7 +714,7 @@ await openFile('paper/ch.tex', 'Chapter text.\n', {mains: ['paper/main.tex'], fo
 tab('版式').fire('click');
 out.chapter = {head: words(inside(layoutPane(), (e) => e.classList.contains('latex-layout-head'))[0]), groups: inside(layoutPane(), (e) => e.tag === 'h4').map((h) => h.textContent),
   labels: inside(layoutPane(), (e) => e.classList.contains('latex-layout-item')).map((i) => i.children[0].children[0].textContent),
-  paper: row('纸张'), margin: row('页边距'), spacing: row('行距'), size: row('正文字号'), pagestyle: row('页码'), hyperref: row('超链接'), indent: row('首行缩进'),
+  secnum: row('章节编号'), capname: row('图表名称'), capnum: row('图表编号'), margin: row('页边距'), spacing: row('行距'), size: row('正文字号'), pagestyle: row('页码'), hyperref: row('超链接'), indent: row('首行缩进'),
   allOff: inside(layoutPane(), (e) => e.tag === 'select' || e.tag === 'input').every((x) => x.disabled), primaries: primaries()};
 // 看这一行 in a chapter opens the main file at that line
 inside(item('页码'), (e) => e.tag === 'button' && e.textContent === '看这一行')[0].fire('click'); await tick();
@@ -537,11 +726,11 @@ out.cursorLine = view().state.doc.lineAt(view().state.selection.main.head).numbe
 // the main file: each setting can be changed, as the editor's own transaction
 tab('版式').fire('click');
 const V = view();
-out.main = {head: hidden(inside(layoutPane(), (e) => e.classList.contains('latex-layout-head'))[0]), paper: row('纸张'), pagestyle: row('页码'), hyperref: row('超链接'),
+out.main = {head: hidden(inside(layoutPane(), (e) => e.classList.contains('latex-layout-head'))[0]), columns: row('分栏'), pagestyle: row('页码'), hyperref: row('超链接'),
   sizeOptions: row('正文字号').options};
 V.dispatch({selection: {anchor: doc().indexOf('First')}});
-choose('纸张', 'b5paper');
-out.afterPaper = {pre: pre(), undo: real.undoDepth(V.state), dirty: L.isDirty(), shown: row('纸张').value, cursor: doc().slice(V.state.selection.main.head, V.state.selection.main.head + 5)};
+choose('分栏', 'twocolumn');
+out.afterPaper = {pre: pre(), undo: real.undoDepth(V.state), dirty: L.isDirty(), shown: row('分栏').value, cursor: doc().slice(V.state.selection.main.head, V.state.selection.main.head + 5)};
 const undoView = {get state() { return V.state; }, dispatch: (tr) => { V.state = tr.state; }};
 real.undo(undoView);
 out.afterUndo = {same: doc() === MAIN};
@@ -562,6 +751,15 @@ choose('首行缩进', '0pt'); choose('段间距', 'half'); choose('分栏', 'tw
 out.afterMore = pre();
 choose('段间距', '');
 out.afterParskipOff = pre();
+// 章节编号, 图表名称, 图表编号 (A3) on an article: 一、 cannot be chosen (its reason in the option), 不编号 says what it costs
+out.numbers = {before: row('章节编号'), names: row('图表名称'), capnum: row('图表编号')};
+choose('章节编号', 'zh');
+out.numbers.refused = {note: words(inside(layoutPane(), (e) => e.classList.contains('latex-format-note'))[0]), same: !pre().includes('chinese'), shown: row('章节编号').value};
+const depth0 = real.undoDepth(V.state);
+choose('图表编号', 'within');
+out.numbers.within = {pre: pre(), secnum: row('章节编号')};
+choose('图表编号', ''); choose('章节编号', 'none');
+out.numbers.after = {pre: pre(), secnum: row('章节编号'), capnum: row('图表编号'), steps: real.undoDepth(V.state) - depth0};
 // a setting of the person's own and one of the project's .sty: 自定义, not changeable, the line said with a link
 out.mine = {pagestyle: row('页码'), hyperref: row('超链接')};
 inside(item('页码'), (e) => e.tag === 'button' && e.textContent === '看这一行')[0].fire('click');
@@ -572,9 +770,9 @@ out.saved = posts.length ? posts[0].body.edits.length : 0;
 posts.shift().res({revision: 'r2', changed: true, previous: 'r1'}); await tick(); await tick();
 // 显示源码 turns 版式 off with its reason
 button('显示源码').fire('click');
-out.source = {head: words(inside(layoutPane(), (e) => e.classList.contains('latex-layout-head'))[0]), off: sel('纸张').disabled};
+out.source = {head: words(inside(layoutPane(), (e) => e.classList.contains('latex-layout-head'))[0]), off: sel('页边距').disabled && sel('章节编号').disabled};
 button('显示源码').fire('click');
-out.sourceOff = sel('纸张').disabled;
+out.sourceOff = sel('页边距').disabled;
 // 格式's 段落 and the further insertions
 tab('格式').fire('click');
 V.dispatch({selection: {anchor: doc().indexOf('Second') + 2}});
@@ -617,6 +815,13 @@ out.readOnly = {head: words(inside(layoutPane(), (e) => e.classList.contains('la
 await openFile('loose.tex', 'Loose text.\n', {format: {main: null, engine: null, folder: '', preamble: null, local: []}});
 tab('版式').fire('click');
 out.noMain = words(inside(layoutPane(), (e) => e.classList.contains('latex-layout-head'))[0]);
+// a ctexrep main file: 一、（一）1. can be chosen, 连续编号 is offered with the class's 图 2.3 as the default
+const ZMAIN = '\\documentclass[a4paper]{ctexrep}\n\\usepackage{amsmath}\n\\usepackage[hidelinks]{hyperref}\n\\begin{document}\n\\chapter{一}\n正文。\n\\end{document}\n';
+await openFile('zh/main.tex', ZMAIN, {mains: ['zh/main.tex'], format: {main: 'zh/main.tex', engine: 'xelatex', folder: 'zh', preamble: null, local: []}});
+tab('版式').fire('click');
+out.ctex = {secnum: row('章节编号'), names: row('图表名称'), capnum: row('图表编号')};
+choose('章节编号', 'zh'); choose('图表名称', 'en'); choose('图表编号', 'continuous');
+out.ctex.after = {pre: pre(), secnum: row('章节编号').value, names: row('图表名称').value, capnum: row('图表编号').value, primaries: primaries()};
 console.log(JSON.stringify(out));
 """
 
@@ -639,9 +844,10 @@ def panel() -> dict:
 def test_a_chapter_shows_its_main_files_layout_read_only_with_a_link_to_the_main_file(panel):
     ch = panel["chapter"]
     assert ch["head"] == ["版式在主文件 paper/main.tex 里设置。", "打开 paper/main.tex"]
-    assert ch["groups"] == ["页面", "文字与段落"]
-    assert ch["labels"] == ["纸张", "页边距", "分栏", "页码", "超链接", "正文字号", "行距", "首行缩进", "段间距"]
-    assert ch["paper"]["value"] == "a4paper" and ch["margin"]["value"] == "2" and ch["spacing"]["value"] == "1.5"
+    assert ch["groups"] == ["页面", "文字与段落", "章节与图表"]
+    assert ch["labels"] == ["页边距", "分栏", "页码", "超链接", "正文字号", "行距", "首行缩进", "段间距", "章节编号", "图表名称", "图表编号"]
+    assert ch["margin"]["value"] == "2" and ch["spacing"]["value"] == "1.5"
+    assert ch["secnum"]["value"] == "" and ch["capname"]["value"] == "en" and ch["capnum"]["value"] == ""
     assert ch["size"]["value"] == "12pt" and ch["indent"]["value"] == ""
     assert ch["pagestyle"]["value"] == "mine" and ch["pagestyle"]["note"] == ["导言区第 5 行已有自己写的设置", "看这一行"]
     assert ch["hyperref"]["value"] == "mine" and ch["hyperref"]["note"] == ["paper/mystyle.sty 第 2 行已有自己写的设置"]
@@ -652,22 +858,51 @@ def test_a_chapter_shows_its_main_files_layout_read_only_with_a_link_to_the_main
 @needs_node
 def test_in_the_main_file_a_choice_edits_the_preamble_as_one_undoable_unsaved_step(panel):
     main = panel["main"]
-    assert main["head"] is True and main["paper"]["disabled"] is False and main["paper"]["options"] == ["", "a4paper", "letterpaper", "b5paper"]
+    assert main["head"] is True and main["columns"]["disabled"] is False and main["columns"]["options"] == ["", "twocolumn"]
     assert main["pagestyle"]["disabled"] is True and main["hyperref"]["disabled"] is True       # the person's own
     assert main["sizeOptions"] == ["", "10pt", "11pt", "12pt"]                                     # no 五号 without ctex
     after = panel["afterPaper"]
-    assert after["pre"].startswith("\\documentclass[b5paper,12pt]{article}\n") and after["undo"] == 1 and after["dirty"] is True
-    assert after["shown"] == "b5paper" and after["cursor"] == "First"
+    assert after["pre"].startswith("\\documentclass[a4paper,12pt,twocolumn]{article}\n") and after["undo"] == 1 and after["dirty"] is True
+    assert after["shown"] == "twocolumn" and after["cursor"] == "First"
     assert panel["afterUndo"] == {"same": True}
     assert panel["customSpacing"] == {"shown": True, "value": "1.5", "pre": True}
     assert "\\setstretch{1.4}" in panel["afterStretch"]["pre"] and panel["afterStretch"]["row"] == "custom"
     assert panel["customMargins"] == [["上", "2"], ["下", "2"], ["左", "2"], ["右", "2"]]
     assert "\\usepackage[top=3cm,bottom=2cm,left=2cm,right=2cm]{geometry}" in panel["afterMargins"]["pre"]
     more = panel["afterMore"]
-    assert more.startswith("\\documentclass[b5paper,11pt,twocolumn]{article}\n")
+    assert more.startswith("\\documentclass[a4paper,11pt,twocolumn]{article}\n")                 # the paper left as written
     assert "\\setlength{\\parindent}{0pt}" in more and "\\usepackage[skip=0.5\\baselineskip,indent]{parskip}" in more
     assert "parskip" not in panel["afterParskipOff"]
     assert panel["shownLine"] == 5 and panel["saved"] > 0
+
+
+@needs_node
+def test_heading_numbers_and_captions_on_the_page_say_what_a_document_cannot_take(panel):
+    n = panel["numbers"]
+    before = n["before"]
+    assert before["options"] == ["", "zh", "none"] and before["off"] == ["zh"] and before["disabled"] is False
+    assert before["labels"] == ["1 / 1.1 / 1.1.1", "一、（一）1.：中文编号需要中文文档类", "不编号"] and before["note"] == []
+    assert n["names"]["labels"] == ["图 / 表：中文图表名需要中文文档类", "Figure / Table"] and n["names"]["value"] == "en"
+    assert n["capnum"]["labels"] == ["连续编号（图 1）", "按章或节编号（图 2-3）"] and n["capnum"]["options"] == ["", "within"]
+    assert n["refused"] == {"note": ["中文编号需要中文文档类"], "same": True, "shown": ""}
+    within = n["within"]
+    assert "\\counterwithin{figure}{section}\n" in within["pre"] and within["secnum"]["off"] == ["zh", "none"]
+    assert within["secnum"]["labels"][2] == "不编号：图表按章或节编号时不能选"
+    after = n["after"]
+    assert "\\setcounter{secnumdepth}{0}\n" in after["pre"] and "counterwithin" not in after["pre"]
+    assert after["secnum"]["value"] == "none" and after["secnum"]["note"] == ["不编号时，\\ref 引用章节印不出编号。"]
+    assert after["capnum"]["off"] == ["within"] and after["capnum"]["labels"][1] == "按章或节编号（图 2-3）：章节不编号时不能选"
+    assert after["steps"] == 3                                                       # one undo step each
+    c = panel["ctex"]
+    assert c["secnum"]["off"] == [] and c["names"]["value"] == "zh" and c["names"]["off"] == []
+    assert c["capnum"]["options"] == ["continuous", "", "within"]
+    assert c["capnum"]["labels"] == ["连续编号（图 1）", "按章编号（图 2.3）", "按章或节编号（图 2-3）"] and c["capnum"]["value"] == ""
+    a = c["after"]
+    # each new line after the last \\usepackage (so the latest first), hyperref still last
+    assert a["pre"] == ("\\documentclass[a4paper]{ctexrep}\n\\usepackage{amsmath}\n"
+                        + "\\counterwithout{figure}{chapter}\n\\counterwithout{table}{chapter}\n"
+                        + "\\renewcommand{\\figurename}{Figure}\n\\renewcommand{\\tablename}{Table}\n" + ZH_LINES + "\\usepackage[hidelinks]{hyperref}\n")
+    assert (a["secnum"], a["names"], a["capnum"], a["primaries"]) == ("zh", "en", "continuous", [])
 
 
 @needs_node
@@ -712,10 +947,13 @@ def test_every_new_word_has_its_english_and_none_is_a_glyph():
     assert [s for s in said if any(g in s for g in glyphs)] == []
     assert [s for s in said if any(g in str(table[s]) for g in glyphs)] == []
     for zh, en in (("行距", "Line spacing"), ("首行缩进", "First-line indent"), ("段间距", "Space between paragraphs"),
-                   ("页边距", "Margins"), ("纸张", "Paper"), ("两端对齐", "Justified"), ("交叉引用", "Cross-reference"),
-                   ("1.5 倍", "1.5 lines"), ("看这一行", "Show the line")):
+                   ("页边距", "Margins"), ("两端对齐", "Justified"), ("交叉引用", "Cross-reference"),
+                   ("1.5 倍", "1.5 lines"), ("看这一行", "Show the line"), ("章节编号", "Heading numbers"),
+                   ("图表名称", "Figure and table names"), ("图表编号", "Figure and table numbers"), ("不编号", "Unnumbered"),
+                   ("连续编号（图 1）", "Continuous (Figure 1)"), ("按章或节编号（图 2-3）", "By chapter or section (Figure 2-3)")):
         assert table[zh] == en
     assert "（下一步加入）" not in table                                          # 版式 is filled
+    assert "纸张" not in table and '"纸张"' not in LATEX_JS.read_text(encoding="utf-8")   # A3: taken out
 
 
 def test_the_layout_tab_adds_no_primary_button_and_its_colours_are_the_palettes_tokens():
@@ -779,12 +1017,11 @@ _PROBE = ("\\makeatletter\n\\typeout{PROBE size=\\f@size\\space bls=\\the\\basel
 
 _BUILD = r"""
 const SETTINGS = {
-  paper: ['', 'a4paper', 'letterpaper', 'b5paper'],
   margin: [null, {preset: '2'}, {preset: '2.5'}, {preset: '3'}, {preset: 'custom', top: 2, bottom: 2.5, left: 3, right: 2.5}],
   columns: ['', 'twocolumn'], pagestyle: ['', 'plain', 'empty'], hyperref: ['off', 'on'],
   size: null, spacing: ['', '1', '1.25', '1.5', '2', 'custom'], indent: ['', '0pt', '2em'], parskip: ['', 'half', 'one'],
 };
-const KEYS = ['paper', 'margin', 'columns', 'pagestyle', 'hyperref', 'size', 'spacing', 'indent', 'parskip'];
+const KEYS = ['margin', 'columns', 'pagestyle', 'hyperref', 'size', 'spacing', 'indent', 'parskip', 'secnum', 'capname', 'capnum'];
 const apply = (st, r) => { if (!r) return st; if (r.refused) throw new Error('refused: ' + r.refused + '\n' + st.doc.toString()); return st.update({changes: r.changes, selection: r.selection}).state; };
 const at = (st, word, end) => { const i = st.doc.toString().indexOf(word); if (i < 0) throw new Error('no ' + word); return st.update({selection: {anchor: i + (end ? word.length : 0)}}).state; };
 const build = (start, combo) => {
@@ -802,8 +1039,8 @@ const build = (start, combo) => {
   return st.doc.toString();
 };
 const out = {};
-for (const [name, start, sizes, allOn] of TEMPLATES) {
-  const lists = Object.assign({}, SETTINGS, {size: sizes});
+for (const [name, start, sizes, allOn, numbers] of TEMPLATES) {
+  const lists = Object.assign({}, SETTINGS, {size: sizes}, numbers);
   const combos = [];
   for (let i = 0; i < 6; i++) { const c = {}; KEYS.forEach((k) => { c[k] = lists[k][i % lists[k].length]; }); combos.push(c); }
   combos.push(allOn);
@@ -828,14 +1065,19 @@ _BODY = ("\\begin{document}\n" + _PROBE + "\\maketitle\n\\section{Intro}\\label{
 _ZH = "中文正文，用来看行距、缩进和段间距。" * 6
 _EN = "English body text to see the spacing, the indent and the space between paragraphs. " * 3
 _TEMPLATES = [
-    ["xelatex", "\\documentclass{ctexart}\n\\usepackage{amsmath}\n\\title{标题}\n\\author{作者}\n" + _BODY.replace("{TEXT}", _ZH),
+    # each starts as a new paper does (22.11): A4 in the class options, which no setting touches
+    ["xelatex", "\\documentclass[a4paper]{ctexart}\n\\usepackage{amsmath}\n\\title{标题}\n\\author{作者}\n" + _BODY.replace("{TEXT}", _ZH),
      ["", "10pt", "11pt", "12pt", "zihao=5", "zihao=-4"],
-     {"paper": "a4paper", "margin": {"preset": "custom", "top": 2, "bottom": 2.5, "left": 3, "right": 2.5}, "columns": "twocolumn",
-      "pagestyle": "empty", "hyperref": "on", "size": "zihao=-4", "spacing": "1.5", "indent": "0pt", "parskip": "half"}],
-    ["pdflatex", "\\documentclass{article}\n\\usepackage[T1]{fontenc}\n\\usepackage{amsmath}\n\\title{Title}\n\\author{Author}\n"
+     {"margin": {"preset": "custom", "top": 2, "bottom": 2.5, "left": 3, "right": 2.5}, "columns": "twocolumn",
+      "pagestyle": "empty", "hyperref": "on", "size": "zihao=-4", "spacing": "1.5", "indent": "0pt", "parskip": "half",
+      "secnum": "zh", "capname": "en", "capnum": "within"},
+     {"secnum": ["", "zh", "none", "zh"], "capname": ["zh", "en"], "capnum": ["", "within", "", "", "within"]}],
+    ["pdflatex", "\\documentclass[a4paper]{article}\n\\usepackage[T1]{fontenc}\n\\usepackage{amsmath}\n\\title{Title}\n\\author{Author}\n"
      + _BODY.replace("{TEXT}", _EN), ["", "10pt", "11pt", "12pt"],
-     {"paper": "a4paper", "margin": {"preset": "custom", "top": 2, "bottom": 2.5, "left": 3, "right": 2.5}, "columns": "twocolumn",
-      "pagestyle": "empty", "hyperref": "on", "size": "12pt", "spacing": "1.5", "indent": "0pt", "parskip": "half"}],
+     {"margin": {"preset": "custom", "top": 2, "bottom": 2.5, "left": 3, "right": 2.5}, "columns": "twocolumn",
+      "pagestyle": "empty", "hyperref": "on", "size": "12pt", "spacing": "1.5", "indent": "0pt", "parskip": "half",
+      "secnum": "", "capname": "en", "capnum": "within"},
+     {"secnum": ["", "none", "", ""], "capname": ["en"], "capnum": ["", "", "within", "", "within"]}],
 ]
 
 
@@ -845,7 +1087,7 @@ def built() -> dict:
 
 
 PT_PER_CM = 72.27 / 2.54
-PAPERS = {"": (614.295, 794.96999), "letterpaper": (614.295, 794.96999), "a4paper": (597.50787, 845.04684), "b5paper": (500.7685, 711.3189)}
+A4 = (597.50787, 845.04684)   # every new paper's (22.11, A3), in TeX points
 SIZES = {"10pt": 10.0, "11pt": 10.95, "12pt": 12.0, "zihao=5": 10.53937, "zihao=-4": 12.045}
 #: LaTeX's own single line at each size (size10/11/12.clo); ctex's zihao sizes are 1.2 times the size
 SINGLE = {10.0: 12.0, 10.95: 13.6, 12.0: 14.5, 10.53937: 1.2 * 10.53937, 12.045: 1.2 * 12.045}
@@ -882,8 +1124,9 @@ def _latexmk(folder: Path, text: str, engine: str, home: Path) -> tuple[subproce
 def test_every_setting_at_every_value_compiles_and_measures_as_set(built, tmp_path, engine):
     """Seven documents per class -- six combinations in which every value of every setting appears at least once, and
     every setting on at once -- each with every paragraph tool applied, compiled by latexmk as the export would (in the
-    main file's folder): a PDF, no error, and the probe's paper, text width, body size, \\baselineskip, \\parindent,
-    \\parskip, columns, hyperref and page numbers as set."""
+    main file's folder): a PDF, no error, and the probe's paper (A4 as the class says, whatever else is set), text width,
+    body size, \\baselineskip, \\parindent, \\parskip, columns, hyperref and page numbers as set. (What the numbering
+    settings print is read back by the next test.)"""
     docs = built[engine]
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(lambda k: _latexmk(tmp_path / f"doc{k}", docs[k]["text"], engine, tmp_path / "home"), range(len(docs))))
@@ -894,7 +1137,7 @@ def test_every_setting_at_every_value_compiles_and_measures_as_set(built, tmp_pa
         assert (tmp_path / f"doc{docs.index(doc)}" / "main.pdf").read_bytes().startswith(b"%PDF-")
         assert not re.search(r"^! |LaTeX Error|Undefined control sequence|Reference `[^']*' .*undefined", log, re.M), log[-2000:]
         p = _probe(log)
-        pw, ph = PAPERS[c["paper"]]
+        pw, ph = A4                                                            # left as the class option says
         assert abs(_pt(p["pw"]) - pw) < 0.01 and abs(_pt(p["ph"]) - ph) < 0.01, (c, p)
         if c["margin"]:
             m = c["margin"]
@@ -935,3 +1178,120 @@ def test_single_one_and_a_half_and_double_are_one_one_and_a_half_and_two_single_
         size, s0 = SIZES[probe["size"]], (1.3 if probe["engine"] == "xelatex" else 1.0)
         assert abs(float(p["size"]) - size) < 0.001, (probe["size"], p)
         assert abs(_pt(p["bls"]) - SINGLE[size] * s0 * float(probe["spacing"])) < 0.02, (probe["engine"], probe["size"], probe["spacing"], p)
+
+
+# -- 章节编号, 图表名称, 图表编号 (A3) compiled and read back from the PDF -------------------------------------------------
+
+PDFTOTEXT = shutil.which("pdftotext") or next((p for p in ("/opt/homebrew/bin/pdftotext", "/usr/local/bin/pdftotext") if os.access(p, os.X_OK)), None)
+
+_NUMBERED_BODY = ("\\begin{document}\n\\tableofcontents\n{CH1}\\section{Intro}\\label{sec:intro}\n"
+                  "SREF\\ref{sec:intro}END\n\nSUBREF\\ref{sub:back}END\n\nSSREF\\ref{ss:deep}END\n\nFIGREF\\ref{fig:one}END\n\n"
+                  "ZREF\\ref{fig:two}END\n\nTABREF\\ref{tab:one}END\n\n\\subsection{Back}\\label{sub:back}\nText.\n"
+                  "\\subsubsection{Deep}\\label{ss:deep}\nText.\n\\section*{Starred}\nText.\n"
+                  "\\begin{figure}[h]\\centering\\rule{1cm}{1cm}\\caption{CapOne}\\label{fig:one}\\end{figure}\n"
+                  "{CH2}\\section{Methods}\nText.\n\\begin{figure}[h]\\centering\\rule{1cm}{1cm}\\caption{CapTwo}\\label{fig:two}\\end{figure}\n"
+                  "\\begin{table}[h]\\centering\\caption{TabOne}\\label{tab:one}\\begin{tabular}{c}a\\end{tabular}\\end{table}\n"
+                  "\\end{document}\n")
+
+
+def _numbered_start(cls: str) -> str:
+    # each \\ref a paragraph of its own: pdftotext joins a line broken after a hyphen (2-1 would read 21)
+    chapters = cls in ("report", "ctexrep")
+    body = _NUMBERED_BODY.replace("{CH1}", "\\chapter{Alpha}\n" if chapters else "").replace("{CH2}", "\\chapter{Beta}\n" if chapters else "")
+    return f"\\documentclass[a4paper]{{{cls}}}\n\\usepackage{{amsmath}}\n" + body
+
+
+#: (class, engine, 章节编号, 图表名称, 图表编号, hyperref): every value of each, hyperref on and off, ctex and not, chapters
+#: and not; hyperref written first, so the numbering lines must go before it.
+_NUMBERED = [
+    ("ctexart", "xelatex", "zh", "zh", "within", "on"), ("ctexart", "xelatex", "zh", "en", "", "off"),
+    ("ctexart", "xelatex", "", "en", "within", "off"), ("ctexart", "xelatex", "none", "zh", "", "on"),
+    ("ctexart", "xelatex", "", "zh", "", "on"), ("ctexart", "xelatex", "none", "en", "", "off"),
+    ("ctexrep", "xelatex", "zh", "zh", "within", "on"), ("ctexrep", "xelatex", "none", "en", "continuous", "off"),
+    ("ctexrep", "xelatex", "", "zh", "", "on"), ("ctexrep", "xelatex", "zh", "en", "continuous", "on"),
+    ("ctexrep", "xelatex", "none", "zh", "", "off"), ("ctexrep", "xelatex", "", "en", "within", "off"),
+    ("article", "pdflatex", "", "en", "within", "on"), ("article", "pdflatex", "none", "en", "", "off"),
+    ("article", "pdflatex", "", "en", "", "off"), ("article", "pdflatex", "none", "en", "", "on"),
+    ("report", "pdflatex", "", "en", "within", "on"), ("report", "pdflatex", "none", "en", "continuous", "off"),
+    ("report", "pdflatex", "", "en", "", "on"), ("report", "pdflatex", "none", "en", "", "on"),
+]
+
+_NUMBERED_BUILD = r"""
+const apply = (st, r) => { if (!r) return st; if (r.refused) throw new Error('refused: ' + r.refused); return st.update({changes: r.changes}).state; };
+console.log(JSON.stringify(DOCS.map(([start, secnum, capname, capnum, hyperref]) => {
+  let st = CM.EditorState.create({doc: start});
+  for (const [k, v] of [['hyperref', hyperref], ['secnum', secnum], ['capname', capname], ['capnum', capnum]]) st = apply(st, P.layoutSpec(st, k, v, {}));
+  return st.doc.toString();
+})));
+"""
+
+
+def _expected_numbers(cls: str, secnum: str, capnum: str) -> dict:
+    """What the PDF should print: the reference to each heading, the figure and table numbers."""
+    chapters = cls in ("report", "ctexrep")
+    if secnum == "none":
+        refs = {"S": "", "SUB": ""}
+    elif secnum == "zh":
+        refs = {"S": "一", "SUB": "（一）"}
+    else:
+        refs = {"S": "1.1", "SUB": "1.1.1"} if chapters else {"S": "1", "SUB": "1.1"}
+    if capnum == "within":
+        figs = ("1-1", "2-1", "2-1")
+    elif chapters and capnum == "" and secnum != "none":
+        figs = ("1.1", "2.1", "2.1")                     # the class's own, by chapter
+    else:
+        figs = ("1", "2", "1")                           # continuous (and report's own while chapters are unnumbered)
+    return {"refs": refs, "figs": figs}
+
+
+@needs_node
+@pytest.mark.skipif(LATEXMK is None or PDFTOTEXT is None, reason="latexmk and pdftotext are needed")
+def test_heading_numbers_and_captions_print_as_chosen_in_the_pdf(tmp_path):
+    """Twenty documents written by 版式 (章节编号 × 图表名称 × 图表编号 × hyperref, on ctexart and ctexrep by XeLaTeX and
+    article and report by pdfLaTeX), compiled by latexmk and read back by pdftotext: each heading, its line in the table of
+    contents and every \\\\ref to it print the chosen number (一、 （一） 1. and none at all included), a starred heading
+    none, 第一章 stays in a ctex chapter class unless headings are unnumbered, captions read 图 / Figure / 表 / Table with
+    1, 1-1 or 1.1 as chosen and every \\\\ref to a figure or table prints the caption's number; no error, no undefined
+    reference, and with hyperref no two anchors of the same name."""
+    docs = _node("const DOCS = " + json.dumps([[_numbered_start(c), sn, cn, cp, h] for c, _e, sn, cn, cp, h in _NUMBERED]) + ";\n"
+                 + _NUMBERED_BUILD)
+
+    def run(k: int) -> tuple[subprocess.CompletedProcess, str, str]:
+        folder = tmp_path / f"n{k}"
+        done, log = _latexmk(folder, docs[k], _NUMBERED[k][1], tmp_path / "home")
+        # -raw: in the order the page was drawn (a centred heading in a big face is otherwise read out of place)
+        text = subprocess.run([PDFTOTEXT, "-raw", "-enc", "UTF-8", str(folder / "main.pdf"), "-"], capture_output=True, text=True,
+                              timeout=60).stdout if (folder / "main.pdf").exists() else ""
+        return done, log, text
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(run, range(len(_NUMBERED))))
+    for (cls, _engine, secnum, capname, capnum, hyperref), text_in, (done, log, pdf) in zip(_NUMBERED, docs, results):
+        case = f"{cls} 章节编号={secnum or 'default'} 图表名称={capname} 图表编号={capnum or 'default'} hyperref={hyperref}"
+        assert done.returncode == 0, case + log[-2000:]
+        assert not re.search(r"^! |LaTeX Error|Undefined control sequence|Reference `[^']*' .*undefined|same identifier|Token not allowed", log, re.M), case + log[-3000:]
+        assert ("\\usepackage[hidelinks]{hyperref}\n\\begin{document}" in text_in) == (hyperref == "on"), case   # hyperref still last
+        flat = re.sub(r"\s+", "", pdf)
+        want = _expected_numbers(cls, secnum, capnum)
+        # every \ref to a heading prints the heading's number (nothing at all when headings are unnumbered)
+        assert f"SREF{want['refs']['S']}END" in flat and f"SUBREF{want['refs']['SUB']}END" in flat, (case, pdf)
+        # each line of the contents carries its heading's number, and the first heading (before the first \\ref) the same
+        chapters = cls in ("report", "ctexrep")
+        heads = {"zh": ("一、Intro", "（一）Back", "一、Methods" if chapters else "二、Methods"), "none": ("Intro", "Back", "Methods")}.get(
+            secnum, ("1.1Intro", "1.1.1Back", "2.1Methods") if cls in ("report", "ctexrep") else ("1Intro", "1.1Back", "2Methods"))
+        front = flat[:flat.index("SREF")]
+        assert all(head in front for head in heads) and front.count(heads[0]) == 2, (case, heads, pdf)
+        if secnum == "none":
+            # no line of the contents or the text starts with a number before a heading (page numbers end lines)
+            assert not re.search(r"^\s*(?:[\d.]+|[一二]、|（[一二]）)\s*(?:Intro|Back|Deep|Methods)\b", pdf, re.M), (case, pdf)
+        if secnum == "zh" and cls == "ctexart":
+            assert "1.Deep" in flat and "SSREF1END" in flat, (case, pdf)              # the third level: 1.
+        assert "Text.Starred" in flat, (case, pdf)                                     # no number before it
+        if cls == "ctexrep":
+            assert ("第一章" in flat) == (secnum != "none"), (case, pdf)               # 第一章 stays with 一、（一）
+        if cls == "report":
+            assert ("Chapter1" in flat) == (secnum != "none"), (case, pdf)
+        # captions: the chosen names, the chosen numbers, and \ref prints each caption's number
+        fig, tab = ("图", "表") if capname == "zh" else ("Figure", "Table")
+        one, two, table = want["figs"]
+        assert f"{fig}{one}:CapOne" in flat and f"{fig}{two}:CapTwo" in flat and f"{tab}{table}:TabOne" in flat, (case, pdf)
+        assert f"FIGREF{one}END" in flat and f"ZREF{two}END" in flat and f"TABREF{table}END" in flat, (case, pdf)

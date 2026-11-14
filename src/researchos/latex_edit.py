@@ -609,10 +609,11 @@ def undo_save(root: str | Path, body: Any, lang: str = "zh") -> dict[str, Any]:
 
 # -- 新建文稿, a new draft (22.11) -------------------------------------------------------------------------------------
 
-_PAPER = ("\\documentclass[12pt]{%s}\n%s\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\usepackage{booktabs}\n\n"
+_PAPER = ("\\documentclass[a4paper,12pt]{%s}\n%s\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\usepackage{booktabs}\n\n"
           "\\title{<TITLE>}\n\\author{}\n\\date{\\today}\n\n\\begin{document}\n\\maketitle\n\n"
           "\\begin{abstract}\n%s\n\\end{abstract}\n\n\\section{%s}\n%s\n\n\\end{document}\n")
-#: What each kind starts as (22.11): minimal and compilable, no bibliography; `<TITLE>` is the title, escaped.
+#: What each kind starts as (22.11): minimal and compilable, no bibliography; `<TITLE>` is the title, escaped. A paper is
+#: A4 (22.12, A3: article and ctexart would otherwise be US Letter); 版式 never changes a paper's size.
 TEMPLATES = {
     "zh_paper": _PAPER % ("ctexart", "", "在这里写摘要。", "引言", "在这里开始写正文。"),
     "en_paper": _PAPER % ("article", "\\usepackage[T1]{fontenc}\n", "Write the abstract here.", "Introduction",

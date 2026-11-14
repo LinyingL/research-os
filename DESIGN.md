@@ -7858,6 +7858,8 @@ emoji, arrow or glyph.
   「确认关联」 are never shown together. The tools are small quiet buttons; a
   pressed one (aria-pressed) has an ink edge on the paper, never a colour.
   「版式」 (A2) has no primary: its settings are selects that write when chosen.
+  A choice a document cannot take (A3) is a disabled option with its reason
+  after a colon.
 
 ### 22.8 Batches and acceptance
 
@@ -8014,7 +8016,13 @@ project, so a paper had to be started outside Research OS. Now it starts here.
 - **The form.**
   - 类型: 「中文论文」 (`ctexart`, so 22.4 presets XeLaTeX), 「英文论文」
     (`article` with `fontenc` T1, pdfLaTeX), 「章节文件」 (no preamble, meant to be
-    brought into a main file).
+    brought into a main file). *A4 (A3, the researcher, 2026-11-14, on 22.12's
+    纸张: "纸张：A4、Letter、B5。这个不需要！"):* both papers start
+    `\documentclass[a4paper,12pt]{…}` -- article and ctexart are US Letter
+    otherwise -- so every new paper is A4 (measured by a probe compile of each
+    template: `\paperwidth` 597.50787 pt, `\paperheight` 845.04684 pt; pdfinfo
+    of the export: 595.28 x 841.89 pts, A4). No tool changes a paper's size
+    afterwards; an existing document's paper options are never touched.
   - 文件夹: the document folder of 19 (`outputs.folders`; when the settings
     cannot be read, `paper` if it exists, else `manuscript`), as
     `GET /api/latex/drafts` answers it (`new_folder`); editable, the folders of
@@ -8254,15 +8262,21 @@ Word's Home tab does; 「版式」 is the whole document):
 
 **版式** (A2; the researcher, 2026-11-14: "论文排版类似的常用功能都需要加上去，行间距之类的").
 The document's settings, as Word's page and paragraph settings, each a select
-under two quiet headings:
+under three quiet headings (纸张 taken out and the third group added by A3,
+below):
 
 | 页面 | | 文字与段落 | |
 |---|---|---|---|
-| 纸张 | 默认, A4, Letter, B5 | 正文字号 | 默认, 10pt, 11pt, 12pt; with ctex also 五号, 小四 |
-| 页边距 | 默认, 窄（2 厘米）, 适中（2.5 厘米）, 宽（3 厘米）, 自定义 (上, 下, 左, 右 in cm) | 行距 | 默认, 单倍, 1.25 倍, 1.5 倍, 双倍, 自定义 (a number of lines) |
-| 分栏 | 单栏, 双栏 | 首行缩进 | 默认, 无, 2 字 |
-| 页码 | 默认, 页脚居中, 不显示 | 段间距 | 无, 半行, 一行 |
-| 超链接 | 关, 开 | | |
+| 页边距 | 默认, 窄（2 厘米）, 适中（2.5 厘米）, 宽（3 厘米）, 自定义 (上, 下, 左, 右 in cm) | 正文字号 | 默认, 10pt, 11pt, 12pt; with ctex also 五号, 小四 |
+| 分栏 | 单栏, 双栏 | 行距 | 默认, 单倍, 1.25 倍, 1.5 倍, 双倍, 自定义 (a number of lines) |
+| 页码 | 默认, 页脚居中, 不显示 | 首行缩进 | 默认, 无, 2 字 |
+| 超链接 | 关, 开 | 段间距 | 无, 半行, 一行 |
+
+| 章节与图表 (A3) | |
+|---|---|
+| 章节编号 | 1 / 1.1 / 1.1.1 (the class's), 一、（一）1. (ctex), 不编号 |
+| 图表名称 | 图 / 表, Figure / Table (the class's own is the default) |
+| 图表编号 | 连续编号（图 1）, 按章或节编号（图 2-3）; in a chapter class also its own 按章编号（图 2.3）, the default |
 
 They live in the **main file's preamble**. In a chapter file 「版式」 says
 「版式在主文件 {main} 里设置。」 with 「打开 {main}」 (a text link that opens the main
@@ -8274,9 +8288,7 @@ turn the tab off with the panel's own reasons; a beamer class with
 
 - **Read before write.** The preamble is read with its comments masked: the
   class and its options, each `\usepackage`, `\geometry`, and the setting lines.
-  Each control shows the value the file has. *Recognised:* 纸张 as the class
-  option `a4paper`, `letterpaper`, `b5paper` or geometry's (also `paper=`);
-  页边距 as geometry's `margin`, `top`, `bottom`, `left`, `right` in cm, mm or in,
+  Each control shows the value the file has. *Recognised:* 页边距 as geometry's `margin`, `top`, `bottom`, `left`, `right` in cm, mm or in,
   in `\usepackage[…]{geometry}` or `\geometry{…}` (`margin=X` with X a preset is
   that preset, anything else 自定义 with its four numbers); 正文字号 as the class
   option `10pt`, `11pt`, `12pt` or, for a ctex class or the ctex package,
@@ -8294,7 +8306,7 @@ turn the tab off with the panel's own reasons; a beamer class with
   braces); inside a condition (`\if…` to its `\fi`; `\newif` and the
   brace-taking `\ifthenelse` and `\ifdef` open none); a line holding more than
   the one command; places that disagree (two places that agree are one setting,
-  changed together); a value not offered (`a5paper`, `9pt`,
+  changed together); a value not offered (`9pt`,
   `\pagestyle{headings}`, `1.5em`); geometry with a key that places the text
   another way (`includehead`, `textwidth`, …) or with only some margins; a
   package that sets margins itself (fullpage, a4wide, typearea, …); a primitive
@@ -8304,9 +8316,11 @@ turn the tab off with the panel's own reasons; a beamer class with
   `format.local`, read as a draft is read, no link followed) that mentions a
   setting makes it its own: 「{file} 第 {n} 行已有自己写的设置」, with no link (the
   editor opens `.tex` only). A class 版式 does not know (it knows article, report,
-  book, amsart, amsbook, ctexart, ctexrep and ctexbook) leaves 纸张, 正文字号 and
+  book, amsart, amsbook, ctexart, ctexrep and ctexbook) leaves 正文字号 and
   分栏 to the class's own line: 「文档类 {cls} 的选项这里不认识，请在 \documentclass
-  那一行自己改。」; the other settings still work.
+  那一行自己改。」, and 章节编号 and 图表编号 (whose lines depend on whether it
+  has chapters) to the person: 「文档类 {cls} 的编号这里不认识，请自己设置。」;
+  the other settings still work.
 - **Writing.** A choice is the editor's own transaction, as every tool of 22.12:
   undone by ⌘Z in one step, unsaved until 保存, mapped through the passages, in
   the file's line ending; nothing else is written. A setting already there is
@@ -8380,14 +8394,15 @@ turn the tab off with the panel's own reasons; a beamer class with
 - **Words** (13.4 rows): 段落 Paragraph; 对齐 Alignment; 两端对齐 Justified;
   左对齐 Flush left; 居中 Centred; 右对齐 Flush right; 引文块 Block quote; 分页
   Page break; 目录 Table of contents; 交叉引用 Cross-reference; 网址 Web address;
-  页面 Page; 文字与段落 Text and paragraphs; 纸张 Paper; 页边距 Margins; 分栏
+  页面 Page; 文字与段落 Text and paragraphs; 页边距 Margins; 分栏
   Columns; 页码 Page numbers; 超链接 Links in the PDF; 正文字号 Body text size
   (not 正文, "Manuscript"); 行距 Line spacing; 首行缩进 First-line indent; 段间距
   Space between paragraphs; 自定义 Custom; 单栏 One column; 双栏 Two columns;
   页脚居中 Centred in the footer; 不显示 None; 开 On; 关 Off; 五号 Wuhao (10.5 pt);
   小四 Xiaosi (12 pt); 单倍 Single; N 倍 N lines; 双倍 Double; 无 None; 2 字 2
   characters; 半行 Half a line; 一行 One line; 上, 下, 左, 右 Top, Bottom, Left,
-  Right; 看这一行 Show the line. A4, Letter, B5 and the pt sizes are not words.
+  Right; 看这一行 Show the line. The pt sizes are not words. (纸张 Paper was
+  removed with its control, A3.)
 - **Presentation** (22.7): 「版式」 has no primary button; its selects are the
   panel's quiet fields; 「自定义」's fields appear under their select; a setting's
   own line is a quiet sentence with a text link.
@@ -8400,9 +8415,118 @@ turn the tab off with the panel's own reasons; a beamer class with
   and real compiles by latexmk: every value of every setting on a ctexart
   (XeLaTeX) and an article (pdfLaTeX) document (six combinations so each value
   appears at least once, and all on at once), every paragraph tool applied, each
-  a PDF with no error and its paper, text width, size, `\baselineskip`,
+  a PDF with no error and its paper (A4, from the class options no setting
+  touches), text width, size, `\baselineskip`,
   `\parindent`, `\parskip`, columns, hyperref and page style measured as set;
   and the 行距 probes above at every body size.
+
+**版式, the researcher's three changes** (A3; the researcher, 2026-11-14,
+after seeing the plan):
+
+- **纸张 is gone.** "纸张：A4、Letter、B5。这个不需要！" The control, its words
+  and the reader and writer only it used are taken out (geometry's handling,
+  which 页边距 shares, stays: a paper key in geometry's options is still no
+  margin). A paper size in the class options, geometry's or a hand-written
+  `\paperwidth` is left as written, never read, never changed, and makes no
+  other setting the person's own. New papers are A4 instead (22.11).
+- **章节编号** ("1 / 1.1 / 1.1.1，或中文 一、（一）、1.，或不编号"), a select:
+  - 「1 / 1.1 / 1.1.1」, the class's own: choosing it removes what the tool
+    wrote.
+  - 「一、（一）1.」: 一、 for a section, （一） for a subsection, 1. for a
+    subsubsection; in a chapter class 第一章 stays and each chapter's sections
+    count 一、 again (there the third level is unnumbered, as the class's own
+    secnumdepth of 2 says: measured, a `\ref` to it prints its subsection's （一）). Four lines: `\renewcommand{\thesection}{\chinese{section}}`,
+    `\renewcommand{\thesubsection}{（\chinese{subsection}）}`,
+    `\renewcommand{\thesubsubsection}{\arabic{subsubsection}}` and
+    `\ctexset{section/name={,、},section/aftername={},subsection/aftername={},subsubsection/name={,.}}`.
+    *Why not `\ctexset` alone:* ctex's `number` key changes only what the
+    heading shows (`\CTEX@thesection`); measured, with
+    `section/number=\chinese{section}` the heading read 一、 but a `\ref` to a
+    subsection printed 1.1. Redefining `\the…` makes the heading, its line in the
+    contents and every `\ref` print the same number (一, （一）, 1), and ctex's
+    `number` follows `\thesection` by default. `name` puts 、 and . after the
+    number in the heading and the contents, never in a `\ref`; `aftername={}`
+    drops ctex's space after 、 and （一）. It needs ctex's headings: a ctex
+    class, or the ctex package with `heading=true` (without it ctex has no
+    section keys: "The key 'ctex/section/name' is unknown", measured).
+    Otherwise the option is shown disabled with its reason: 「中文编号需要中文文档类」
+    (with the ctex package: 「中文编号需要 ctex 宏包的 heading=true 选项」).
+  - 「不编号」: `\setcounter{secnumdepth}{0}` (`{-1}` in a chapter class, where a
+    chapter's level is 0). ctex keeps it: measured, ctexart and ctexrep print no
+    number, so ctex's own `secnumdepth` key is not needed. A quiet line under the
+    select says what it costs: 「不编号时，\ref 引用章节印不出编号。」 (LaTeX steps
+    no counter for an unnumbered heading; measured, the `\ref` prints nothing).
+  - *Read* as exactly those lines and keys, spaces aside (the four keys may share
+    a `\ctexset` with other keys, which stay when they go), or a secnumdepth line
+    at or below that level. Anything else is 「自定义」 with its line: another
+    definition of `\the…section` or `\@seccntformat`, titlesec, a section key of
+    `\ctexset` with another value or nested (`section={…}`), ctex's
+    `secnumdepth` key, `\setcounter{secnumdepth}{2}`, only some of the four
+    lines, or the Chinese lines and 不编号 together.
+- **图表标题** ("图 1 或 Figure 1；是否按章编号（图 2-3）"), two selects:
+  - **图表名称**: 「图 / 表」 or 「Figure / Table」. The class's own (图 / 表 with
+    ctex, Figure / Table otherwise) removes the setting; the other writes
+    `\renewcommand{\figurename}{…}` and `\renewcommand{\tablename}{…}`.
+    *Measured:* ctex sets its names when it is loaded, not at
+    `\begin{document}`, so these two lines work in ctexart and ctexrep as in
+    article (the caption printed "Figure 1: …"). `\ctexset{figurename=…,
+    tablename=…}` is read too and changed in place. 「图 / 表」 needs a Chinese
+    font: it is offered with ctex or xeCJK, otherwise shown disabled with
+    「中文图表名需要中文文档类」. babel and polyglossia set the names again at
+    `\begin{document}` (measured: a `\renewcommand` before it is lost), so with
+    either one the setting is the person's: 「文稿用 {pkg} 设置语言，图表名称由它决定。」
+    The caption package's `name` and `figurename` keys are the person's too.
+  - **图表编号**: 「连续编号（图 1）」 or 「按章或节编号（图 2-3）」 (by chapter in a
+    chapter class, else by section); a chapter class also has its own
+    「按章编号（图 2.3）」, the default there. *Figures and tables only:* equations
+    keep the class's numbering. Without chapters it writes
+    `\counterwithin{figure}{section}`, `\counterwithin{table}{section}`,
+    `\renewcommand{\thefigure}{\arabic{section}-\arabic{figure}}` and the
+    table's, and `\providecommand{\theHfigure}{\theHsection.\arabic{figure}}`
+    and the table's. hyperref loads after them and would otherwise give every
+    section's first figure the anchor `figure.1` (measured: "destination with the
+    same identifier"); `\providecommand` keeps hyperref's own where it was loaded
+    earlier. The number is `\arabic{section}`, not `\thesection`, so under 一、
+    headings a figure still reads 图 1-1. With chapters it writes only the two
+    `\renewcommand` lines with `\thechapter-`, since the class already resets
+    the counters by chapter; 连续编号 there is `\counterwithout{figure}{chapter}`
+    and the table's. *Read* as exactly those lines (the `\theH` lines optional);
+    anything else on `\thefigure` or `\thetable`, or a `\counterwithin`,
+    `\numberwithin` or `\@addtoreset` of figure or table, is the person's.
+  - **不编号 and 按章或节编号 refuse each other.** With no heading number the
+    counters never step and a caption prints 0-1 (measured, article). The option
+    is shown disabled: 「不编号：图表按章或节编号时不能选」 or
+    「按章或节编号（图 2-3）：章节不编号时不能选」, and a write is refused with a
+    sentence that says why. A chapter class's own 图 2.3 drops the 0 itself
+    (measured: report with secnumdepth -1 prints Figure 1, Figure 2).
+- **Same rules as every 版式 setting.** Each is read from the main file's
+  preamble. The tool's own lines are changed or removed whole, and only they. New
+  lines go after the last `\usepackage`, with hyperref (and cleveref and the
+  like) still after them. A chapter file shows them read-only with
+  「打开 {main}」. Each choice is one undo step. A class 版式 does not know
+  shows 章节编号 and 图表编号 as the person's (above). A project `.sty` or `.cls`
+  that defines `\the…section`, `\thefigure`, the names or secnumdepth makes the
+  setting its own; reading `\thesection` in a header does not.
+- **A choice a document cannot take** is shown as a disabled option with its
+  reason after a colon (「一、（一）1.：中文编号需要中文文档类」), not as a
+  sentence under every select.
+- **Measured** (`tests/test_v17_layout_settings.py`): twenty documents written by
+  the tab, compiled by latexmk and read back with `pdftotext -raw`. They are
+  ctexart and ctexrep by XeLaTeX and article and report by pdfLaTeX, with every
+  value of the three settings and hyperref on and off (written first, so the new
+  lines go before it). In each: every heading, its line in the contents and
+  every `\ref` to it print 1 / 1.1 / 1.1.1, 一 / （一） / 1 (headings 一、, （一）,
+  1.), or nothing; a starred heading has no number; 第一章 stays in ctexrep unless
+  不编号; captions read 图 1, Figure 1, 图 1-1, Figure 2-1, 图 1.1 or 表 2-1 as
+  chosen; every `\ref` to a figure or table prints the caption's number. No
+  error, no undefined reference, no anchor named twice. The seven-document
+  matrix above also carries the three settings.
+- **Words** (13.4 rows): 章节与图表 Headings and figures; 章节编号 Heading
+  numbers; 图表名称 Figure and table names; 图表编号 Figure and table numbers;
+  一、（一）1. Chinese style: yi, (yi), 1.; 不编号 Unnumbered; 图 / 表 Chinese
+  names (tu, biao); 连续编号（图 1） Continuous (Figure 1); 按章编号（图 2.3） By
+  chapter (Figure 2.3); 按章或节编号（图 2-3） By chapter or section (Figure 2-3).
+  1 / 1.1 / 1.1.1 and Figure / Table are not words.
 
 - **The engine.** `GET /api/latex/file` gives, for a file that is not
   read-only, `format`: the main file the export would compile it in (the

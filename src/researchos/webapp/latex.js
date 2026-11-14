@@ -1078,8 +1078,8 @@
 
   const LAYOUT_CLASSES = new Set(["article", "report", "book", "amsart", "amsbook", "ctexart", "ctexrep", "ctexbook"]);
   const SLIDE_CLASSES = /^(?:ctex)?beamer$/;
+  // a paper size among geometry's keys: never a margin (版式 has no 纸张: the researcher, 2026-11-14; new papers are A4, 22.11)
   const PAPER_ITEM = /^(?:[abc]\d|b\dj|letter|legal|executive)paper$/;
-  const PAPERS = ["a4paper", "letterpaper", "b5paper"];
   const MARGIN_KEYS = new Set(["margin", "top", "bottom", "left", "right"]);
   // geometry's other keys that place the text block: with one of them the margins are the person's own
   const LAYOUT_KEYS = /^(?:[hv]?margin|[lrtb]margin|inner|outer|hmarginratio|vmarginratio|marginratio|ratio|centering|[hv]centering|textwidth|textheight|width|height|total|body|text|scale|[hv]scale|includehead|includefoot|includeheadfoot|includeall|includemp|bindingoffset|twoside|landscape|portrait|layout\w*|hdivide|vdivide|divide|left|right|top|bottom|margin)$/;
@@ -1096,7 +1096,6 @@
   const LENGTH_SETTERS = new Set(["setlength", "addtolength"]);
   // What a project .sty or .cls says of each setting: any of it makes the setting the file's own.
   const LOCAL_MARKERS = {
-    paper: /\\(?:paperwidth|paperheight|pdfpagewidth|pdfpageheight)\b|\b(?:[abc]\d|letter|legal|executive)paper\b|\bgeometry\b/,
     margin: /\\(?:textwidth|textheight|oddsidemargin|evensidemargin|topmargin|hoffset|voffset|newgeometry)\b|\bgeometry\b/,
     size: /\bzihao\b|\b1[012]pt\b|\\normalsize\b/,
     spacing: /\\(?:setstretch|linespread|singlespacing|onehalfspacing|doublespacing|baselinestretch|SetSinglespace)\b|\bsetspace\b|\blinespread\b/,
@@ -1105,8 +1104,43 @@
     pagestyle: /\\(?:pagestyle|thispagestyle)\b|\\ps@|\bnopageno\b/,
     columns: /\b(?:two|one)column\b/,
     hyperref: /\bhyperref\b/,
+    secnum: /\bsecnumdepth\b|\\(?:(?:(?:re)?new|provide)command|[gex]?def|let)\s*\*?\s*\{?\s*\\(?:the(?:sub)*section|@seccntformat)\b|\\titleformat\b|\\titlelabel\b|\btitlesec\b|\b(?:sub)*section\s*\/\s*(?:name|number|aftername|numbering)\b/,
+    capname: /\\(?:figurename|tablename)\b|\b(?:figurename|tablename)\s*=/,
+    capnum: /\\(?:(?:(?:re)?new|provide)command|[gex]?def|let)\s*\*?\s*\{?\s*\\theH?(?:figure|table)\b|\\(?:counterwithin|counterwithout|numberwithin|@addtoreset)\s*\*?\s*(?:\[[^\]]*\]\s*)?\{\s*(?:figure|table)\s*\}/,
   };
-  const LAYOUT_KEYS_ORDER = ["paper", "margin", "columns", "pagestyle", "hyperref", "size", "spacing", "indent", "parskip"];
+  const LAYOUT_KEYS_ORDER = ["margin", "columns", "pagestyle", "hyperref", "size", "spacing", "indent", "parskip", "secnum", "capname", "capnum"];
+  // 章节编号, 图表名称, 图表编号 (22.12, A3): the classes 版式 knows that have chapters, the commands whose definitions it
+  // reads, and the lines and \ctexset keys it writes.
+  const LAYOUT_CHAPTER_CLASSES = new Set(["report", "book", "amsbook", "ctexrep", "ctexbook"]);
+  const DEFINED = new Map([["thesection", "secnum"], ["thesubsection", "secnum"], ["thesubsubsection", "secnum"], ["@seccntformat", "secnum"],
+    ["figurename", "capname"], ["tablename", "capname"], ["thefigure", "capnum"], ["thetable", "capnum"], ["theHfigure", "capnum"], ["theHtable", "capnum"]]);
+  const ZH_NUMBER_DEFS = { thesection: "\\chinese{section}", thesubsection: "（\\chinese{subsection}）", thesubsubsection: "\\arabic{subsubsection}" };
+  const ZH_NUMBER_KEYS = { "section/name": ",、", "section/aftername": "", "subsection/aftername": "", "subsubsection/name": ",." };
+  const CAPTION_NAMES = { zh: { figurename: "图", tablename: "表" }, en: { figurename: "Figure", tablename: "Table" } };
+  const squash = (x) => String(x == null ? "" : x).replace(/\s+/g, "");
+  // what a \ctexset key sets, as 版式 counts it: the section headings' numbers, the figure and table names, or neither
+  function ctexKey(key) {
+    const k = squash(key);
+    if (/^(?:sub)*section(?:\/(?:name|number|aftername|numbering))?$/.test(k) || k === "secnumdepth") return "secnum";
+    if (k === "figurename" || k === "tablename") return "capname";
+    return null;
+  }
+  // The lines 图表编号 writes: by section in a class without chapters (the counters reset there, the number printed with
+  // a hyphen, hyperref's anchors kept apart by section: it loads later and would name them figure.1 in every section);
+  // by chapter, a chapter class already resets them and only the hyphen is written; 连续编号 in a chapter class stops
+  // the reset. Figures and tables only: equations keep the class's numbering.
+  function capnumLines(chapters, value) {
+    const both = (f) => [f("figure"), f("table")];
+    if (value === "within" && chapters) return both((x) => "\\renewcommand{\\the" + x + "}{\\thechapter-\\arabic{" + x + "}}");
+    if (value === "within") return both((x) => "\\counterwithin{" + x + "}{section}").concat(both((x) => "\\renewcommand{\\the" + x + "}{\\arabic{section}-\\arabic{" + x + "}}"),
+      both((x) => "\\providecommand{\\theH" + x + "}{\\theHsection.\\arabic{" + x + "}}"));
+    if (value === "continuous" && chapters) return both((x) => "\\counterwithout{" + x + "}{chapter}");
+    return [];
+  }
+  // 章节编号's Chinese style: 一、 （一） 1. -- \the… redefined so a \ref prints the number the heading shows (ctex's own
+  // `number` key changes the heading only), the punctuation after it from ctex's `name`, no space after 、 or ）.
+  const ZH_NUMBER_LINES = Object.keys(ZH_NUMBER_DEFS).map((k) => "\\renewcommand{\\" + k + "}{" + ZH_NUMBER_DEFS[k] + "}")
+    .concat(["\\ctexset{" + Object.keys(ZH_NUMBER_KEYS).map((k) => k + "={" + ZH_NUMBER_KEYS[k] + "}").join(",") + "}"]);
 
   // `text` with every comment turned into spaces, so positions and line breaks stay.
   function masked(text) { return text.split("\n").map((l) => { const c = codePart(l); return c + " ".repeat(l.length - c.length); }).join("\n"); }
@@ -1193,7 +1227,7 @@
     // where \begin{document} starts, which no setting line may share)
     const alone = (c, to) => c.lineStart && !code.slice(to, lineEnd(to)).trim() && lineEnd(to) < code.length;
     const top = (c) => c.depth === 0 && c.cond === 0;
-    const r = { pre: pre, code: code, lineOf: lineOf, lineEnd: lineEnd, dc: null, packages: [], geometry: [], lines: [], marks: {} };
+    const r = { pre: pre, code: code, lineOf: lineOf, lineEnd: lineEnd, dc: null, packages: [], geometry: [], lines: [], ctexsets: [], marks: {} };
     const mark = (key, pos, why) => { (r.marks[key] = r.marks[key] || []).push({ line: lineOf(pos), why: why || null }); };
     for (const c of cmds) {
       const n = c.name;
@@ -1231,6 +1265,56 @@
       if (n === "twocolumn" || n === "onecolumn") { mark("columns", c.from); continue; }
       if (n === "newgeometry") { mark("margin", c.from); continue; }
       if (n === "normalsize" && c.prev && DEFINERS.has(c.prev.name)) { mark("size", c.from); continue; }
+      // 章节编号, 图表名称, 图表编号 (A3): \renewcommand{\thesection}{…} and their like, read where 版式 writes them --
+      // \renewcommand (\providecommand for hyperref's \theH…) of one command, at the top, alone on its line; any other
+      // definition of these commands is the person's own
+      if (DEFINERS.has(n)) {
+        let j = skipBlank(code, c.nameTo);
+        const star = code[j] === "*";
+        if (star) j = skipBlank(code, j + 1);
+        const braced = code[j] === "{";
+        if (braced) j = skipBlank(code, j + 1);
+        const m = /^\\([A-Za-z@]+)/.exec(code.slice(j, j + 40)), key = m ? DEFINED.get(m[1]) : null;
+        if (!key) continue;
+        let after = skipBlank(code, j + m[0].length);
+        if (braced) { if (code[after] !== "}") { mark(key, c.from); continue; } after += 1; }
+        const a = !star && (n === "renewcommand" || n === "providecommand") ? readArgs(code, after, "m") : null;
+        if (a && top(c) && alone(c, a.to)) r.lines.push({ kind: "def", name: m[1], definer: n, c: c, args: a.args, value: code.slice(a.args[0].inner[0], a.args[0].inner[1]).trim(), from: code.lastIndexOf("\n", c.from) + 1, to: lineEnd(a.to), line: lineOf(c.from) });
+        else mark(key, c.from);
+        continue;
+      }
+      if (n === "setcounter" || n === "addtocounter") {
+        const a = readArgs(code, c.nameTo, "mm");
+        if (!a) { if (/^\s*\{\s*secnumdepth\s*\}/.test(code.slice(c.nameTo, c.nameTo + 40))) mark("secnum", c.from); continue; }
+        if (code.slice(a.args[0].inner[0], a.args[0].inner[1]).trim() !== "secnumdepth") continue;
+        if (n === "setcounter" && top(c) && alone(c, a.to)) r.lines.push({ kind: "secnumdepth", c: c, args: a.args, value: code.slice(a.args[1].inner[0], a.args[1].inner[1]).trim(), from: code.lastIndexOf("\n", c.from) + 1, to: lineEnd(a.to), line: lineOf(c.from) });
+        else mark("secnum", c.from);
+        continue;
+      }
+      if (n === "counterwithin" || n === "counterwithout" || n === "numberwithin" || n === "@addtoreset") {
+        const star = code[c.nameTo] === "*", a = readArgs(code, c.nameTo + (star ? 1 : 0), n === "numberwithin" ? "omm" : "mm");
+        const args = a ? a.args.filter((x) => !x.opt) : null, what = args && args.length === 2 ? code.slice(args[0].inner[0], args[0].inner[1]).trim() : "";
+        if (what !== "figure" && what !== "table") { if (!a && /^\*?\s*(?:\[[^\]]*\]\s*)?\{\s*(?:figure|table)\s*\}/.test(code.slice(c.nameTo, c.nameTo + 60))) mark("capnum", c.from); continue; }
+        if (!star && (n === "counterwithin" || n === "counterwithout") && top(c) && alone(c, a.to)) r.lines.push({ kind: n, c: c, args: args, value: what, within: code.slice(args[1].inner[0], args[1].inner[1]).trim(), from: code.lastIndexOf("\n", c.from) + 1, to: lineEnd(a.to), line: lineOf(c.from) });
+        else mark("capnum", c.from);
+        continue;
+      }
+      // \ctexset{…}: a line of its own is read key by key (the keys 版式 writes are its own, others left alone); one in a
+      // macro or a condition, or sharing its line, makes what it sets the person's own
+      if (n === "ctexset") {
+        const a = readArgs(code, c.nameTo, "m");
+        if (!a) continue;
+        const list = optionList(code, a.args[0]);
+        if (top(c) && alone(c, a.to)) r.ctexsets.push({ c: c, list: list, from: code.lastIndexOf("\n", c.from) + 1, to: lineEnd(a.to), line: lineOf(c.from) });
+        else list.items.forEach((it) => { const k = ctexKey(it.key); if (k) mark(k, c.from); });
+        continue;
+      }
+      // the caption package's names: the person's own
+      if (n === "captionsetup") {
+        const a = readArgs(code, c.nameTo, "om"), arg = a && a.args.find((x) => !x.opt);
+        if (arg && optionList(code, arg).items.some((it) => /^(?:name|figurename|tablename)$/.test(it.key))) mark("capname", c.from);
+        continue;
+      }
       if (LENGTH_SETTERS.has(n)) {
         // \setlength{\parindent}{2em} or \setlength\parindent{2em}: what it sets is its first argument
         let j = skipBlank(code, c.nameTo), braced = code[j] === "{";
@@ -1238,7 +1322,7 @@
         const m = /^\\([A-Za-z@]+)/.exec(code.slice(j, j + 40));
         if (!m) continue;
         const target = m[1], after = skipBlank(code, j + m[0].length) + (braced ? 1 : 0);
-        const key = target === "parindent" ? "indent" : target === "parskip" ? "parskip" : /^(?:paperwidth|paperheight|pdfpagewidth|pdfpageheight)$/.test(target) ? "paper"
+        const key = target === "parindent" ? "indent" : target === "parskip" ? "parskip"
           : /^(?:textwidth|textheight|oddsidemargin|evensidemargin|topmargin|hoffset|voffset)$/.test(target) ? "margin" : null;
         if (!key) continue;
         const a = n === "setlength" && (!braced || code[after - 1] === "}") ? readArgs(code, after, "m") : null;
@@ -1248,9 +1332,9 @@
         continue;
       }
       // a length set as TeX does it, \parindent=0pt or \parindent 0pt (never one only read, as in \hspace{\parindent})
-      if (/^(?:parindent|parskip|paperwidth|paperheight|textwidth|textheight|oddsidemargin|evensidemargin|topmargin)$/.test(n) && !(c.prev && LENGTH_SETTERS.has(c.prev.name) && c.prev.nameTo >= c.from - 2)) {
+      if (/^(?:parindent|parskip|textwidth|textheight|oddsidemargin|evensidemargin|topmargin)$/.test(n) && !(c.prev && LENGTH_SETTERS.has(c.prev.name) && c.prev.nameTo >= c.from - 2)) {
         const next = code[skipBlank(code, c.nameTo)];
-        if (next === "=" || /[\d.-]/.test(next || "")) mark(n === "parindent" ? "indent" : n === "parskip" ? "parskip" : /^paper/.test(n) ? "paper" : "margin", c.from);
+        if (next === "=" || /[\d.-]/.test(next || "")) mark(n === "parindent" ? "indent" : n === "parskip" ? "parskip" : "margin", c.from);
       }
     }
     return r;
@@ -1281,30 +1365,24 @@
     const classOwn = known ? null : { line: dc.line, why: t("文档类 {cls} 的选项这里不认识，请在 {command} 那一行自己改。", { cls: dc.cls, command: "\\documentclass" }) };
     // the packages a hidden line (a condition, a macro) or a project file loads are their own
     r.packages.filter((p) => !p.top).forEach((p) => p.names.forEach((nm) => {
-      if (nm === "geometry") { mine("paper", p.line); mine("margin", p.line); }
+      if (nm === "geometry") mine("margin", p.line);
       if (nm === "setspace" || nm === "doublespace") mine("spacing", p.line);
       if (nm === "parskip") { mine("parskip", p.line); mine("indent", p.line); }
       if (nm === "nopageno") mine("pagestyle", p.line);
       if (nm === "hyperref") mine("hyperref", p.line);
-      if (nm === "ctex") mine("size", p.line);
+      if (nm === "ctex") { mine("size", p.line); mine("secnum", p.line); }
+      if (nm === "babel" || nm === "polyglossia") mine("capname", p.line);
     }));
     pk.forEach((p) => p.names.forEach((nm) => {
-      if (MARGIN_PACKAGES.has(nm)) { mine("margin", p.line); if (nm === "a4" || nm === "a4wide" || nm === "typearea") mine("paper", p.line); }
+      if (MARGIN_PACKAGES.has(nm)) mine("margin", p.line);
+      if (nm === "titlesec") mine("secnum", p.line);   // it sets the headings and their numbers its own way
       if (nm === "doublespace") mine("spacing", p.line);
     }));
-    r.geometry.filter((g) => !g.top).forEach((g) => { mine("paper", g.line); mine("margin", g.line); });
+    r.geometry.filter((g) => !g.top).forEach((g) => mine("margin", g.line));
 
-    // 纸张: a class option, or geometry's
+    // 纸张 is not a setting (A3): the class's or geometry's paper is left as written, never read or changed
     const geoLists = pk.filter((p) => p.names.includes("geometry") && p.opts).map((p) => ({ list: p.opts, line: p.line, pkg: p }))
       .concat(r.geometry.filter((g) => g.top).map((g) => ({ list: g.list, line: g.line, geo: g })));
-    const paperSeen = [];
-    const paperItem = (it, list, line, inClass) => {
-      const v = PAPER_ITEM.test(it.key) && it.value == null ? it.key : /^paper(?:name)?$/.test(it.key) && it.value ? (/paper$/.test(it.value) ? it.value : it.value + "paper") : null;
-      if (v && PAPERS.includes(v) && (!inClass || known)) { paperSeen.push({ v: v, line: line }); S.paper.occ.push({ list: list, item: it }); return; }
-      if (v || /^paper(?:width|height|size)$/.test(it.key) || (it.key === "paper" || it.key === "papername")) mine("paper", line, inClass && !known ? classOwn : null);
-    };
-    dcItems.forEach((it) => paperItem(it, dc.opts, dc.line, true));
-    geoLists.forEach((g) => g.list.items.forEach((it) => paperItem(it, g.list, g.line, false)));
     // 页边距: geometry's margin, top, bottom, left and right in cm, mm or in; any other key that places the text is the person's
     const margin = {}, marginLines = [];
     geoLists.forEach((g) => g.list.items.forEach((it) => {
@@ -1379,6 +1457,68 @@
     S.hyperref.value = hyper.length ? "on" : "off";
     S.hyperref.occ = hyper.map((p) => ({ pkg: p }));
 
+    // 章节编号, 图表名称, 图表编号 (A3)
+    const chapters = known && LAYOUT_CHAPTER_CLASSES.has(dc.cls);
+    out.chapters = chapters;
+    const heading = ctexPkg && items(ctexPkg.opts).some((it) => it.key === "heading" && (it.value == null || it.value === "true"));
+    // Chinese numbers need ctex's headings: a ctex class, or the ctex package with heading=true (without it ctex has no
+    // section keys: "The key 'ctex/section/name' is unknown", measured); Chinese names need a font with them
+    out.zhNumbers = (ctexClass && known) || !!heading;
+    out.zhNumbersWhy = out.zhNumbers ? null : out.ctex ? t("中文编号需要 ctex 宏包的 {option} 选项", { option: "heading=true" }) : t("中文编号需要中文文档类");
+    out.cjk = out.ctex || has("xeCJK");
+    out.capDefault = out.ctex ? "zh" : "en";
+    const defs = (names) => r.lines.filter((l) => l.kind === "def" && names.includes(l.name));
+    const classNumbers = known ? null : { line: dc.line, why: t("文档类 {cls} 的编号这里不认识，请自己设置。", { cls: dc.cls }) };
+    // 章节编号: 一、（一）1. as the three \renewcommand lines and ctex's four keys, all of them; 不编号 as secnumdepth
+    // 0 (-1 with chapters: a chapter's level is 0)
+    const zhLines = [], zhItems = [];
+    defs(["thesection", "thesubsection", "thesubsubsection", "@seccntformat"]).forEach((l) => {
+      const want = Object.prototype.hasOwnProperty.call(ZH_NUMBER_DEFS, l.name) ? ZH_NUMBER_DEFS[l.name] : null;
+      if (l.definer === "renewcommand" && want != null && squash(l.value) === squash(want) && !zhLines.some((x) => x.name === l.name)) zhLines.push(l); else mine("secnum", l.line);
+    });
+    const nameSeen = [];
+    r.ctexsets.forEach((set) => set.list.items.forEach((it) => {
+      const k = squash(it.key), kind = ctexKey(k);
+      if (kind === "secnum") {
+        const want = Object.prototype.hasOwnProperty.call(ZH_NUMBER_KEYS, k) ? ZH_NUMBER_KEYS[k] : null;
+        if (want != null && it.value != null && squash(it.value) === want && !zhItems.some((x) => x.k === k)) zhItems.push({ set: set, item: it, k: k }); else mine("secnum", set.line);
+      } else if (kind === "capname") {
+        if (it.value == null) mine("capname", set.line); else nameSeen.push({ name: k, v: squash(it.value), line: set.line, occ: { set: set, item: it, name: k } });
+      }
+    }));
+    const zh = zhLines.length || zhItems.length;
+    if (zh && (zhLines.length < 3 || zhItems.length < 4 || !out.zhNumbers)) mine("secnum", (zhLines[0] || zhItems[0].set).line);
+    const depth = r.lines.filter((l) => l.kind === "secnumdepth"), none = [];
+    depth.forEach((l) => { if (/^-?\d+$/.test(l.value) && Number(l.value) <= (chapters ? -1 : 0)) none.push(l); else mine("secnum", l.line); });
+    if (zh && none.length) mine("secnum", none[0].line);
+    S.secnum.value = zh ? "zh" : none.length ? "none" : "";
+    S.secnum.occ = zhLines.map((l) => ({ line: l })).concat(zhItems, none.map((l) => ({ line: l })));
+    // 图表名称: \renewcommand{\figurename}{…} and {\tablename}, or ctex's figurename= and tablename=; the class's own
+    // names when none is set. babel and polyglossia set the names again at \begin{document}: theirs.
+    defs(["figurename", "tablename"]).forEach((l) => { if (l.definer === "renewcommand") nameSeen.push({ name: l.name, v: squash(l.value), line: l.line, occ: { line: l, name: l.name } }); else mine("capname", l.line); });
+    const lang = pk.find((p) => p.names.some((nm) => nm === "babel" || nm === "polyglossia"));
+    if (lang) mine("capname", lang.line, { why: t("文稿用 {pkg} 设置语言，图表名称由它决定。", { pkg: lang.names.find((nm) => nm === "babel" || nm === "polyglossia") }) });
+    pk.filter((p) => p.names.includes("caption")).forEach((p) => { if (items(p.opts).some((it) => /^(?:name|figurename|tablename)$/.test(it.key))) mine("capname", p.line); });
+    S.capname.value = out.capDefault;
+    if (nameSeen.length) {
+      const one = (name) => Array.from(new Set(nameSeen.filter((x) => x.name === name).map((x) => x.v)));
+      const fig = one("figurename"), tab = one("tablename");
+      const v = fig.length === 1 && tab.length === 1 ? Object.keys(CAPTION_NAMES).find((x) => CAPTION_NAMES[x].figurename === fig[0] && CAPTION_NAMES[x].tablename === tab[0]) : null;
+      if (v && (v === "en" || out.cjk)) { S.capname.value = v; S.capname.occ = nameSeen.map((x) => x.occ); } else mine("capname", nameSeen[0].line);
+    }
+    // 图表编号: exactly the lines the tool writes (capnumLines), with or without the \theH… lines; anything else theirs
+    const numLines = r.lines.filter((l) => (l.kind === "def" && /^theH?(?:figure|table)$/.test(l.name)) || l.kind === "counterwithin" || l.kind === "counterwithout");
+    if (numLines.length) {
+      const sig = (l) => (l.kind === "def" ? "\\" + l.definer + "{\\" + l.name + "}{" + squash(l.value) + "}" : "\\" + l.kind + "{" + l.value + "}{" + l.within + "}");
+      const sigs = numLines.map(sig);
+      const form = ["within", "continuous"].find((v) => {
+        const want = capnumLines(chapters, v).map(squash), need = want.filter((x) => !/\\theH/.test(x));
+        return want.length && need.every((x) => sigs.filter((y) => y === x).length === 1) && sigs.every((x) => want.filter((y) => y === x).length === 1);
+      });
+      if (form) { S.capnum.value = form; S.capnum.occ = numLines.map((l) => ({ line: l })); } else mine("capnum", numLines[0].line);
+    }
+    if (!known) { mine("secnum", dc.line, classNumbers); mine("capnum", dc.line, classNumbers); }
+
     // the values; settings that disagree are the person's own
     const agree = (key, seen, v) => {
       if (!seen.length) return;
@@ -1386,7 +1526,6 @@
       if (vals.size > 1) { mine(key, seen[seen.length - 1].line); return; }
       S[key].value = v(seen[0]);
     };
-    agree("paper", paperSeen, (x) => x.v);
     agree("size", sizeSeen, (x) => x.v);
     agree("columns", colSeen, (x) => x.v);
     agree("indent", indentSeen, (x) => x.v);
@@ -1410,7 +1549,6 @@
       }
     }
     if (!known) ["size", "columns"].forEach((k) => mine(k, dc.line, classOwn));
-    if (!known) mine("paper", dc.line, classOwn);
     // a project .sty or .cls that touches a setting makes it its own
     (local || []).forEach((f) => {
       const code = masked(String(f.text || "")), lines = code.split("\n");
@@ -1504,12 +1642,14 @@
     let specs = [];
     const gone = (o) => (o.line ? lineGone(r, o.line.c.from, o.line.to) : lineGone(r, o.pkg.from, o.pkg.to));
     const argText = (l, k, s) => ({ from: l.args[k].inner[0], to: l.args[k].inner[1], insert: s });
-    if (key === "paper") {
-      if (value === S.value) return null;
-      if (S.occ.length) specs = optionChanges(r, S.occ.map((o, k) => (value && k === 0 ? { list: o.list, replace: [o.item, value] } : { list: o.list, remove: o.item })), "drop");
-      else if (L.known) specs = classAdd(r, value);
-      else return { refused: t("文档类 {cls} 的选项这里不认识，请在 {command} 那一行自己改。", { cls: L.cls, command: "\\documentclass" }) };
-    } else if (key === "margin") {
+    // what 章节编号 and 图表名称 found taken away: each line whole; \ctexset keys one by one, the line gone when none is left
+    const removed = (occ) => {
+      const out = [], bySet = new Map();
+      occ.forEach((o) => { if (o.line) out.push(gone(o)); else bySet.set(o.set, (bySet.get(o.set) || []).concat([o.item])); });
+      bySet.forEach((its, set) => out.push(...(its.length === set.list.items.length ? [lineGone(r, set.c.from, set.to)] : listChanges(r, set.list, { remove: its }))));
+      return out;
+    };
+    if (key === "margin") {
       const v = value || {};
       const items = !v.preset ? [] : v.preset === "custom" ? ["top", "bottom", "left", "right"].map((k) => k + "=" + cm(v[k])) : ["margin=" + cm(v.preset)];
       if (v.preset === "custom" && ["top", "bottom", "left", "right"].some((k) => !(Number(v[k]) >= 0 && Number(v[k]) <= 10))) return { refused: t("页边距要在 0 到 10 厘米之间。") };
@@ -1607,6 +1747,29 @@
           else specs.push(...listChanges(r, o.pkg.nameList, { remove: o.pkg.nameList.items.filter((x) => x.text === "hyperref") }));
         });
       }
+    } else if (key === "secnum") {
+      // 1 / 1.1 / 1.1.1 (the class's), 一、（一）1. (ctex), 不编号: what was there goes, the new style's lines come
+      if (!["", "zh", "none"].includes(value) || value === S.value) return null;
+      if (value === "zh" && !L.zhNumbers) return { refused: L.zhNumbersWhy };
+      if (value === "none" && L.settings.capnum.value === "within" && !L.settings.capnum.mine) return { refused: t("图表按章或节编号时，章节不能不编号：没有章节号，图表会印成 0-1。") };
+      specs = removed(S.occ);
+      if (value === "zh") specs.push(newLines(r, ZH_NUMBER_LINES));
+      if (value === "none") specs.push(newLines(r, ["\\setcounter{secnumdepth}{" + (L.chapters ? "-1" : "0") + "}"]));
+    } else if (key === "capname") {
+      // 图 / 表 or Figure / Table: the class's own names remove the setting; a setting there changes in place
+      if (!CAPTION_NAMES[value] || value === S.value) return null;
+      if (value === "zh" && !L.cjk) return { refused: t("中文图表名需要中文文档类") };
+      const names = CAPTION_NAMES[value];
+      if (value === L.capDefault) specs = removed(S.occ);
+      else if (S.occ.length) specs = S.occ.map((o) => (o.line ? argText(o.line, 0, names[o.name]) : { from: o.item.from, to: o.item.to, insert: o.item.text.slice(0, o.item.text.indexOf("=") + 1) + names[o.name] }));
+      else specs = [newLines(r, ["\\renewcommand{\\figurename}{" + names.figurename + "}", "\\renewcommand{\\tablename}{" + names.tablename + "}"])];
+    } else if (key === "capnum") {
+      // 连续编号（图 1） / 按章或节编号（图 2-3） (and, with chapters, the class's 图 2.3): the old lines go, the new come
+      if (!(L.chapters ? ["", "continuous", "within"] : ["", "within"]).includes(value) || value === S.value) return null;
+      if (value === "within" && L.settings.secnum.value === "none" && !L.settings.secnum.mine) return { refused: t("章节不编号时，图表不能按章或节编号：没有章节号，图表会印成 0-1。") };
+      specs = S.occ.map(gone);
+      const lines = capnumLines(L.chapters, value);
+      if (lines.length) specs.push(newLines(r, lines));
     }
     if (!specs.length) return null;
     return edited(state, merged(specs).map((x) => ({ from: x.from, to: x.to, insert: x.insert.split("\n").join(state.lineBreak) })));
@@ -2825,9 +2988,8 @@
   // file they are shown and cannot be changed, with a link that opens the main file; a setting written in a form 版式
   // does not take shows 「自定义」, cannot be changed, and says on which line (with a link that shows it).
   function layoutChoices(key, layout) {
-    const ctex = !!(layout && (layout.ctexClass || layout.ctexPkg));
+    const ctex = !!(layout && (layout.ctexClass || layout.ctexPkg)), set = layout && !layout.why ? layout.settings : null;
     switch (key) {
-      case "paper": return [["", t("默认")], ["a4paper", "A4"], ["letterpaper", "Letter"], ["b5paper", "B5"]];
       case "margin": return [["", t("默认")], ["2", t("窄（2 厘米）")], ["2.5", t("适中（2.5 厘米）")], ["3", t("宽（3 厘米）")], ["custom", t("自定义")]];
       case "columns": return [["", t("单栏")], ["twocolumn", t("双栏")]];
       case "pagestyle": return [["", t("默认")], ["plain", t("页脚居中")], ["empty", t("不显示")]];
@@ -2836,11 +2998,20 @@
       case "spacing": return [["", t("默认")], ["1", t("单倍")], ["1.25", t("1.25 倍")], ["1.5", t("1.5 倍")], ["2", t("双倍")], ["custom", t("自定义")]];
       case "indent": return [["", t("默认")], ["0pt", t("无")], ["2em", t("2 字")]];
       case "parskip": return [["", t("无")], ["half", t("半行")], ["one", t("一行")]];
+      // A3: a choice the document cannot take is shown, disabled, with why
+      case "secnum": return [["", "1 / 1.1 / 1.1.1"], unable("zh", t("一、（一）1."), set ? layout.zhNumbersWhy : null),
+        unable("none", t("不编号"), set && set.capnum.value === "within" && !set.capnum.mine && set.secnum.value !== "none" ? t("图表按章或节编号时不能选") : null)];
+      case "capname": return [unable("zh", t("图 / 表"), set && !layout.cjk ? t("中文图表名需要中文文档类") : null), ["en", "Figure / Table"]];
+      case "capnum": {
+        const within = unable("within", t("按章或节编号（图 2-3）"), set && set.secnum.value === "none" && !set.secnum.mine && set.capnum.value !== "within" ? t("章节不编号时不能选") : null);
+        return layout && layout.chapters ? [["continuous", t("连续编号（图 1）")], ["", t("按章编号（图 2.3）")], within] : [["", t("连续编号（图 1）")], within];
+      }
       default: return [];
     }
   }
+  function unable(value, label, why) { return why ? [value, t("{choice}：{why}", { choice: label, why: why }), true] : [value, label]; }
   function layoutLabel(key) {
-    return { paper: t("纸张"), margin: t("页边距"), columns: t("分栏"), pagestyle: t("页码"), hyperref: t("超链接"), size: t("正文字号"),
+    return { secnum: t("章节编号"), capname: t("图表名称"), capnum: t("图表编号"), margin: t("页边距"), columns: t("分栏"), pagestyle: t("页码"), hyperref: t("超链接"), size: t("正文字号"),
       spacing: t("行距"), indent: t("首行缩进"), parskip: t("段间距") }[key];
   }
 
@@ -2872,8 +3043,8 @@
     L.stretch.addEventListener("change", () => applyLayout(me, "spacing", "custom", { n: Number(L.stretch.value) }));
     L.rows.spacing.extra.append(L.stretch, mk("span", "latex-format-label", t("倍")));
     const group = (title, keys) => { const g = mk("div", "latex-format-group"); g.append(mk("h4", "latex-format-title", title), ...keys.map((k) => rows[k])); return g; };
-    ui.panes.layout.replaceChildren(L.head, L.note, group(t("页面"), ["paper", "margin", "columns", "pagestyle", "hyperref"]),
-      group(t("文字与段落"), ["size", "spacing", "indent", "parskip"]));
+    ui.panes.layout.replaceChildren(L.head, L.note, group(t("页面"), ["margin", "columns", "pagestyle", "hyperref"]),
+      group(t("文字与段落"), ["size", "spacing", "indent", "parskip"]), group(t("章节与图表"), ["secnum", "capname", "capnum"]));
     return L;
   }
   function marginInputs(L) { const v = {}; Object.keys(L.margins).forEach((k) => { v[k] = Number(L.margins[k].value); }); return v; }
@@ -2952,14 +3123,16 @@
       }
       row.extra.classList.toggle("hidden", !open);
       (k === "margin" ? Object.values(L.margins) : k === "spacing" ? [L.stretch] : []).forEach((i) => { i.disabled = row.select.disabled; });
-      // a setting the person wrote: where, with a link that shows the line
+      // a setting the person wrote: where, with a link that shows the line; 不编号's one consequence (A3)
+      const hint = k === "secnum" && S && !S.mine && S.value === "none" ? t("不编号时，{command} 引用章节印不出编号。", { command: "\\ref" }) : "";
       if (S && S.mine) {
         const said = S.mine.why || (S.mine.file ? t("{file} 第 {n} 行已有自己写的设置", { file: S.mine.file, n: S.mine.line }) : t("导言区第 {n} 行已有自己写的设置", { n: S.mine.line }));
         const parts = [mk("span", null, said)];
         if (!S.mine.file && S.mine.line) parts.push(" ", mkButton(t("看这一行"), "ws-text-link", () => (st.facts.isMain ? goToLine(me, S.mine.line) : openAt(main, S.mine.line))));
         row.note.replaceChildren(...parts);
-      } else row.note.replaceChildren();
-      row.note.classList.toggle("hidden", !(S && S.mine));
+      } else if (hint) row.note.replaceChildren(mk("span", null, hint));
+      else row.note.replaceChildren();
+      row.note.classList.toggle("hidden", !(S && S.mine) && !hint);
     });
   }
 
