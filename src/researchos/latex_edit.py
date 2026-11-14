@@ -674,9 +674,32 @@ def _end_documents(text: str) -> tuple[bool, list[int]]:
     return begun, ends
 
 
+_BACK_MATTER_RE = re.compile(r"\s*\\(appendix\b|printbibliography\b|bibliography\s*\{|bibliographystyle\s*\{"
+                             r"|begin\s*\{thebibliography\})")
+_BODY_RE = re.compile(r"\s*\\(input|include|subfile|part|chapter|section)\b")
+
+
+def _back_matter(text: str, end: int) -> int | None:
+    """Where the back matter (`\\appendix`, or a bibliography with no section or `\\input` after it) starts, when it
+    begins its own line, outside a comment, after `\\begin{document}` and before `end`: a new chapter goes before it,
+    not after the references."""
+    at, begun, found, appendix = 0, False, None, False
+    for line in text.splitlines(keepends=True):
+        if at >= end:
+            break
+        code = uncommented(line)
+        if begun and found is None and (m := _BACK_MATTER_RE.match(code)):
+            found, appendix = at, m.group(1) == "appendix"
+        elif begun and found is not None and not appendix and _BODY_RE.match(code):
+            found = None    # a \bibliographystyle at the top of the body, say: the paper goes on after it
+        begun = begun or "\\begin{document}" in code
+        at += len(line)
+    return found
+
+
 def _add_input(root: Path, main: str, chapter: str, lang: str) -> dict[str, Any]:
-    """`\\input{<chapter from the main's folder, no .tex>}` on a line of its own just before `main`'s one
-    `\\end{document}` after its `\\begin{document}` (outside comments), written as a save is (`save_tex`); when it
+    """`\\input{<chapter from the main's folder, no .tex>}` on a line of its own just before `main`'s back matter
+    (`_back_matter`) or else its one `\\end{document}` after its `\\begin{document}` (outside comments), written as a save is (`save_tex`); when it
     cannot be, the sentence why."""
     line = None
     try:
@@ -698,7 +721,8 @@ def _add_input(root: Path, main: str, chapter: str, lang: str) -> dict[str, Any]
                           "say), so where the line goes is not certain; add it by hand",
                           "它里面有不止一处 \\end{document}（比如写在 \\verb、verbatim 或 \\iffalse 里），"
                           "不能确定加在哪里，请自己加这一行")
-        at = ends[0]
+        back = _back_matter(text, ends[0])
+        at = ends[0] if back is None else back
         sep = "\r\n" if opened["line_ending"] == "crlf" else "\n"
         start = text.rfind("\n", 0, at) + 1
         own_line = not text[start:at].strip()

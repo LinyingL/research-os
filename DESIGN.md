@@ -8047,8 +8047,14 @@ project, so a paper had to be started outside Research OS. Now it starts here.
   `watcher.record_write`; the answer first, then a scan, as a save.
 - **A chapter into its main file.** With a main file chosen, the line
   `\input{<the chapter from the main file's folder, without .tex>}` is put on a
-  line of its own just before the main file's `\end{document}`: the only one
-  outside a comment after its `\begin{document}`, as a save of that file
+  line of its own just before the main file's back matter -- the first line,
+  outside a comment, after `\begin{document}`, that starts with `\appendix`, or
+  with `\printbibliography`, `\bibliography{`, `\bibliographystyle{` or
+  `\begin{thebibliography}` when no `\input`, `\include`, `\subfile`, part,
+  chapter or section follows it (found at acceptance, 2026-11-14: a new chapter
+  goes before the references, not after them) -- or, with none, just before its
+  `\end{document}`: the only one outside a comment after its
+  `\begin{document}`, as a save of that file
   (22.1: its revision checked, a backup, a history entry, its own line ending).
   When it cannot be -- the main file is not one 正文 could open, is read-only by
   22.1 (a script writes it, mixed endings, …), has no `\begin{document}` or no

@@ -263,6 +263,22 @@ def test_the_input_is_relative_to_the_main_files_folder_and_splits_a_line_it_sha
     assert (root / "chapters/method.tex").read_text() == "\\section{method}\nWrite this section here.\n"   # a pdfLaTeX main
 
 
+@pytest.mark.parametrize("body, before", [
+    ("\\input{a}\n\\printbibliography\n", "\\printbibliography"),
+    ("\\input{a}\n  \\bibliographystyle{plain}\n\\bibliography{refs}\n", "  \\bibliographystyle{plain}"),
+    ("\\section{A}\n\\appendix\n\\section{B}\n", "\\appendix"),
+    ("\\begin{thebibliography}{9}\n\\bibitem{x} X.\n\\end{thebibliography}\n", "\\begin{thebibliography}{9}"),
+    # a style named at the top of the body, a bibliography in a comment: the paper goes on, the line goes at the end
+    ("\\bibliographystyle{plain}\n\\section{A}\n\\input{a}\n", "\\end{document}"),
+    ("\\input{a}\n% \\printbibliography\n", "\\end{document}"),
+])
+def test_the_input_goes_before_the_appendix_or_the_bibliography_not_after_the_references(root, body, before):
+    _put(root, "paper/main.tex", ("\\documentclass{article}\n\\begin{document}\n" + body + "\\end{document}\n").encode())
+    assert _new(root, kind="chapter", folder="paper", name="new", main="paper/main.tex")["input"]["added"]
+    lines = (root / "paper/main.tex").read_text().split("\n")
+    assert lines[lines.index("\\input{new}") + 1] == before and lines.count("\\input{new}") == 1
+
+
 @pytest.mark.parametrize("main, why", [
     (b"\\documentclass{article}\n\\begin{document}\nno end\n", "它的 \\begin{document} 之后没有 \\end{document}"),
     # the only one is in a definition in the preamble: not where the body ends
