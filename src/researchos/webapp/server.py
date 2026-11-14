@@ -488,6 +488,11 @@ Endpoints (all GET unless noted):
     POST /api/latex/undo -- `{project, path, revision, previous}`:
                             撤销这次保存, the bytes before that save written
                             back while the file is still what it wrote.
+    POST /api/latex/new -- `{project, kind, folder, name, title?, main?}`:
+                            新建文稿 (DESIGN.md 22.11), a .tex from its
+                            template, never over a file that exists; a
+                            chapter's \\input added to `main` as a save
+                            (`input` says whether). The scan starts after.
     GET  /api/latex/evidence -- `?path=<.tex>`: the draft's passages tied to
                             supporting files (DESIGN.md 22.2,
                             `researchos.records.evidence`), each found again in
@@ -517,9 +522,9 @@ Endpoints (all GET unless noted):
     GET  /api/latex/export -- `?path=<.tex>&project=`: the export's settings
                             line (main file, engine, the last exported PDF);
                             409 when `project` is not the open one. Reads only.
-    The save and the undo are, with the attempt table, the Markdown under `research/`
-    and an agent's run, the only writes of a researcher's own files (18.1's
-    list, extended by 22.1): a `.tex` the person saves in the editor, through
+    The save, the undo and a new draft are, with the attempt table, the Markdown under
+    `research/` and an agent's run, the only writes of a researcher's own files (18.1's
+    list, extended by 22.1 and 22.11): a `.tex` the person saves or creates, through
     the human write path (backup, history, the project lock, a member only in
     their working copy).
 
@@ -4262,6 +4267,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 if "project" in query:
                     self._workspace_target({"project": query["project"][0]})
                 payload = self._workspace_api(lambda: latex_edit.drafts(served.root, self._lang()))
+                # 22.11: 新建文稿 is offered only where 创建 could write (a project opened read-only refuses it)
+                payload["can_write"] = bool(payload.get("can_write")) and not (served.read_only or served.needs_migration)
                 self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
             elif path == "/api/latex/export":
                 # 22.4: the export's settings line -- main file, engine, the last exported PDF. Runs nothing.
@@ -4649,6 +4656,21 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                         self.server.start_scan(served)
                     except Exception as exc:  # noqa: BLE001 -- the save is answered; a scan not started is logged
                         logger.info("no scan after saving a LaTeX draft: %s", exc)
+            elif parsed.path == "/api/latex/new":
+                # 22.11: 新建文稿 -- a .tex from its template, through the human write path; a chapter's \input in its
+                # main file is a save of that file. The answer first, then the scan, as a save.
+                body = self._read_json_object()
+                served = self._workspace_target(body)
+                with self.server.write_guard(human=True):
+                    self._workspace_target(body)  # a concurrent window may have switched projects
+                    payload = self._workspace_api(lambda: latex_edit.new_tex(
+                        served.root, {k: v for k, v in body.items() if k != "project"}, self._lang()))
+                payload["generation"] = self.server.watcher.record_write(set())
+                self._send_json(200, payload)
+                try:
+                    self.server.start_scan(served)
+                except Exception as exc:  # noqa: BLE001 -- the draft is answered; a scan not started is logged
+                    logger.info("no scan after creating a LaTeX draft: %s", exc)
             elif parsed.path == "/api/latex/export":
                 # 22.4: TeX runs outside the project lock (it writes only its build folder); the PDF and its record
                 # are written under it, through the human write path.

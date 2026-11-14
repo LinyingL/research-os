@@ -234,7 +234,7 @@ def test_a_tex_drafts_own_page_offers_export_under_its_head_and_the_editor_keeps
     assert "exporter = ROLatex.exporter(page.path); actions.appendChild(exporter.button);" in node
     assert "if (exporter) host.appendChild(exporter.block);" in node
     latex = (WEBAPP / "latex.js").read_text(encoding="utf-8")
-    assert 'mkButton(t("导出 PDF"), "btn btn-small"' in latex and latex.count("btn-primary") == 2
+    assert 'mkButton(t("导出 PDF"), "btn btn-small"' in latex and latex.count("btn-primary") == 4
     css = (WEBAPP / "workspace.css").read_text(encoding="utf-8")
     assert ".latex-export-failed { margin: 0; color: var(--clay);" in css
     assert ".latex-export-warn { margin: 0; border-left: 2px solid var(--ochre);" in css

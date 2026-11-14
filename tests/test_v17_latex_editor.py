@@ -477,7 +477,7 @@ def test_edit_is_offered_on_a_tex_drafts_page_and_on_each_row_of_the_paper():
     node = (WEBAPP / "node.js").read_text(encoding="utf-8")
     assert node.count('mkButton(t("编辑"), "ws-text-link", () => ROLatex.open(') == 2
     latex = (WEBAPP / "latex.js").read_text(encoding="utf-8")
-    # one primary per surface (22.7): 保存 on the editor page, 确认关联 in the link panel
-    assert latex.count("btn-primary") == 2 and 'mkButton(t("保存"), "btn btn-primary"' in latex
+    # one primary per surface (22.7): 保存 on the editor page, 确认关联 in the link panel, 新建文稿 on 正文 and 创建 in its form
+    assert latex.count("btn-primary") == 4 and 'mkButton(t("保存"), "btn btn-primary"' in latex
     assert 'mkButton(t("确认关联"), "btn btn-primary"' in latex
     assert 'mkButton(t("撤销这次保存"), "ws-text-link' in latex and 'mkButton(t("载入新版本"), "ws-text-link"' in latex
