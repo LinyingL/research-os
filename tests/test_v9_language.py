@@ -180,8 +180,9 @@ ALLOWED_CHINESE: dict[str, str] = {
     # numbers' parentheses and comma, and the Chinese caption names
     "（\\chinese{subsection}）": "22.12 A3: \\thesubsection as 版式 writes it into the preamble",
     ",、": "22.12 A3: ctex's section/name value (nothing before the number, 、 after it) as 版式 writes it",
-    "图": "22.12 A3: \\figurename as 版式 writes it into the preamble",
-    "表": "22.12 A3: \\tablename as 版式 writes it into the preamble",
+    # whole lines, so a bare 图 or 表 elsewhere is still an untranslated word (review)
+    "\\renewcommand{\\figurename}{图}": "22.12 A3: \\figurename as 版式 writes it into the preamble",
+    "\\renewcommand{\\tablename}{表}": "22.12 A3: \\tablename as 版式 writes it into the preamble",
 }
 
 CJK = re.compile("[\u2e80-\u2fff\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")

@@ -7510,12 +7510,16 @@ nothing to type between, they are one). What each construct is shown as:
 - **line structure**: a paragraph's single line breaks are spaces (none between two CJK characters), a blank line
   separates paragraphs.
 
-**Typing and pasting** are plain text and keep the source literal: `% $ & # _ { } ~ ^ \` are written escaped (`\%`, `\$`,
-`\&`, `\#`, `\_`, `\{`, `\}`, `\textasciitilde{}`, `\textasciicircum{}`, `\textbackslash{}`); words typed at the edge of what is
-hidden go where the cursor shows them (after a bullet, inside the list, never before `\documentclass`); a letter never
-runs into a command's name (`{}` keeps them apart). Pasted rich text is its plain text, escaped; its line breaks are
-new paragraphs, spaces in a heading, a style or a caption, and new items in a list. An input method's composition is
-left as typed. **Deleting** across hidden markup leaves balanced, meaningful LaTeX: what a range covers whole is
+**Typing and pasting** are plain text and keep the source literal: `% $ & # _ { } ~ ^ \ < > |` are written escaped (`\%`, `\$`,
+`\&`, `\#`, `\_`, `\{`, `\}`, `\textasciitilde{}`, `\textasciicircum{}`, `\textbackslash{}`, and -- 22.12 B3, so they print as typed
+without the T1 font encoding -- `\textless{}`, `\textgreater{}`, `\textbar{}`); words typed at the edge of what is
+hidden go where the cursor shows them (after a bullet, inside the list, at the end of an environment's last line, before
+a hidden comment, never into one, never before `\documentclass`); a letter -- any letter: XeLaTeX reads a CJK character as
+one -- never runs into a command's name, and a `[` or `*` typed after `\item`, `\\` or a `\begin{…}` never becomes their
+option (`{}` keeps them apart). Pasted rich text is its plain text, escaped, whatever line break the clipboard holds; its
+line breaks are new paragraphs, spaces in a heading, a style or a caption, and new items in a list. An input method's
+composition is left as typed while it composes; the cursor first goes where typing puts words, and when it ends its words
+are put there and escaped as typing is, joined to its own step of ⌘Z (22.12 B3). **Deleting** across hidden markup leaves balanced, meaningful LaTeX: what a range covers whole is
 deleted whole; a construct covered in part keeps its markup round what remains (or loses it with its last word); the
 document's own markup always stays; an edit that would still leave the source unbalanced is refused with a quiet
 sentence. Hidden comments, labels and atomic units in a deleted range go with it, asking nothing (⌘Z restores them).
@@ -7537,7 +7541,7 @@ only where a change reaches. **Typing stays under 16 ms a key on a 3,000-line fi
 
 The tools -- 加粗, 斜体, 标题, 公式, 引用 (a search over the project's `.bib` keys; with no `.bib`, it says so) and the rest --
 are the right column's 「格式与插入」 (22.12; the toolbar first promised here was never built), each the same as typing
-the command, acting on the visible words; ⌘B / ⌘I / ⌘U do the first three. 公式 puts its formula in 显示代码 with the
+the command, acting on the visible words; ⌘B / ⌘I / ⌘U do 加粗, 斜体 and 下划线. 公式 puts its formula in 显示代码 with the
 cursor in it. 22.12 B1 has the details, the measures and the tests.
 
 ### 22.2 Passages and their supporting files
@@ -7865,7 +7869,7 @@ New 13.4 rows, one English each, for the researcher to approve (22.0.2):
 待复核, 依据已变化, 是这段, 仍然成立, 打开 PDF, 在 Finder 中显示, 详情,
 返回 and 保存 keep their present English. 运行记录 is not used (21.6). Every
 sentence goes through `t()` with its English; the toolbar is words, with no
-emoji, arrow or glyph.
+emoji, arrow or glyph (⌘ beside 加粗, 斜体 and 下划线 is the key's own name, 22.12).
 
 ### 22.7 Presentation (amends 21.8's list)
 
@@ -7891,7 +7895,7 @@ emoji, arrow or glyph.
   after a colon.
 - The page (22.12 B): the header, the notices and the status line sit in the
   text's column, aligned with the page (46rem, centred; the full width while
-  显示代码 shows the code); 保存 stays the editor's one primary, 导出 PDF quiet.
+  显示代码 shows the code); 保存 stays the page's one primary, 导出 PDF quiet (the right column's surfaces have their own, above).
   The status line is quiet small gray words, no button; the
   page's blocks (label lines, the title block, 摘要, a table, a figure) are words
   and rules in the palette's tokens, never a glyph. The right column stays at
@@ -7908,7 +7912,8 @@ emoji, arrow or glyph.
 - The edit view (22.12 B1): what stands for hidden code -- chips, the 「公式」 word, the 「分页」 and 目录 lines, the
   preamble's line -- is quiet words in the palette's tokens, never a glyph. Under the switch, the right column's hint
   (「表格内容要在「显示代码」里改。」 and the like) is a quiet sentence with a text link; a footnote's words a plain text
-  field; 文档信息 in 版式 plain fields and a select. No new primary anywhere: 保存 stays the one.
+  field; 文档信息 in 版式 plain fields and a select. No new primary on the page or in 版式: 保存 stays the page's one (the
+  link panel's 「确认关联」 and a picker's 「插入」, never shown together, are their own surfaces' one, as above).
 
 ### 22.8 Batches and acceptance
 
@@ -7954,7 +7959,7 @@ Acceptance:
    missing package and a missing character are named; a `paper/main.pdf`
    that was not exported is not replaced without asking.
 4. (B3) Every construct of 22.1's list is shown as described; unknown
-   commands show as written; Return in a heading, a `\textbf`, a list and a
+   commands show as written (*amended by 22.12 B1: as quiet chips, never their code*); Return in a heading, a `\textbf`, a list and a
    formula does what 22.1 says and the file still exports; typing stays
    under 16 ms a key on the 3,000-line file.
 5. (B4) A member's link waits as 待批准, reaches the official record with
@@ -8153,7 +8158,7 @@ page's look (at the end of this section).
   **「格式」** and **「版式」** (`role="tab"`, `aria-selected`): 「格式」 acts where
   the cursor is, 「版式」 on the whole document (below). The panel is there whenever a file is
   open. It is disabled, its reason above the groups, in a read-only file
-  (「这个文件只能查看，不能用格式与插入。」). *(B1:)* 「显示代码」 heads the column, above the tabs; while it shows
+  (「这个文件只能查看，不能改格式和版式。」; 22.12 B3: in 「格式」 the switch's own sentence says it, once). *(B1:)* 「显示代码」 heads the column, above the tabs; while it shows
   the code, 「格式」's tools are off with 「正在显示代码。关掉「显示代码」后可以用格式工具。」 and ⌘B / ⌘I / ⌘U do
   nothing, while 「版式」 keeps working: it edits the preamble, code or not.
 - **One rule for every tool.** It is exactly the same as typing its command:
@@ -8169,7 +8174,8 @@ page's look (at the end of this section).
 - **Where a tool does not apply** it says why, in a quiet sentence in the
   panel, and changes nothing: the cursor in the preamble, after
   `\end{document}`, in a command's name, in a formula, in a comment or
-  verbatim text, in an environment shown as written (`tabular`, `figure`, …),
+  verbatim text, in an environment shown as written (`tabular`, `figure`, …; *B1:* a figure's caption is editable in the
+  edit view and takes the inline tools, while 对齐, 列表 and the blocks are refused there with 「图注里不能用这个工具。」),
   in the argument of `\cite`, `\ref`, `\label`, `\includegraphics`, `\input`,
   `\url`, `\href` and their like or in an optional argument; a block in any
   command's argument; a heading in a list. **A selection is never broken**: one
@@ -8181,7 +8187,9 @@ page's look (at the end of this section).
 
 **文字** (a small quiet heading, as every group's):
 
-- **加粗 ⌘B, 斜体 ⌘I, 下划线 ⌘U** -- `\textbf{}`, `\textit{}`, `\underline{}`;
+- **加粗 ⌘B, 斜体 ⌘I, 下划线 ⌘U** -- `\textbf{}`, `\textit{}`, `\underline{}` (*B3:* `\uline{}` with
+  `\usepackage[normalem]{ulem}`, or `\CJKunderline{}` with `\usepackage{xeCJKfntef}` in a XeLaTeX document with Chinese:
+  `\underline` never breaks a line);
   the shortcut a quiet word beside the name (`aria-keyshortcuts`). Like
   Word, a toggle: a selection is wrapped; a selection that is exactly that
   command's text, or the whole command, is unwrapped; with no selection the
@@ -8206,7 +8214,7 @@ page's look (at the end of this section).
 **章节标题**: a select, 级别, showing the level of the paragraph the cursor is
 in -- 正文段落, 章 (only when the document class has `\chapter`: book, report,
 ctexbook, ctexrep, memoir, scrbook, scrreprt; for a chapter file, the class of
-its main file), 节, 小节, 小小节, and 其他标题 (shown, never chosen) for a
+its main file), 节, 小节, 小小节, and 其它标题 (shown, never chosen) for a
 `\paragraph` or a `\chapter` the class does not have. Choosing a level turns
 the paragraph -- the run of lines between blank lines and lines that are a
 command or an environment of their own -- into `\section{…}` (its text kept,
@@ -8295,7 +8303,7 @@ Word's Home tab does; 「版式」 is the whole document):
   it holds, and those of the other files of its paper, `GET
   /api/latex/insert?what=labels` (the main file the export would compile it in
   and the files it brings in, as 正文 groups them) -- grouped as 图, 表, 公式, 节
-  and 其他: by the key's prefix (`fig:`, `tab:`, `eq:`, `sec:` and their like),
+  and 其它: by the key's prefix (`fig:`, `tab:`, `eq:`, `sec:` and their like),
   else the environment it sits in (a figure, a table, a displayed formula), else
   节 right after a heading. The page (`labelsOf`) and the engine (`labels_in`)
   read them alike. The key picked goes in as `\ref{key}`, or `\eqref{key}` for a
@@ -8596,7 +8604,7 @@ after seeing the plan):
   serif; 等宽 Monospace; 衬线 Serif; 小 Small; 正常 Normal; 大 Large; 更大
   Larger; 章节标题 Headings; 级别 Level; 正文段落 Body text (not 正文, which is
   "Manuscript", 22.10); 章 Chapter; 节 Section; 小节 Subsection; 小小节
-  Subsubsection; 其他标题 Other heading; 插入 Insert; 图片 Image; 表格 Table;
+  Subsubsection; 其它标题 Other heading; 插入 Insert; 图片 Image; 表格 Table;
   文献引用 Citation; 脚注 Footnote; 公式 Formula; 行内 Inline; 独立 Displayed;
   项目符号 Bullets; 数字编号 Numbered; 图注 / 表注 Caption; 宽度 Width; 整栏
   Full width; 半栏 Half width; 行 Rows; 列 Columns; 第一行是表头 First row is a
@@ -8862,3 +8870,87 @@ what B2 changed -- B's blocks and B1's rule (no code in the edit view) kept as t
   list's indent when a list ends on the line before it; an abstract's own paragraphs are not indented (the PDF indents
   them); the indent of a length in pt or cm is the class's; tried in a browser on the stand-in page, not yet in the app's
   window with a real paper.
+
+**What the reviews changed (B3; four adversarial reviews of A, A2, A3, B, B1 and B2, 2026-11-14).** Each finding was
+reproduced on the code it named, fixed with a test that failed before (`tests/test_v17_review_fixes.py`), or set aside
+with the reason below. The rules that changed:
+
+- **Nothing typed, pasted or deleted is lost or hidden.** A deletion that takes the line break after a hidden comment takes
+  the comment too (what TeX printed is unchanged: the comment had taken that break), and an edit after which words outside
+  a comment would sit in one is refused (「这样改会让后面的文字变成注释，没有改。」). A comment after words, and an
+  environment's `\end`, are where typing stops: words typed at their edge go before them, on the line the cursor shows.
+  The line-break filter keeps the event of what it rewrites, so a paste with the other ending is still escaped and split.
+  An input method: the cursor goes where typing puts words before it starts (its first key, or compositionstart); while it
+  composes its text is left alone; when it ends (`composeFix`) its words are moved there if they are not, escaped, kept
+  from a command's name, checked, as one step joined to the composition's in ⌘Z -- where no words may go they are taken
+  out with 「这里不能输入文字。」. Only typing, pasting, dropping and deleting edit the edit view: CodeMirror's other keys
+  (copy or move a line, swap two characters, indent, comment out) are the code's. Return on a list's only, empty item takes
+  the list away (an empty paragraph in its place). `\lstinline`, `\Verb`, `\path` and `\mintinline` are raw text as `\verb`
+  is; `\url`, `\nolinkurl` and `\href`'s address are read as hyperref reads them (`%` and `#` their own), so a paper with
+  `%20` in an address is no longer opened as code; an environment's options are hidden with its `\begin`.
+- **The switch follows the text.** A text the edit view cannot show is read again after each change (at once in the edit
+  view, a moment after typing stops in the code): ⌘Z back to one turns the code on, saying why; in the code the switch is
+  disabled with its sentence while the text is unsure and free again once it is not (a file opened as code no longer needs
+  reopening). An unpaired brace is said before the environment it makes cross it. Switching keeps the cursor in sight.
+- **Every tool writes what compiles.** Refused, said by what the edit view shows (no command names): a footnote or a web
+  address in a heading, a caption or underlined words (and a footnote in a box); a figure or a table in a minipage,
+  columns, a tabular or another float (「光标在并排的小块或分栏里，这里不能插入图片或表格。」); any tool between a
+  backslash and what it escapes, in a command's name or before its argument, in `\begin{…}`/`\end{…}` and their options
+  (「光标在 LaTeX 命令里。请把光标移开。」); a heading over a paragraph holding a footnote, `\footnotemark`, a web address,
+  `\verb` and its like, `\par`, an environment or a displayed formula; a wrap over raw text, `\par`, an environment or a
+  displayed formula, an underline also over a footnote, an address or `\\`; a formula tool over any formula; a font group
+  turned into `\textsf{…}` over paragraphs; a list whose lines would cut a formula or a brace. Written differently:
+  下划线 (above); 加粗, 斜体 or 下划线 on words inside that style, nested or in part, takes it off them (the style closed
+  before and opened again after them), like Word; an empty 行内 formula is `\(\)` (an empty `$$` opened a displayed one)
+  and an empty 独立 one has no blank line in it; a size over a whole paragraph ends it inside the group
+  (`{\Large … \par}`); a block typed in the middle of a word goes after the word, and in the middle of a line a `%` at
+  each edge keeps the words' spacing; a new label is unique however the file writes `\label` and among the paper's other
+  files' labels (read when 图片 or 表格 opens); a caption is escaped as typing is; an image name with `"` or two spaces is
+  refused; a path through `\graphicspath` is used only when the main file's folder has no file of the same name; a tool
+  and the typing right after it are two steps of ⌘Z; a block written at a passage's end stays out of it (typing there
+  still changes it, 22.2); 对齐 and 引文块 leave the cursor in the paragraph; ⌘I and ⌘U do nothing in 显示代码.
+- **版式.** Adding geometry or hyperref to a known class that names no paper writes `a4paper` into its options in the same
+  step, saying 「纸张保持 A4：文档类的选项里加上了 a4paper。」 (both set the PDF's paper from the class's, Letter by
+  default, where TeX's own was A4); a paper the class does not take (`a2paper` in article) is said, since they would honour
+  it. A class 版式 does not know may load geometry or hyperref itself, and doi, bookmark, hyperxmp and hypdoc load
+  hyperref: there 版式 writes `\usepackage{geometry}` with `\geometry{…}` and `\usepackage{hyperref}` with
+  `\hypersetup{hidelinks}` (no option to clash), and takes both lines away again. memoir stands in for setspace and
+  parskip: 行距 and 段间距 are its own (「文档类 {cls} 自己设置行距和段间距，请用它自己的命令。」). 超链接 关 is refused while
+  the paper uses url.sty's commands without url or xurl, or `\nolinkurl`, `\pdfstringdef…`, hyperref's bookmark and form
+  commands. 页边距 默认 is refused (and shown disabled) while geometry has other options, whose own margins would then
+  apply; a bare `\usepackage{geometry}` left by the `\geometry{…}` lines that go goes too. 段间距 无 on a parskip without
+  `indent` writes `\setlength{\parindent}{0pt}` in its place, so the indent stays as it was. 按章或节编号 says under its
+  select 「按节编号时，第一节之前的图表会印成 0-1。」; 不编号's line names 交叉引用, not `\ref`. A setting written by the
+  person reads 「自己写的设置」, apart from 版式's own 自定义. The main file's preamble ends at its first `\begin{document}`
+  outside a comment; one longer than 64 KB is said (「主文件的导言区太长，版式读不全。」), never read as defaults.
+  *Measured and left:* 一、（一）1. with `\appendix` prints 「A」 with no 、 after it (ctex's appendix keeps its own name).
+- **The right column.** A quote (the link panel's, a passage's, a candidate, a waiting passage) is shown as the edit view
+  shows its words, a formula 「公式」, the code only while 显示代码 is on; the link panel, a picker and a sentence of the panel
+  scroll into the column's view; what the column shows under the panel is redrawn in its own box, so the panel is never
+  taken out (a field being typed in keeps the focus); 版式's fields keep the focus (Tab goes on); a list cut at 60 entries
+  or at the engine's walk says 「只列出了一部分，请用搜索找其余的。」, and the engine sets `more` when its walk is cut; an image
+  only in the cloud has no thumbnail; a character pdfLaTeX cannot set typed into a pdfLaTeX paper is said in ochre; a
+  tool pressed while an input method composes says why; a read-only file says it once. Nothing in the column is wider
+  than it at 900 px (selects shrink, fields and labels wrap, file names break anywhere and are sans words); the table
+  picker's chosen cells are ink, not ochre (21.8); 其它 is 13.4's word.
+- *Set aside, with the reason:* showing source on touch (the earlier reviews) -- B1 shows no code at all; ArrowUp and
+  ArrowDown passing a table -- the table is one atomic unit, changed in 显示代码; the header's 「尚未保存」 beside the status
+  line's 「有未保存的改动」 -- B's own ruling, for the researcher; `--`, ``` `` ''' ```, `?``, `!`` printing as TeX's ligatures --
+  what the researcher typed, as Word's own autoformat; a bare `&`, `^`, `_` or `#` in running text -- shown as typed, the
+  export names its line; an environment the reader does not know (a `\newenvironment`, `keywords`) stays a chip -- it may be
+  a table, a verbatim or a drawing; subfigure captions, `\and` and `\thanks` in the body are still chips; the Kaiti stack
+  is named in 22.12 B; 自定义 页边距 with nothing typed writes nothing (its fields write); 「小小节」 and 「正文开始」 are the
+  researcher's to rename (22.0).
+- **Words** (13.4 rows): 自己写的设置 Your own setting (a setting the person wrote, never 版式's 自定义); 其它标题 Other
+  heading (was 其他标题: 13.4's 其它); the sentences above, each with its English in `i18n.js`.
+- **Tests** (`tests/test_v17_review_fixes.py`): each finding as it was reported -- the edit view's typing, pasting,
+  deleting, input methods and other keys under node through the page's own filter order and history; the switch, the
+  column, 版式's fields and the keys in 显示代码 on the stand-in page; every tool's refusal and output; 版式's writes; the
+  engine's lists and the main file's facts; and a real compile by latexmk (pdfLaTeX with no font encoding, XeLaTeX with
+  ctexart) of what they now write, read back by pdftotext and pdfinfo. Changed on purpose: the refusal sentences pinned in
+  `test_v17_format_panel.py` and `test_v17_layout_settings.py` (said by what is shown), `\underline` to `\uline` /
+  `\CJKunderline` there and in the corpus of `test_v17_no_code_view.py`, an empty formula's `\(\)` (and that test's unsure
+  text, now a brace typed in the code), the A4 of a new geometry or hyperref line, 默认 refused where geometry stays,
+  the right column's passages in their own box (`test_v17_page_look.py`, `test_v17_latex_passages.py`), sans file names
+  (`test_v17_editor_fixes.py`), a cite chip's note (`test_v17_latex_word.py`), and `test_v9_language.py`'s allowance of
+  图 and 表, now only as the two whole lines 图表名称 writes.

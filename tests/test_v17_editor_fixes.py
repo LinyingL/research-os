@@ -90,7 +90,7 @@ def test_an_equations_number_follows_it_and_never_covers_its_last_characters():
 def test_a_chosen_file_and_its_remove_link_are_set_apart():
     js = (WEBAPP / "latex.js").read_text(encoding="utf-8")
     assert 'picked = mk("ul", "latex-files latex-picked")' in js
-    assert 'li.append(mk("span", "mono", file), mkButton(t("移除"), "ws-text-link"' in js
+    assert 'li.append(mk("span", "latex-file-name", file), mkButton(t("移除"), "ws-text-link"' in js   # review: sans, as on the page
     css = (WEBAPP / "workspace.css").read_text(encoding="utf-8")
     assert ".latex-picked li, .latex-files li > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .9rem; }" in css
 

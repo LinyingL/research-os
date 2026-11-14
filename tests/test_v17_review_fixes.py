@@ -643,3 +643,140 @@ def test_the_main_files_preamble_ends_at_the_first_begin_document_outside_a_comm
     (root / "paper" / "main.tex").write_text("\\documentclass{article}\n" + "%" * 70000 + "\n\\begin{document}\n\\input{chapters/one}\n\\end{document}\n",
                                              encoding="utf-8")
     assert latex_edit.read_tex(root, "paper/chapters/one.tex")["format"]["cut"] is True
+
+
+# -- the right column: no code in the edit view, in sight, never taken from the researcher's field ------------------------
+
+_COLUMN = r"""
+El.prototype.setAttribute = function (k, v) { (this.attrs || (this.attrs = {}))[k] = String(v); };
+const scrolled = [];
+El.prototype.scrollIntoView = function () { scrolled.push(this.className); };
+FakeView.prototype.dispatch = function (spec) { const tr = this.state.update(spec); this.state = tr.state;
+  for (const listen of tr.state.facet(real.EditorView.updateListener)) listen({docChanged: tr.docChanged, selectionSet: !!spec.selection, changes: tr.changes, view: this, state: tr.state}); };
+FakeView.prototype.focus = function () { this.focused = (this.focused || 0) + 1; };
+global.requestAnimationFrame = (f) => f();
+const out = {};
+const view = () => viewsMade[viewsMade.length - 1];
+const inside = (el, test, acc) => { acc = acc || []; if (el && typeof el === 'object') { if (test(el)) acc.push(el); (el.children || []).forEach((k) => inside(k, test, acc)); } return acc; };
+const side = () => byClass('latex-side');
+const doc = () => view().state.doc.toString();
+const sw = () => inside(side(), (e) => e.classList.contains('latex-switch'))[0];
+const tool = (w) => inside(side(), (e) => e.tag === 'button' && e.textContent === w)[0];
+const f = (path, text, extra) => Object.assign({path, text, revision: 'r1', line_ending: 'lf', read_only: false, read_only_reason: null, links: [], mains: []}, extra);
+const openFile = async (path, text, extra) => { L.open(path); await tick(); gets.shift().res(f(path, text, extra)); await tick(); await tick(); };
+const TEXT = '\\documentclass{article}\n\\begin{document}\nText with \\textbf{bold} and $x$ here.\n\\end{document}\n';
+await openFile('a.tex', TEXT, {mains: ['a.tex'], format: {main: 'a.tex', engine: 'pdflatex', folder: '', preamble: null, local: []}});
+// the link panel quotes the words as the edit view shows them; in 显示代码 as the code
+const from = TEXT.indexOf('Text'), to = TEXT.indexOf('here.') + 5;
+view().dispatch({selection: {anchor: from, head: to}});
+byClass('latex-link-button').fire('click'); await tick();
+out.quote = byClass('latex-quote').textContent;
+out.linkInSight = scrolled.includes('latex-side-title');
+gets.splice(0);
+// a redraw of the column (the passages read again) leaves the panel where it is: a field typed in keeps its focus
+const panel = side().children[0];
+let replaced = 0; const real0 = side().replaceChildren.bind(side()); side().replaceChildren = (...k) => { replaced += 1; real0(...k); };
+L.refresh(); await tick();
+out.panelKept = side().children[0] === panel && replaced === 0;
+// a picker opens in sight; its list says when it is cut
+inside(side(), (e) => e.tag === 'button' && e.textContent === '关闭')[0].fire('click');
+view().dispatch({selection: {anchor: TEXT.indexOf('here')}});
+tool('图片').fire('click'); await tick();
+out.pickerInSight = scrolled.includes('latex-picker hidden') || scrolled.includes('latex-picker');
+gets.pop().res({images: [{path: 'figs/a.png', thumb: false}], more: true}); await tick(); await tick();
+out.cut = inside(byClass('latex-picker'), (e) => e.textContent === '只列出了一部分，请用搜索找其余的。').length;
+out.fileClass = inside(byClass('latex-picker'), (e) => e.textContent === 'figs/a.png')[0].className;
+tool('图片').fire('click');
+// a character pdfLaTeX cannot set: said in ochre
+view().dispatch({changes: {from: TEXT.indexOf('here'), insert: 'α'}, userEvent: 'input.type'});
+const note = inside(side(), (e) => e.classList.contains('latex-format-note'))[0];
+out.unicode = {text: note.textContent, warn: note.classList.contains('latex-export-warn')};
+// a tool while an input method composes says why
+view().composing = true; tool('加粗').fire('click'); view().composing = false;
+out.composing = note.textContent;
+// 版式's fields keep the focus (Tab goes on to the next one)
+inside(side(), (e) => e.attrs && e.attrs.role === 'tab' && e.textContent === '版式')[0].fire('click');
+const f0 = view().focused || 0;
+const margin = inside(side(), (e) => e.tag === 'select' && e.children.some((o) => o.value === 'custom' && o.textContent === '自定义') && e.children.some((o) => o.value === '2'))[0];
+margin.value = 'custom'; margin.fire('change');
+const top = inside(side(), (e) => e.tag === 'input' && e.attrs && e.attrs['aria-label'] === '上')[0];
+top.value = '3'; top.fire('change');
+out.layoutFocus = {focused: (view().focused || 0) - f0, written: doc().includes('top=3cm')};
+inside(side(), (e) => e.attrs && e.attrs.role === 'tab' && e.textContent === '格式')[0].fire('click');
+// in 显示代码, ⌘U and ⌘I are nothing, not CodeMirror's own
+sw().fire('click');
+view().dispatch({selection: {anchor: 30, head: 34}});
+const keys = [].concat(...view().state.facet(real.keymap));
+out.codeKeys = ['Mod-u', 'Mod-i'].map((k) => { const s0 = view().state; const done = keys.find((b) => b.key === k).run(view()); return done === true && view().state === s0; });
+sw().fire('click');
+// a chapter whose main file's preamble was cut: 版式 says so
+await openFile('ch.tex', 'Text.\n', {mains: ['main.tex'], format: {main: 'main.tex', engine: 'pdflatex', folder: '', preamble: '\\documentclass{article}\n', local: [], cut: true}});
+inside(side(), (e) => e.attrs && e.attrs.role === 'tab' && e.textContent === '版式')[0].fire('click');
+out.cutHead = inside(byClass('latex-layout-head'), (e) => e.tag === 'p').map((p) => p.textContent);
+// a setting of the person's own is 「自己写的设置」, not 版式's own 自定义
+await openFile('m.tex', '\\documentclass{article}\n\\newcommand{\\x}{\\setstretch{2}}\n\\begin{document}\nx\n\\end{document}\n', {mains: ['m.tex'], format: {main: 'm.tex', engine: 'pdflatex', folder: '', preamble: null, local: []}});
+inside(side(), (e) => e.attrs && e.attrs.role === 'tab' && e.textContent === '版式')[0].fire('click');
+out.mine = inside(side(), (e) => e.tag === 'option' && e.value === 'mine').map((o) => o.textContent);
+console.log(JSON.stringify(out));
+"""
+
+
+@pytest.fixture(scope="module")
+def column() -> dict:
+    return _page(_COLUMN)
+
+
+@needs_node
+def test_the_columns_quote_of_a_passage_shows_no_latex_in_the_edit_view(column):
+    assert column["quote"] == "Text with bold and 公式 here."                 # was: Text with \textbf{bold} and $x$ here.
+
+
+@needs_node
+def test_the_link_panel_and_a_picker_open_in_sight_and_a_redraw_never_takes_the_panel_out(column):
+    assert column["linkInSight"] is True and column["pickerInSight"] is True   # was: below the column's fold at 900 px
+    assert column["panelKept"] is True                                         # was: replaced, a picker's field lost its focus
+
+
+@needs_node
+def test_a_cut_list_says_so_and_file_names_are_quiet_words(column):
+    assert column["cut"] == 1 and column["fileClass"] == "latex-file-name"
+
+
+@needs_node
+def test_a_character_pdflatex_cannot_set_is_said_in_ochre_and_a_tool_while_composing_says_why(column):
+    assert column["unicode"] == {"text": "“α” 用 pdfLaTeX 导出时排不出来：中文请用中文文稿或 XeLaTeX 导出，数学符号请写成公式。", "warn": True}
+    assert column["composing"] == "输入法还在输入。先确认文字，再用这个工具。"     # was: nothing
+
+
+@needs_node
+def test_layout_fields_keep_the_focus_and_the_code_view_keys_do_nothing(column):
+    assert column["layoutFocus"] == {"focused": 0, "written": True}           # was: the editor took the focus, the next digit typed there
+    assert column["codeKeys"] == [True, True]                                 # was: CodeMirror's undoSelection, selectParentSyntax
+
+
+@needs_node
+def test_a_cut_preamble_and_a_persons_own_setting_are_said_plainly(column):
+    assert column["cutHead"] == ["主文件的导言区太长，版式读不全。"]
+    assert column["mine"] == ["自己写的设置"]
+
+
+def test_the_column_never_scrolls_sideways_and_a_choice_is_ink_not_ochre():
+    css = (WEBAPP / "workspace.css").read_text(encoding="utf-8")
+    assert ".latex-side .latex-format-select { width: auto; max-width: 100%; min-width: 0;" in css
+    assert ".latex-format-label { font-size: .76rem; color: var(--ink-soft); white-space: nowrap; }" in css
+    assert ".latex-grid-cell.is-on { background: var(--paper-alt); border-color: var(--ink); }" in css   # was: ochre (21.8)
+    assert ".latex-file-name { min-width: 0; overflow-wrap: anywhere; font-family: var(--font-sans); }" in css
+
+
+@needs_node
+def test_cite_notes_brace_less_input_lengths_and_theorem_labels_are_read_as_the_pdf_prints_them():
+    got = _edit(r"""
+const d = E('\\section{S}\n\\begin{theorem}\\label{lem:one}\nT.\n\\end{theorem}\nSee \\cite[p.~3]{k}, Lemma~\\ref{lem:one}, \\nameref{lem:one}.\n\\parbox{3cm}{boxed words} \\raisebox{1ex}{up} \\hyperref[sec:x]{this section}\n\\input chap2\n', '\\newtheorem{theorem}{Theorem}\n');
+const st = make(d), chips = [];
+st.field(F.field).deco.between(0, d.length, (a, b, x) => { if (x.spec.widget && x.spec.widget.text) chips.push(x.spec.widget.text); });
+out.chips = chips; out.shown = rawShown(st);
+""")
+    assert "k，p. 3" in got["chips"]                                           # was: the note dropped
+    assert "引用：lem:one" in got["chips"] and "第 1 节" not in got["chips"]   # was: 第 1 节 (the PDF prints 1.1 or the title)
+    assert "引入 chap2" in got["chips"]
+    assert "boxed words" in got["shown"] and "3cm" not in got["shown"] and "1ex" not in got["shown"] and "sec:x" not in got["shown"]

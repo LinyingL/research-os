@@ -2,7 +2,7 @@
 it -- 加粗 / 斜体 / 下划线 toggled like Word, 字体 and 字号, 标题's levels, 图片 (the path as the export compiles it,
 \\graphicspath, graphicx), 表格 (header on and off, booktabs or \\hline), 公式, 列表, 脚注 and 文献引用 -- each the same as
 typing its command, run under node on the vendored CodeMirror; the panel's page behaviour (its tabs, pickers, one primary
-at a time, ⌘B / ⌘I / ⌘U, the save path and ⌘Z, read-only and 显示源码); the engine's facts and its listing route; and one
+at a time, ⌘B / ⌘I / ⌘U, the save path and ⌘Z, read-only and 显示代码); the engine's facts and its listing route; and one
 real compile of a ctexrep (XeLaTeX) and an article (pdfLaTeX) document with every insertion applied. Every test names
 its scenario."""
 
@@ -567,7 +567,7 @@ def test_the_choices_follow_the_document_fonts_by_engine_and_chapter_by_class(pa
     assert panel["fontOptions"] == [["", "默认"], ["textsf", "无衬线"], ["texttt", "等宽"], ["textrm", "衬线"]]
     assert panel["sizeOptions"] == [["small", "小"], ["", "正常"], ["large", "大"], ["Large", "更大"]]
     assert panel["headingOptions"] == [["", "正文段落"], ["chapter", "章"], ["section", "节"], ["subsection", "小节"],
-                                       ["subsubsection", "小小节"], ["other", "其他标题", "disabled"]]
+                                       ["subsubsection", "小小节"], ["other", "其它标题", "disabled"]]
     assert panel["ctexFonts"] == ["默认", "宋体", "黑体", "楷体", "仿宋", "无衬线", "等宽"]
     assert panel["ctexHeadings"] == ["", "section", "subsection", "subsubsection", "other"]
 
@@ -641,7 +641,7 @@ def test_show_code_and_a_read_only_file_disable_the_panel_with_a_reason(panel):
     assert panel["source"] == {"reason": "正在显示代码。关掉「显示代码」后可以用格式工具。", "hidden": False, "disabled": True,
                                "keyDid": False}
     assert panel["sourceOff"] == {"hidden": True, "disabled": False}
-    assert panel["readOnly"] == {"reason": "这个文件只能查看，不能用格式与插入。", "hidden": False, "allOff": True}
+    assert panel["readOnly"] == {"reason": "这个文件只能查看，不能改格式和版式。", "hidden": True, "allOff": True}   # review: the switch says it once
 
 
 @needs_node

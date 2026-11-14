@@ -863,7 +863,7 @@
   // commands whose last argument is words, kept editable (the others hidden): [class, mandatory arguments]
   const WRAPPERS = new Map([["textsc", ["latex-sc", 1]], ["textsuperscript", ["latex-sup", 1]], ["textsubscript", ["latex-sub", 1]],
     ["textsl", ["latex-i", 1]], ["textup", ["", 1]], ["textmd", ["", 1]], ["textnormal", ["", 1]], ["mbox", ["", 1]], ["hbox", ["", 1]],
-    ["text", ["", 1]], ["makebox", ["", 1]], ["fbox", ["latex-boxed", 1]], ["framebox", ["latex-boxed", 1]], ["textcolor", ["", 2]],
+    ["text", ["", 1]], ["makebox", ["", 1]], ["fbox", ["latex-boxed", 1]], ["framebox", ["latex-boxed", 1]], ["textcolor", ["", 2]], ["parbox", ["", 2]], ["raisebox", ["", 2]], ["hyperref", ["", 1]],
     ["colorbox", ["", 2]], ["uline", ["latex-u", 1]], ["CJKunderline", ["latex-u", 1]], ["sout", ["latex-strike", 1]], ["hl", ["", 1]], ["enquote", ["", 1]],
     ["foreignlanguage", ["", 2]]]);
   // a line of its own in the edit view, said in words
@@ -899,7 +899,7 @@
     const body = read.preamble ? read.preamble.to : 0;
     const odd = read.cmds.find((c) => c.from >= body && UNSURE_CMDS.test(c.name));
     if (odd) return t("这个文件的正文里有条件命令（{command}），只能显示代码。", { command: "\\" + odd.name });
-    if (read.envs.some((e) => e.role === "list" && e.from >= body && !e.items && e.name !== "description")) return t("这个文件里有没有条目的列表，只能显示代码。");
+    if (read.envs.some((e) => e.role === "list" && e.from >= body && !e.items && e.name !== "description")) return t("这个文件里有一个列表还没有条目，只能显示代码。");
     return null;
   }
 
@@ -995,18 +995,22 @@
       if (c.role === "item" && c.list && c.list.name === "enumerate") { target = null; continue; }
       if (c.name === "label" && c.args.length) {
         const key = text.slice(c.args[0].from + 1, c.args[0].to - 1).trim();
-        if (key && !out.labels.has(key)) out.labels.set(key, target);
+        // in a theorem (and its like) a label names the theorem, whose number is not counted here: unknown
+        const own = read.envs.some((e) => e.role === "text" && !PLAIN_TEXT_ENVS.has(e.name.replace(/\*$/, "")) && e.beginTo <= c.from && c.from < e.endFrom);
+        if (key && !out.labels.has(key)) out.labels.set(key, own ? null : target);
       }
     }
     out.sig = JSON.stringify([Array.from(out.fig.values()), Array.from(out.tab.values()), Array.from(out.notes.values()), Array.from(out.labels)]);
     return out;
   }
 
+  const PLAIN_TEXT_ENVS = new Set(["document", "abstract", "quote", "quotation", "verse", "center", "flushleft", "flushright", "doublespace",
+    "onehalfspace", "singlespace", "spacing", "minipage", "multicols", "appendices", "landscape", "titlepage", "frame"]);
   // What a \cite chip says: author and year from the project's .bib (`cites`, from each key to its words), else the key.
   function citeWords(keys, cites) { return keys.map((k) => (cites && cites.get(k)) || k).join(t("；")); }
   function refWords(name, keys, num) {
     return keys.map((k) => {
-      const x = name === "pageref" ? null : num.labels.get(k);
+      const x = name === "pageref" || name === "nameref" ? null : num.labels.get(k);   // \nameref prints a title, not a number
       if (!x) return t("引用：{key}", { key: k });
       return x.kind === "figure" ? t("图 {n}", { n: x.n }) : x.kind === "table" ? t("表 {n}", { n: x.n }) : x.kind === "chapter" ? t("第 {n} 章", { n: x.n }) : t("第 {n} 节", { n: x.n });
     }).join(t("、"));
@@ -1294,7 +1298,9 @@
         if (DEFINITIONS.has(n)) { const end = definitionEnd(text, c); if (near(c.from, end)) atom(c.from, end, new ChipW(t("LaTeX 内容"), "unit", false), { kind: "unit" }); continue; }
         if (c.role === "cite") {
           const keys = arg(0).split(",").map((k) => k.trim()).filter(Boolean);
-          atom(c.from, c.to, new ChipW(citeWords(keys, info.cites), "cite"), { kind: "cite" });
+          // its notes ([see][p.~3]) said with it, as the PDF prints them
+          const notes = c.args.filter((a) => a.opt).map((a) => word(text.slice(a.from + 1, a.to - 1))).filter(Boolean);
+          atom(c.from, c.to, new ChipW([citeWords(keys, info.cites)].concat(notes).join(t("，")), "cite"), { kind: "cite" });
           continue;
         }
         if (HIDDEN_CMDS.has(n) && args.length) { hideLine(c.from, c.to); continue; }
@@ -1307,6 +1313,10 @@
         if (n === "url" && args.length === 1) { atom(c.from, c.to, new ChipW(arg(0).trim(), "url"), { kind: "url" }); continue; }
         if (n === "href" && args.length === 2) { atom(c.from, c.to, new ChipW(word(arg(1)) || t("链接"), "url"), { kind: "url" }); continue; }
         if (n === "includegraphics" && args.length === 1) { atom(c.from, c.to, new GraphicW(arg(0).trim()), { kind: "graphic" }); continue; }
+        if (n === "input" && !args.length) {   // \input chap2, with no braces: the file named, as with them
+          const m = /^[ \t]+([^\s{}\\%]+)/.exec(text.slice(c.nameTo, c.nameTo + 200));
+          if (m) { atom(c.from, c.nameTo + m[0].length, new ChipW(t("引入 {file}", { file: m[1] }), "unit"), { kind: "unit" }); continue; }
+        }
         if (INCLUDE_CMDS.has(n) && args.length) { atom(c.from, c.to, new ChipW(t("引入 {file}", { file: args.map((a, k) => arg(k).trim()).join("/") }), "unit"), { kind: "unit" }); continue; }
         if (n === "maketitle" && !c.args.length) {
           const meta = { title: read.meta.title, author: read.meta.author, date: read.meta.date, own: !!read.preamble };
@@ -2019,10 +2029,11 @@
   }
   // The plain text of [from, to) as the edit view shows it: hidden markup left out, a chip or a formula its words or
   // its source, a paragraph's line break a space.
-  function plainOf(value, from, to) {
+  // `quiet` (the right column's quotes, 22.2): a formula is 「公式」, never its code.
+  function plainOf(value, from, to, quiet) {
     const text = value.info.text, atoms = [];
     // a range set yields overlapping ranges layer by layer: put the replaces in order first
-    value.deco.between(from, to, (f, t2, v) => { if (v.spec.atom) atoms.push([f, t2, v.spec.widget]); });
+    value.deco.between(from, to, (f, t2, v) => { if (v.spec.atom) atoms.push([f, t2, quiet && v.spec.kind === "math" ? { plain: t("公式") } : v.spec.widget]); });
     atoms.sort((a, b) => a[0] - b[0]);
     let out = "", at = from;
     atoms.forEach(([f, t2, w]) => {
@@ -2860,7 +2871,11 @@
     ["figurename", "capname"], ["tablename", "capname"], ["thefigure", "capnum"], ["thetable", "capnum"], ["theHfigure", "capnum"], ["theHtable", "capnum"]]);
   const ZH_NUMBER_DEFS = { thesection: "\\chinese{section}", thesubsection: "（\\chinese{subsection}）", thesubsubsection: "\\arabic{subsubsection}" };
   const ZH_NUMBER_KEYS = { "section/name": ",、", "section/aftername": "", "subsection/aftername": "", "subsubsection/name": ",." };
-  const CAPTION_NAMES = { zh: { figurename: "图", tablename: "表" }, en: { figurename: "Figure", tablename: "Table" } };
+  // the lines 图表名称 writes, whole (the Chinese names are LaTeX written into the paper, never words of the interface)
+  const CAPTION_LINES = { zh: ["\\renewcommand{\\figurename}{图}", "\\renewcommand{\\tablename}{表}"],
+    en: ["\\renewcommand{\\figurename}{Figure}", "\\renewcommand{\\tablename}{Table}"] };
+  const CAPTION_NAMES = {};
+  Object.keys(CAPTION_LINES).forEach((k) => { const v = CAPTION_LINES[k].map((l) => /\{([^{}]*)\}$/.exec(l)[1]); CAPTION_NAMES[k] = { figurename: v[0], tablename: v[1] }; });
   const squash = (x) => String(x == null ? "" : x).replace(/\s+/g, "");
   // what a \ctexset key sets, as 版式 counts it: the section headings' numbers, the figure and table names, or neither
   function ctexKey(key) {
@@ -3538,7 +3553,7 @@
       const names = CAPTION_NAMES[value];
       if (value === L.capDefault) specs = removed(S.occ);
       else if (S.occ.length) specs = S.occ.map((o) => (o.line ? argText(o.line, 0, names[o.name]) : { from: o.item.from, to: o.item.to, insert: o.item.text.slice(0, o.item.text.indexOf("=") + 1) + names[o.name] }));
-      else specs = [newLines(r, ["\\renewcommand{\\figurename}{" + names.figurename + "}", "\\renewcommand{\\tablename}{" + names.tablename + "}"])];
+      else specs = [newLines(r, CAPTION_LINES[value])];
     } else if (key === "capnum") {
       // 连续编号（图 1） / 按章或节编号（图 2-3） (and, with chapters, the class's 图 2.3): the old lines go, the new come
       if (!(L.chapters ? ["", "continuous", "within"] : ["", "within"]).includes(value) || value === S.value) return null;
@@ -4378,6 +4393,15 @@
     });
   }
 
+  // A passage's words as the column quotes them: in the edit view as it shows them (no markup, 22.1), in 显示代码 as
+  // the code. `text` (a quote the server keeps, a candidate) is read as the edit view would show it.
+  function shownQuote(me, from, to, text) {
+    if (codeShown(me)) return text != null ? text : me.view.state.sliceDoc(from, to);
+    const w = wordField(me.CM);
+    if (text == null) { const v = me.view.state.field(w.field, false); return v ? plainOf(v, from, to, true) : me.view.state.sliceDoc(from, to); }
+    const st = me.CM.EditorState.create({ doc: String(text), extensions: [w.field] });
+    return plainOf(st.field(w.field), 0, st.doc.length, true);
+  }
   function quoted(text) {
     const chars = Array.from(text);
     return mk("blockquote", "latex-quote", chars.length > 200 ? chars.slice(0, 200).join("") + t("…（共 {n} 个字符）", { n: chars.length }) : text);
@@ -4415,7 +4439,7 @@
     const showPicked = () => {
       picked.replaceChildren(...chosen.map((file) => {
         const li = mk("li", null);
-        li.append(mk("span", "mono", file), mkButton(t("移除"), "ws-text-link", () => { chosen.splice(chosen.indexOf(file), 1); showPicked(); }));
+        li.append(mk("span", "latex-file-name", file), mkButton(t("移除"), "ws-text-link", () => { chosen.splice(chosen.indexOf(file), 1); showPicked(); }));
         return li;
       }));
       go.disabled = sending || !chosen.length;
@@ -4434,15 +4458,16 @@
         const files = (data.files || []).filter((f) => f.group === group);
         if (!files.length) return;
         out.push(mk("div", "latex-group", { figure: t("图和表"), data: t("数据"), script: t("脚本"), document: t("文档") }[group]));
-        files.forEach((f) => out.push(mkButton(f.path, "latex-result mono", () => { if (!chosen.includes(f.path)) { chosen.push(f.path); showPicked(); } })));
+        files.forEach((f) => out.push(mkButton(f.path, "latex-result latex-file-name", () => { if (!chosen.includes(f.path)) { chosen.push(f.path); showPicked(); } })));
       });
       if (!out.length) out.push(mk("p", "node-sub", t("没有找到这样的文件")));
       results.replaceChildren(...out);
     };
     search.addEventListener("input", find);
     closePicker(me);   // one primary at a time in the column
-    fillSide(me, [mk("h3", "latex-side-title", t("关联依据文件")), quoted(me.view.state.sliceDoc(sel.from, sel.to)),
-      search, results, picked, note, go, closeLink(me)]);
+    const title = mk("h3", "latex-side-title", t("关联依据文件"));
+    fillSide(me, [title, quoted(shownQuote(me, sel.from, sel.to)), search, results, picked, note, go, closeLink(me)]);
+    inSight(title);   // under the 格式 panel: the column scrolls to it (review, 22.7)
     find();
   }
 
@@ -4460,8 +4485,8 @@
     const files = mk("ul", "latex-files");
     p.links.forEach((l) => {
       const li = mk("li", null), line = mk("div", null);
-      if (l.file_missing) line.append(mk("span", "mono", l.file.replace(/^[a-z]+:/, "")), mk("span", "status-label tone-ochre", t("这个文件现在不在项目里")));
-      else line.appendChild(mkButton(l.file.replace(/^[a-z]+:/, ""), "ws-text-link mono", () => { if (window.RONode) RONode.openNode(l.file); }));
+      if (l.file_missing) line.append(mk("span", "latex-file-name", l.file.replace(/^[a-z]+:/, "")), mk("span", "status-label tone-ochre", t("这个文件现在不在项目里")));
+      else line.appendChild(mkButton(l.file.replace(/^[a-z]+:/, ""), "ws-text-link latex-file-name", () => { if (window.RONode) RONode.openNode(l.file); }));
       li.appendChild(line);
       if (l.note) li.appendChild(mk("p", "latex-note-text", l.note));
       const when = window.RODesk && RODesk.whenWords ? RODesk.whenWords(l.at, new Date()) : "";
@@ -4474,7 +4499,7 @@
       li.appendChild(withdraw);
       files.appendChild(li);
     });
-    const parts = [head, quoted(p.from != null && p.state !== "deleted" ? me.view.state.sliceDoc(p.from, p.to) : p.quote), files];
+    const parts = [head, quoted(p.from != null && p.state !== "deleted" ? shownQuote(me, p.from, p.to) : shownQuote(me, 0, 0, p.quote)), files];
     if (p.state === "changed" && p.candidates.length) {
       parts.push(mk("p", "node-sub", p.candidates[0].still ? t("这段的文字改过了。依据文件还支持它吗？") : t("原来的文字找不到了。是下面哪一段？")));
       p.candidates.slice(0, 3).forEach((c) => {
@@ -4485,7 +4510,7 @@
           if (!await act(me, "reanchor", (conv) => p.links.map((l) => ({ link: l.link, from: conv.toServer(c.from), to: conv.toServer(c.to) })),
             c.still ? t("已记录：仍然成立") : t("已记录：是这段"))) here.disabled = false;
         });
-        row.append(quoted(c.text), here);
+        row.append(quoted(shownQuote(me, 0, 0, c.text)), here);
         parts.push(row);
       });
     }
@@ -4510,17 +4535,18 @@
       if (waiting.length) add(mk("span", "status-label tone-ochre", t("{n} 段待复核", { n: waiting.length })));
       if (pending.length) add(mk("span", "status-label tone-ochre", t("{n} 段待批准", { n: pending.length })));
       parts.push(counts);
-      waiting.concat(pending).forEach((p) => parts.push(mkButton(Array.from(words(p.quote)).slice(0, 40).join(""), "ws-text-link latex-waiting", () => openPassage(me, p.key))));
+      waiting.concat(pending).forEach((p) => parts.push(mkButton(Array.from(words(shownQuote(me, 0, 0, p.quote))).slice(0, 40).join(""), "ws-text-link latex-waiting", () => openPassage(me, p.key))));
     } else if (me.mayLink) parts.push(mk("p", "node-sub", t("选中一段文字，可以关联依据文件。")));
     fillSide(me, parts);
   }
 
   // -- 格式与插入: the panel (22.12) ----------------------------------------------------------------------------------
   //
-  // At the top of the right column, above the passages: two tabs, 「格式」 (this panel) and 「版式」 (22.12's next step).
-  // 「格式」 has three quiet groups -- 文字, 标题, 插入 -- whose controls run the tools above through `applyFormat`, the
-  // editor's own dispatch. Disabled, with its reason, in a read-only file and while 显示代码 shows the code. A picker
-  // (图片, 表格, 引用文献) opens inside the panel, one at a time, with 「插入」 its one primary button and 「取消」 a link.
+  // At the top of the right column, above the passages: 「显示代码」, then two tabs, 「格式」 (this panel) and 「版式」 (A2).
+  // 「格式」 has four quiet groups -- 文字, 章节标题, 段落, 插入 -- whose controls run the tools above through `applyFormat`,
+  // the editor's own dispatch. Disabled, with its reason, in a read-only file and while 显示代码 shows the code. A picker
+  // (图片, 表格, 文献引用, 交叉引用, 网址) opens inside the panel, one at a time, with 「插入」 its one primary button and
+  // 「取消」 a link.
 
   // What the panel knows of the main file: the open file's own preamble when it is the main file (or has its own
   // \documentclass and no main file is known), else what GET /api/latex/file said of the main file (`format`).
@@ -4643,12 +4669,12 @@
       [["textsf", t("无衬线")], ["texttt", t("等宽")]], facts.engine === "pdflatex" ? [["textrm", t("衬线")]] : []));
     fill(ui.size.select, [["small", t("小")], ["", t("正常")], ["large", t("大")], ["Large", t("更大")]]);
     fill(ui.heading.select, [["", t("正文段落")]].concat(facts.chapters ? [["chapter", t("章")]] : [],
-      [["section", t("节")], ["subsection", t("小节")], ["subsubsection", t("小小节")], ["other", t("其他标题"), true]]));
+      [["section", t("节")], ["subsection", t("小节")], ["subsubsection", t("小小节")], ["other", t("其它标题"), true]]));
   }
 
   // Disabled, saying why, where the tools would not make sense: a read-only file, and 显示代码 (the code as written).
   function formatOff(me) {
-    if (me.readOnly) return t("这个文件只能查看，不能用格式与插入。");
+    if (me.readOnly) return t("这个文件只能查看，不能改格式和版式。");
     return codeShown(me) ? t("正在显示代码。关掉「显示代码」后可以用格式工具。") : "";
   }
   // 「显示代码」: pressed while the code shows; disabled and pressed, with why, for a file the edit view cannot show.
@@ -4790,14 +4816,15 @@
   }
 
   // 版式 edits the preamble, so it works in 显示代码 too: off only in a file that cannot be changed.
-  function layoutOff(me) { return me.readOnly ? t("这个文件只能查看，不能用格式与插入。") : ""; }
+  function layoutOff(me) { return me.readOnly ? t("这个文件只能查看，不能改格式和版式。") : ""; }
   function formatAvailability(me) {
     const ui = me.ui.format;
     if (!ui) return;
     const why = formatOff(me);
     ui.controls.forEach((c) => { c.disabled = !!why; });
     ui.reason.textContent = why;
-    ui.reason.classList.toggle("hidden", !why);
+    // a read-only file: the switch above already says it can only be viewed (one sentence, not two)
+    ui.reason.classList.toggle("hidden", !why || !!me.readOnly);
     if (why) { closePicker(me); sayFormat(me, ""); }
     drawFormatState(me);
   }
@@ -4808,13 +4835,15 @@
     if (!note) return;
     note.textContent = text || "";
     note.className = "node-sub latex-format-note" + (warn ? " latex-export-warn" : "") + (text ? "" : " hidden");
+    if (text) inSight(note);
   }
 
   // Runs a tool: its transaction goes through the editor's dispatch (so it is undone by ⌘Z, saved, mapped through the
   // passages and filtered for line breaks like typing); a refusal is said in the panel. The editor regains focus.
   // `layout`: a 版式 setting, which edits the preamble and works in 显示代码 too.
   function applyFormat(me, make, layout) {
-    if (ed !== me || !me.view || (layout ? layoutOff(me) : formatOff(me)) || me.view.composing) return false;
+    if (ed !== me || !me.view || (layout ? layoutOff(me) : formatOff(me))) return false;
+    if (me.view.composing) { sayFormat(me, t("输入法还在输入。先确认文字，再用这个工具。")); return false; }
     const r = make(me.view.state);
     // a tool gives the editor the focus back; 版式 and 文档信息 keep it in the column (Tab goes on to the next field)
     const focus = () => { if (!layout && typeof me.view.focus === "function") me.view.focus(); };
@@ -4889,7 +4918,7 @@
     ui.picker.classList.add("hidden");
     Object.keys(ui.openers).forEach((k) => ui.openers[k].setAttribute("aria-expanded", "false"));
   }
-  // 图片, 表格 or 引用文献 opens its picker in the panel (pressed again, it closes). The link panel closes: one primary at a time.
+  // 图片, 表格, 文献引用, 交叉引用 or 网址 opens its picker in the panel (pressed again, it closes). The link panel closes: one primary at a time.
   function openPicker(me, kind) {
     const ui = me.ui.format;
     if (!ui || formatOff(me)) return;
@@ -4900,6 +4929,7 @@
     ui.openers[kind].setAttribute("aria-expanded", "true");
     ui.picker.classList.remove("hidden");
     sayFormat(me, "");
+    inSight(ui.picker);
     const seq = me.pickerSeq;
     ({ image: imagePicker, table: tablePicker, cite: citePicker, ref: refPicker, url: urlPicker })[kind](me, ui.picker, () => ed === me && me.picker === kind && me.pickerSeq === seq);
     if (kind === "image" || kind === "table") setTimeout(() => takenLabels(me), 0);
@@ -4948,7 +4978,7 @@
           img.addEventListener("error", () => { if (img.remove) img.remove(); });
           b.appendChild(img);
         }
-        b.appendChild(mk("span", "mono", x.path));
+        b.appendChild(mk("span", "latex-file-name", x.path));   // quiet sans words, as on the page (22.12 B2)
         if (IMAGE_UNSAFE.test(x.path)) { b.disabled = true; b.appendChild(mk("span", "node-sub-inline", t("文件名里有 LaTeX 不能用的字符"))); }
         b.addEventListener("click", () => {
           chosen = x.path;
@@ -5247,7 +5277,8 @@
       const value = me.view.state.field(wordField(me.CM).field, false), read = value ? value.read : readLatex(me.view.state.doc.toString());
       if (read.preamble) pre = me.view.state.doc.sliceString(0, read.preamble.to);
       else if (!why) why = t("主文件里没有 {command}，版式还不能设置。", { command: "\\begin{document}" });
-    } else if (me.format && typeof me.format.preamble === "string") pre = me.format.preamble;
+    } else if (me.format && me.format.cut) why = t("主文件的导言区太长，版式读不全。");   // never defaults read from part of it
+    else if (me.format && typeof me.format.preamble === "string") pre = me.format.preamble;
     else if (!why) why = t("没有找到主文件。版式在主文件的导言区里设置。");
     return { facts: facts, pre: pre, why: why, writable: !why && facts.isMain && pre != null };
   }
@@ -5281,7 +5312,7 @@
     L.head.classList.toggle("hidden", !why && st.facts.isMain);
     LAYOUT_KEYS_ORDER.forEach((k) => {
       const row = L.rows[k], S = layout && !layout.why ? layout.settings[k] : null, custom = me.layoutCustom && me.layoutCustom[k];
-      const choices = layoutChoices(k, layout).concat(S && S.mine ? [["mine", t("自定义"), true]] : []);
+      const choices = layoutChoices(k, layout).concat(S && S.mine ? [["mine", t("自己写的设置"), true]] : []);   // not 自定义, which is 版式's own fields
       const shape = JSON.stringify(choices);
       if (shape !== row.shape) {
         row.shape = shape;
@@ -5340,8 +5371,8 @@
   }
 
   // 交叉引用 (A2): the \label keys of the open file and of the other files of its paper (GET /api/latex/insert, what=labels),
-  // grouped as 图, 表, 公式, 节 and 其他; the one picked goes in as \ref{…} (\eqref for a formula where amsmath is loaded).
-  const labelGroups = () => [["figure", t("图")], ["table", t("表")], ["equation", t("公式")], ["section", t("节")], ["other", t("其他")]];
+  // grouped as 图, 表, 公式, 节 and 其它 (13.4's word); the one picked goes in as \ref{…} (\eqref for a formula where amsmath is loaded).
+  const labelGroups = () => [["figure", t("图")], ["table", t("表")], ["equation", t("公式")], ["section", t("节")], ["other", t("其它")]];
   async function refPicker(me, host, current) {
     const search = textInput(t("搜索标签")), list = mk("div", "latex-bibs"), said = mk("p", "node-sub hidden");
     search.setAttribute("placeholder", t("搜索标签"));
@@ -5402,6 +5433,12 @@
     host.replaceChildren(mk("h4", "latex-format-title", t("插入网址")), fieldOf(t("网址"), input), pickerActions(go, me));
   }
 
+  // What opens or is said in the right column is scrolled into its view (the column scrolls, never the page): the link
+  // panel and a picker open under the 格式 panel, a sentence above the tools pressed.
+  function inSight(el) {
+    if (el && typeof el.scrollIntoView === "function") requestFrame(() => el.scrollIntoView({ block: "nearest" }));
+  }
+  function requestFrame(f) { if (typeof requestAnimationFrame === "function") requestAnimationFrame(f); else f(); }
   // The right column: 格式与插入 at the top, then what the column shows (the passages, a link or a passage's panel).
   function fillSide(me, parts) { (me.ui.sideRest || me.ui.side).replaceChildren(...parts); }
 

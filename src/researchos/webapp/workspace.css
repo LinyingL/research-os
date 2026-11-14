@@ -424,7 +424,8 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-new-kinds .ws-field-label { display: block; margin-bottom: .3rem; }
 .latex-new-kind { display: inline-flex; align-items: baseline; gap: .3rem; margin-right: .9rem; font-size: .86rem; }
 /* 22.12: 格式与插入 at the top of the editor's right column -- two word tabs, quiet groups with small headings, the
-   tools as small quiet buttons whose pressed state is the paper's alt tone with an ink edge; a picker inside it. */
+   tools as small quiet buttons whose pressed state is an ink edge on the paper; a picker inside it. Nothing in the column
+   is wider than it (review, 22.7): a select or a field wraps or shrinks, a file name breaks anywhere. */
 .latex-format { width: 100%; display: flex; flex-direction: column; gap: .7rem; padding-bottom: .9rem; border-bottom: 1px solid var(--line); }
 .latex-tabs { display: flex; gap: 1rem; border-bottom: 1px solid var(--line); }
 .latex-tab { font: inherit; font-size: .86rem; background: none; border: 0; border-bottom: 2px solid transparent; padding: .2rem 0; margin-bottom: -1px; color: var(--ink-soft); cursor: pointer; }
@@ -434,15 +435,19 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-format-group { display: flex; flex-direction: column; gap: .35rem; }
 .latex-format-title { margin: 0; font-size: .74rem; font-weight: 600; color: var(--gray); }
 .latex-format-row { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .4rem; }
-.latex-format-label { font-size: .76rem; color: var(--ink-soft); }
-.latex-format-field { display: inline-flex; align-items: center; gap: .3rem; }
-.latex-side .latex-format-select { width: auto; padding: .1rem .3rem; font-size: .8rem; }
+.latex-format-label { font-size: .76rem; color: var(--ink-soft); white-space: nowrap; }
+.latex-format-field { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .2rem .3rem; max-width: 100%; min-width: 0; }
+.latex-side .latex-format-select { width: auto; max-width: 100%; min-width: 0; padding: .1rem .3rem; font-size: .8rem; }
+.latex-format, .latex-layout-item, .latex-picker { max-width: 100%; min-width: 0; box-sizing: border-box; }
+.latex-side-rest { width: 100%; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: .9rem; }
+.latex-side-rest > p { margin: 0; }
+.latex-file-name { min-width: 0; overflow-wrap: anywhere; font-family: var(--font-sans); }
 .latex-tool[aria-pressed="true"] { border-color: var(--ink); background: var(--paper); }
 .latex-key { font-size: .7rem; color: var(--gray); }
 .latex-format-reason, .latex-format-note { margin: 0; }
 .latex-picker { display: flex; flex-direction: column; align-items: flex-start; gap: .4rem; padding: .5rem .6rem; background: var(--paper-alt); border: 1px solid var(--line); }
 .latex-images, .latex-bibs { width: 100%; display: flex; flex-direction: column; gap: .2rem; max-height: 14rem; overflow: auto; }
-.latex-image, .latex-bib { display: flex; flex-wrap: wrap; align-items: center; gap: .2rem .5rem; width: 100%; padding: .2rem .3rem; text-align: left; font: inherit; font-size: .8rem; color: var(--ink); background: none; border: 1px solid transparent; cursor: pointer; }
+.latex-image, .latex-bib { display: flex; flex-wrap: wrap; align-items: center; gap: .2rem .5rem; width: 100%; box-sizing: border-box; min-width: 0; padding: .2rem .3rem; text-align: left; font: inherit; font-size: .8rem; color: var(--ink); background: none; border: 1px solid transparent; cursor: pointer; }
 .latex-image[aria-pressed="true"], .latex-bib[aria-pressed="true"] { border-color: var(--ink); background: var(--paper); }
 .latex-image:disabled { color: var(--ink-soft); cursor: default; }
 .latex-thumb { width: 2.6rem; height: 2rem; object-fit: contain; background: var(--paper); border: 1px solid var(--line); }
@@ -450,7 +455,7 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-side .latex-number { width: 4rem; }
 .latex-grid { display: grid; grid-template-columns: repeat(8, .9rem); gap: 2px; }
 .latex-grid-cell { width: .9rem; height: .9rem; padding: 0; background: var(--paper); border: 1px solid var(--line-strong); cursor: pointer; }
-.latex-grid-cell.is-on { background: var(--ochre-soft); border-color: var(--ochre); }
+.latex-grid-cell.is-on { background: var(--paper-alt); border-color: var(--ink); }   /* a choice is ink, never ochre (21.8) */
 .latex-format-check { display: inline-flex; align-items: center; gap: .3rem; font-size: .8rem; }
 /* 22.12 A2: 版式 -- each setting a labelled select, its 自定义 fields under it, and a quiet line where the setting is
    the person's own; like Word, the editor's lines follow the main file's 行距, roughly (--latex-stretch, set by the page). */
@@ -460,7 +465,7 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-layout-note { margin: 0; font-size: .76rem; }
 .latex-editor .cm-content.latex-word { line-height: calc(1.8 * var(--latex-stretch, 1)); }
 /* 22.12 B: like Word, a page -- the text a centred column of a page's measure on the paper, the desk's tone around it,
-   generous padding, the body at 1rem; 显示源码 keeps the full-width source. Headings in the serif with space above. */
+   generous padding, the body at 1rem; 显示代码 keeps the full-width code. Headings in the serif with space above. */
 .latex-page:not(.is-source) .latex-editor { background: var(--paper-alt); }
 .latex-editor .cm-content.latex-word { flex: 1 1 auto; box-sizing: border-box; max-width: var(--latex-measure); margin: 0 auto; min-height: 100%;
   padding: 2.4rem clamp(.4rem, 3vw, 2.4rem) 4rem; background: var(--paper); border-inline: 1px solid var(--line); font-size: 1rem; }

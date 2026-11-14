@@ -914,7 +914,7 @@ def test_show_code_leaves_the_layout_on_and_a_read_only_main_and_a_file_without_
     assert panel["source"] == {"head": [], "off": False}         # 显示代码 (B1): 版式 edits the preamble, code or not
     assert panel["sourceOff"] is False
     assert panel["shownInCode"] is True                           # 看这一行 shows the line in 显示代码
-    assert panel["readOnly"] == {"head": ["这个文件只能查看，不能用格式与插入。"], "off": True}
+    assert panel["readOnly"] == {"head": ["这个文件只能查看，不能改格式和版式。"], "off": True}
     assert panel["noMain"] == ["没有找到主文件。版式在主文件的导言区里设置。"]
 
 

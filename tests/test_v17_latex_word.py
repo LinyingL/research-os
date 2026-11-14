@@ -337,7 +337,7 @@ def test_until_katex_is_in_formulas_are_a_quiet_word_and_they_are_typeset_when_i
 def test_cite_and_ref_are_quiet_chips_and_unknown_commands_a_chip_of_their_words_never_written(run):
     d = run["away"]
     cite = _find(d, "\\citep[p.~3]{a, b}")[0]["widget"]
-    assert cite == {"cls": "latex-chip latex-chip-cite", "text": "a；b", "html": ""}   # no .bib read: the keys
+    assert cite == {"cls": "latex-chip latex-chip-cite", "text": "a；b，p. 3", "html": ""}   # no .bib read: the keys; review: its note too
     assert [x["widget"]["text"] for x in _find(d, "\\ref{sec:i}")] == ["第 1 节"]   # the number the PDF prints, known here
     assert [x["widget"] for x in _find(d, "\\label{sec:i}")] == [None]              # hidden
     assert _find(d, "\\newcommand{\\R}{\\mathbb{R}}")[0]["widget"]["text"] == "LaTeX 内容"
