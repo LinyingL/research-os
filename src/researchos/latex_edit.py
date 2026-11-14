@@ -361,8 +361,19 @@ def drafts(root: str | Path, lang: str = "zh") -> dict[str, Any]:
     others = [row(p) for p in known if p not in included and p not in mains]
     return {"groups": groups, "others": others,
             "generated": sum(files_ingest.fold(p) in generated for p in walked[:TEX_FILE_LIMIT]),
-            "truncated": len(walked) > TEX_FILE_LIMIT, "limit": TEX_FILE_LIMIT,
+            "truncated": len(walked) > TEX_FILE_LIMIT, "limit": TEX_FILE_LIMIT, "new_folder": new_folder(root),
             "message": None if decision.may_apply else _record_state(decision, lang)["message"]}
+
+
+def new_folder(root: Path) -> str:
+    """Where 「新建文稿」 puts a draft unless the person says otherwise (22.11): the document folder of 19, else
+    `paper` when it exists, else `manuscript`."""
+    from researchos import outputs   # it imports workspace, which this module imports
+
+    try:
+        return outputs.folders(root)["folders"]["document"]
+    except (WorkspaceError, OSError, ValueError):
+        return "paper" if (root / "paper").is_dir() else "manuscript"
 
 
 def include_links(root: Path, rel: str, text: str) -> dict[str, Any]:
@@ -520,6 +531,139 @@ def undo_save(root: str | Path, body: Any, lang: str = "zh") -> dict[str, Any]:
                                                 limit=SIZE_LIMIT, text=False, backup_subdir=backup_series(rel))
     return {**_payload(rel, restored, _opened(root, rel, restored), lang), "backup": backup,
             "history_error": history_error}
+
+
+# -- 新建文稿, a new draft (22.11) -------------------------------------------------------------------------------------
+
+_PAPER = ("\\documentclass[12pt]{%s}\n%s\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\usepackage{booktabs}\n\n"
+          "\\title{<TITLE>}\n\\author{}\n\\date{\\today}\n\n\\begin{document}\n\\maketitle\n\n"
+          "\\begin{abstract}\n%s\n\\end{abstract}\n\n\\section{%s}\n%s\n\n\\end{document}\n")
+#: What each kind starts as (22.11): minimal and compilable, no bibliography; `<TITLE>` is the title, escaped.
+TEMPLATES = {
+    "zh_paper": _PAPER % ("ctexart", "", "在这里写摘要。", "引言", "在这里开始写正文。"),
+    "en_paper": _PAPER % ("article", "\\usepackage[T1]{fontenc}\n", "Write the abstract here.", "Introduction",
+                          "Start writing here."),
+    "chapter": "\\section{<TITLE>}\n<BODY>\n",
+}
+_TEX_SPECIAL = {"\\": "\\textbackslash{}", "{": "\\{", "}": "\\}", "$": "\\$", "&": "\\&", "#": "\\#", "_": "\\_",
+                "%": "\\%", "^": "\\^{}", "~": "\\~{}"}
+_BAD_PART = re.compile(r"[\x00-\x1f\x7f\\/]")
+
+
+def _new_refused(rel: Any, zh: str) -> WorkspaceError:
+    return _refuse("path", f"{rel!r} cannot be a new draft", zh)
+
+
+def _new_path(root: Path, folder: Any, name: Any) -> tuple[str, str | None]:
+    """The new draft's path and the folder it creates, if any (22.11): 22.1's rules but existence -- inside the project,
+    no component starting with `.` or `-`, no control character, no symbolic link, not only in the cloud, lower-case
+    `.tex` (added when the name has none) --, every existing folder spelt as on disk, at most one new folder level,
+    and never a file that exists (409 `exists`)."""
+    if not isinstance(folder, str) or not isinstance(name, str):
+        raise _refuse("invalid", "A new draft needs a folder and a name", "请填写文件夹和文件名")
+    name, folder = name.strip(), folder.strip().rstrip("/")   # a leading "/" is an empty component, refused below
+    if not name.endswith(".tex"):
+        if name.lower().endswith(".tex"):
+            raise _new_refused(name, "文件名要以小写的 .tex 结尾")
+        name += ".tex"
+    parts = (folder.split("/") if folder else []) + [name]
+    rel = "/".join(parts)
+    if any(not p or p != p.strip() or p.startswith((".", "-")) or _BAD_PART.search(p) for p in parts):
+        raise _new_refused(rel, "文件夹或文件名不能以 . 或 - 开头，也不能含控制字符或反斜杠")
+    try:
+        full = workspace._confined(root, rel)  # noqa: SLF001 -- symbolic links, the cloud, inside the project
+    except WorkspaceError as exc:
+        if exc.code == "cloud":
+            raise
+        raise _new_refused(rel, "文稿只能建在项目文件夹里，路径上不能有替身（符号链接）") from exc
+    current, created = root, None
+    try:
+        for at, part in enumerate(parts[:-1]):
+            if part not in os.listdir(current):
+                if os.path.lexists(current / part):
+                    raise _new_refused(rel, "文件夹的大小写或字符写法和磁盘上的不一致")
+                if at != len(parts) - 2:
+                    raise _refuse("too_deep", f"{rel}: at most one new folder", "最多只能新建一层文件夹")
+                created = "/".join(parts[:at + 1])
+            elif not stat.S_ISDIR(os.lstat(current / part).st_mode):
+                raise _new_refused(rel, f"{part} 不是文件夹")
+            current = current / part
+    except OSError as exc:
+        raise _refuse("unreadable", f"Cannot read the folders of {rel}: {exc}", "文件夹无法读取，请先检查项目文件", 409) from exc
+    if os.path.lexists(full):
+        raise _refuse("exists", f"{rel} already exists", f"已经有这个文件了：{rel}", 409)
+    return rel, created
+
+
+def _end_document(text: str) -> int | None:
+    """Where the first `\\end{document}` outside a comment starts, or None."""
+    at = 0
+    for line in text.splitlines(keepends=True):
+        hit = uncommented(line).find("\\end{document}")
+        if hit >= 0:
+            return at + hit
+        at += len(line)
+    return None
+
+
+def _add_input(root: Path, main: str, chapter: str, lang: str) -> dict[str, Any]:
+    """`\\input{<chapter from the main's folder, no .tex>}` on a line of its own just before `main`'s
+    `\\end{document}`, written as a save is (`save_tex`); when it cannot be, the sentence why."""
+    line = "\\input{" + posixpath.relpath(chapter[:-4], posixpath.dirname(main) or ".") + "}"
+    try:
+        main = checked_path(root, main)
+        raw = _read(root, main)
+        opened = _opened(root, main, raw)
+        if opened["read_only"]:
+            raise _refuse("read_only_file", *reversed(READ_ONLY[opened["read_only_reason"]]))
+        text, at = opened["text"], _end_document(opened["text"])
+        if at is None:
+            raise _refuse("no_end", "it has no \\end{document}", "它里面没有 \\end{document}")
+        sep = "\r\n" if opened["line_ending"] == "crlf" else "\n"
+        start = text.rfind("\n", 0, at) + 1
+        own_line = not text[start:at].strip()
+        save_tex(root, {"path": main, "revision": _revision(raw), "edits": [
+            {"from": start if own_line else at, "to": start if own_line else at,
+             "insert": line + sep if own_line else sep + line + sep}]})
+    except WorkspaceError as exc:
+        return {"main": main, "line": line, "added": False,
+                "message": settings.say("没有在 {main} 里加入 {line}：{why}", "{line} was not added to {main}: {why}",
+                                        lang, main=main, line=line, why=exc.message_zh if lang != "en" else str(exc))}
+    return {"main": main, "line": line, "added": True, "message": None}
+
+
+def new_tex(root: str | Path, body: Any, lang: str = "zh") -> dict[str, Any]:
+    """「新建文稿」 (22.11): `{kind, folder, name, title?, main?}`, kind one of `TEMPLATES`. The file is written from its
+    template through the human write path (`write_guard(human=True)`, exclusive creation, a history entry), UTF-8 with
+    LF; a chapter with `main` is then brought into it by `_add_input`, whose outcome is `input`."""
+    root = workspace._root(root)  # noqa: SLF001
+    if not isinstance(body, dict) or body.get("kind") not in TEMPLATES:
+        raise _refuse("invalid", "A new draft is a Chinese paper, an English paper or a chapter", "请选择文稿的类型")
+    title, main = body.get("title") or "", body.get("main") or None
+    if not isinstance(title, str) or len(title) > 200 or re.search(r"[\x00-\x1f\x7f]", title):
+        raise _refuse("invalid", "A title is at most 200 characters on one line", "标题最多 200 个字符，只能写一行")
+    if main is not None and (body["kind"] != "chapter" or not isinstance(main, str)):
+        raise _refuse("invalid", "Only a chapter is brought into a main file", "只有章节文件能加入主文件")
+    with situation.write_guard(root, human=True):
+        pid = workspace._require_write(root)  # noqa: SLF001
+        rel, created = _new_path(root, body.get("folder"), body.get("name"))
+        text = TEMPLATES[body["kind"]]
+        if body["kind"] == "chapter":
+            title = title.strip() or posixpath.basename(rel)[:-4]
+            # a chapter of a pdfLaTeX paper gets the English line: pdfLaTeX cannot set Chinese
+            from researchos import latex_export   # it imports this module
+
+            try:
+                main_text = _read(root, checked_path(root, main)).decode("utf-8", "replace") if main else ""
+            except WorkspaceError:
+                main_text = ""
+            zh = lang != "en" and (main is None or bool(latex_export._UNICODE_RE.search(uncommented(main_text))))  # noqa: SLF001
+            text = text.replace("<BODY>", "在这里写这一节。" if zh else "Write this section here.")
+        data = text.replace("<TITLE>", "".join(_TEX_SPECIAL.get(c, c) for c in title.strip())).encode("utf-8")
+        _backup, history_error = workspace._save(root, rel, None, data, pid,  # noqa: SLF001
+                                                 limit=SIZE_LIMIT, text=False, backup_subdir=backup_series(rel))
+    return {"path": rel, "revision": _revision(data), "folder_created": created, "history_error": history_error,
+            "input": _add_input(root, main, rel, lang) if main is not None else None}
 
 
 # -- passages and their supporting files (22.2) ---------------------------------------------------------------------

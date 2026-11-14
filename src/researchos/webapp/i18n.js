@@ -1940,8 +1940,6 @@
     // 正文 in the sidebar (DESIGN.md 22.10)
     "正文": "Manuscript",
     "项目里的 LaTeX 文稿。点一份就在编辑器里打开；改动保存回原文件。": "The project's LaTeX drafts. Click one to open it in the editor; changes are saved back to the file.",
-    "这个项目里还没有 .tex 文稿。": "This project has no .tex drafts yet.",
-    "把 .tex 文件放进项目文件夹后，这里会列出来。": "Put .tex files in the project folder and they will be listed here.",
     "其他 .tex 文件": "Other .tex files",
     "只在云端": "Only in the cloud",
     "没能读到项目里的文稿": "Could not read the project's drafts",
@@ -1950,6 +1948,19 @@
       one: "There is also {n} .tex table written by a script; it can only be viewed, not edited here.",
       other: "There are also {n} .tex tables written by scripts; they can only be viewed, not edited here.",
     },
+    // 新建文稿 on 正文 (DESIGN.md 22.11)
+    "新建文稿": "New draft",
+    "这个项目里还没有 .tex 文稿。点「新建文稿」开始写，或把 .tex 文件放进项目文件夹。": "This project has no .tex drafts yet. Click “New draft” to start one, or put .tex files in the project folder.",
+    "中文论文": "Chinese paper",
+    "英文论文": "English paper",
+    "章节文件": "Chapter file",
+    "文件夹": "Folder",
+    "文件名": "File name",
+    "标题（可选）": "Title (optional)",
+    "加入主文件": "Add to main file",
+    "不加入": "Do not add",
+    "正在新建…": "Creating…",
+    "没能新建文稿": "Could not create the draft",
 
   };
 

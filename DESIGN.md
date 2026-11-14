@@ -7848,6 +7848,9 @@ emoji, arrow or glyph.
 - The export result: 打开 PDF and 在 Finder 中显示 text links; 「导出没有成功」
   in clay (added to `test_v16_clay`'s list); a missing character and 待复核
   in ochre; a found passage in ink.
+- 正文 (22.11, amending 22.10's "no primary button"): 「新建文稿」 primary;
+  while its form is open it is hidden and the form's 「创建」 is the primary,
+  「取消」 a text link.
 
 ### 22.8 Batches and acceptance
 
@@ -7988,3 +7991,60 @@ and on 图表与论断's 论文正文 rows. Now the sidebar has an item of its o
     one, marked as the paper or not; 论文正文 (papers.toml, 图表与论断) is the one
     draft marked as the paper, `.md` and `.docx` included. Whether 正文 should
     mark the row that is the 论文正文 is the researcher's to decide (22.0.2).
+
+### 22.11 新建文稿 (the researcher, 2026-11-14)
+
+"需要可以自主创建tex": 正文 listed only the `.tex` files already in the
+project, so a paper had to be started outside Research OS. Now it starts here.
+
+- **The page.** 正文 has one primary button, **「新建文稿」** (New draft), at the
+  top, under its sentence, there in the empty state too, whose sentence becomes
+  「这个项目里还没有 .tex 文稿。点「新建文稿」开始写，或把 .tex 文件放进项目文件夹。」
+  (replacing 22.10's two). It opens a form in the page, under the button, not a
+  dialog; the button is hidden while the form is open, so 「创建」 is the one
+  primary; 「取消」, a text link, closes the form. A redraw of the page (a
+  generation, 22.10's reading afresh) keeps the form and what is typed in it.
+- **The form.**
+  - 类型: 「中文论文」 (`ctexart`, so 22.4 presets XeLaTeX), 「英文论文」
+    (`article` with `fontenc` T1, pdfLaTeX), 「章节文件」 (no preamble, meant to be
+    brought into a main file).
+  - 文件夹: the document folder of 19 (`outputs.folders`; when the settings
+    cannot be read, `paper` if it exists, else `manuscript`), as
+    `GET /api/latex/drafts` answers it (`new_folder`); editable, the folders of
+    the listed drafts offered. It may name one folder that does not exist yet
+    (`paper/chapters`), which is made.
+  - 文件名: `main.tex` for a paper, `intro.tex` for a chapter, `-2`, `-3` added
+    while a listed draft has the name; it follows 类型 and 文件夹 until the person
+    types one. `.tex` is added when the name has none.
+  - 标题（可选）: for a paper the `\title{}`, for a chapter the `\section{}`
+    (else the file's name); written escaped, so it cannot break the file.
+    `\author{}` is left empty for the person.
+  - 加入主文件 (a chapter only): 「不加入」 and the main files 正文 lists; the only
+    main file is chosen when there is one.
+- **The engine.** `POST /api/latex/new` `{project, kind, folder, name, title?,
+  main?}`, a person's write like a save (the session, the origin, the project
+  echo's 409; a read-only project and a member outside the working copy
+  refused). The path keeps 22.1's rules but existence: inside the project; no
+  component starting with `.` (no `.researchos/`, no `.git/`) or `-`; no control
+  character or backslash; no symbolic link anywhere on it; not only in the
+  cloud (409 `cloud`); lower-case `.tex` (`x.TEX` is refused, not renamed);
+  every existing folder spelt as on disk; at most one new folder; never over a
+  file that exists, 409 「已经有这个文件了：{path}」. The file is written from a
+  template kept in the code (no bibliography), UTF-8 with LF, through the human
+  write path: `write_guard(human=True)`, exclusive creation, a history entry,
+  `watcher.record_write`; the answer first, then a scan, as a save.
+- **A chapter into its main file.** With a main file chosen, the line
+  `\input{<the chapter from the main file's folder, without .tex>}` is put on a
+  line of its own just before the main file's first `\end{document}` outside a
+  comment, as a save of that file (22.1: its revision checked, a backup, a
+  history entry, its own line ending). When it cannot be -- the main file is
+  read-only by 22.1 (a script writes it, mixed endings, …), has no
+  `\end{document}`, changed meanwhile -- the chapter is still made and the
+  editor says, above the text, 「没有在 {main} 里加入 {line}：{why}」. A chapter's
+  placeholder line is Chinese only for a XeLaTeX main file (or none, in
+  Chinese): pdfLaTeX cannot set Chinese.
+- **After.** The editor opens on the new file (the chapter, when one was
+  made); 返回 comes back to 正文, which lists it.
+- **Words** (13.4 rows): 新建文稿 New draft; 中文论文 Chinese paper; 英文论文
+  English paper; 章节文件 Chapter file; 文件夹 Folder; 文件名 File name;
+  标题（可选） Title (optional); 加入主文件 Add to main file; 不加入 Do not add.

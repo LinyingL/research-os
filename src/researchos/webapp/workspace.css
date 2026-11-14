@@ -412,3 +412,7 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 
 /* 22.10: the files a main file brings in sit indented under it on 正文. */
 .latex-drafts .latex-draft-files { margin-left: 1.6rem; }
+/* 22.11: 新建文稿's form under the page's sentence; its three kinds side by side. */
+.latex-new > .latex-new-kinds { flex: 1 1 100%; }
+.latex-new-kinds .ws-field-label { display: block; margin-bottom: .3rem; }
+.latex-new-kind { display: inline-flex; align-items: baseline; gap: .3rem; margin-right: .9rem; font-size: .86rem; }

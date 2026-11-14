@@ -128,7 +128,7 @@ def test_an_empty_project_lists_nothing(tmp_path):
     root.mkdir()
     project.init_project(root)
     assert latex_edit.drafts(root) == {"groups": [], "others": [], "generated": 0, "truncated": False,
-                                       "limit": latex_edit.TEX_FILE_LIMIT, "message": None}
+                                       "limit": latex_edit.TEX_FILE_LIMIT, "message": None, "new_folder": "reports"}
 
 
 def test_the_walk_stops_at_the_limit_and_says_so(root, monkeypatch):
@@ -258,7 +258,7 @@ def test_the_page_lists_the_groups_with_counts_and_a_quiet_export_and_no_primary
     assert page["pathButtons"] == ["paper/main.tex", "paper/chapters/intro.tex", "notes/old.tex"]
     assert page["cloudIsText"] and "只在云端" in page["texts"]
     assert "3 段有依据文件" in page["texts"] and page["ochre"] == ["1 段待复核"]
-    assert page["exportClass"] == ["ws-text-link"] and page["primary"] == 0
+    assert page["exportClass"] == ["ws-text-link"] and page["primary"] == 1   # 22.11: 新建文稿 alone
     assert "其他 .tex 文件" in page["texts"]
     assert page["texts"][-1] == "另有 2 个由脚本生成的 .tex 表格，只能查看，不在这里编辑。"
 
@@ -268,7 +268,7 @@ def test_a_path_opens_the_editor_which_belongs_to_the_manuscript_page(page):
 
 
 def test_an_empty_project_says_so_and_where_drafts_come_from(page):
-    assert page["empty"][-2:] == ["这个项目里还没有 .tex 文稿。", "把 .tex 文件放进项目文件夹后，这里会列出来。"]
+    assert page["empty"][-1] == "这个项目里还没有 .tex 文稿。点「新建文稿」开始写，或把 .tex 文件放进项目文件夹。"   # 22.11
 
 
 def test_an_export_from_the_page_stays_shown_when_it_redraws_with_another_main_file(page):
@@ -280,8 +280,6 @@ def test_every_new_word_has_its_english():
     i18n = (WEBAPP / "i18n.js").read_text(encoding="utf-8")
     for zh, en in [("正文", "Manuscript"), ("只在云端", "Only in the cloud"), ("其他 .tex 文件", "Other .tex files"),
                    ("项目里的 LaTeX 文稿。点一份就在编辑器里打开；改动保存回原文件。", "The project's LaTeX drafts."),
-                   ("这个项目里还没有 .tex 文稿。", "This project has no .tex drafts yet."),
-                   ("把 .tex 文件放进项目文件夹后，这里会列出来。", "Put .tex files in the project folder"),
                    ("没能读到项目里的文稿", "Could not read the project's drafts"),
                    ("项目里的 .tex 文件多于 {n} 个，这里只列出前 {n} 个。", "The project has more than {n} .tex files"),
                    ("另有 {n} 个由脚本生成的 .tex 表格，只能查看，不在这里编辑。", "There is also {n} .tex table")]:

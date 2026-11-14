@@ -724,7 +724,8 @@
     const notice = mk("div", "latex-notice hidden"), box = mk("div", "latex-editor"), side = mk("aside", "latex-side");
     const body = mk("div", "latex-body");
     body.append(box, side);
-    page.append(backBar(), head, exported.block, readOnly, notice, body);
+    const note = mk("p", "node-sub latex-new-note" + (at && at.note ? "" : " hidden"), (at && at.note) || "");   // 22.11: \input not added
+    page.append(backBar(), head, exported.block, readOnly, note, notice, body);
     host.replaceChildren(page);
     const me = { path: file.path, CM: CM, ui: { save: save, undo: undo, status: status, notice: notice, box: box, side: side, undoLink: undoLink, source: source },
       lastKey: 0, busy: false, lastSave: null, afterComposing: null, target: at || null, panel: null };
@@ -1564,6 +1565,67 @@
     }, () => say(t("没能读到这份文稿的依据文件")));
   }
 
+  // 新建文稿 (22.11): a form in 正文's page -- 类型, 文件夹, 文件名, 标题 and, for a chapter, 加入主文件 --, kept through the page's
+  // redraws (`newForm`, its box moved into the new page) so nothing typed is lost; 创建 is its one primary while the page's
+  // 新建文稿 is hidden. POST /api/latex/new; the editor then opens on the new file, saying when a chapter's \input was not added.
+  let newForm = null;
+  const KINDS = ["zh_paper", "en_paper", "chapter"];
+  function newDraftForm(data) {
+    const listed = [].concat(...(data.groups || []).map((g) => [g.main].concat(g.files)), data.others || []).map((d) => d.path);
+    const taken = new Set(listed.map((p) => p.toLowerCase()));
+    const field = (label, input) => { const f = mk("label", "ws-field"); f.append(mk("span", "ws-field-label", label), input); return f; };
+    const input = (value) => { const i = mk("input", "form-input"); i.type = "text"; i.value = value || ""; return i; };
+    const box = mk("div", "ws-task-form latex-new"), kinds = mk("div", "latex-new-kinds"), radios = {};
+    kinds.appendChild(mk("span", "ws-field-label", t("类型")));
+    [[KINDS[0], t("中文论文")], [KINDS[1], t("英文论文")], [KINDS[2], t("章节文件")]].forEach(([value, label]) => {
+      const choice = mk("label", "latex-new-kind"), radio = mk("input");
+      radio.type = "radio"; radio.name = "latex-new-kind"; radio.value = value; radio.checked = value === "zh_paper";
+      radio.addEventListener("change", () => fill());
+      radios[value] = radio; choice.append(radio, " " + label); kinds.appendChild(choice);
+    });
+    const folder = input(data.new_folder), name = input(""), title = input(""), main = mk("select", "form-input");
+    const folders = mk("datalist"), mains = (data.groups || []).map((g) => g.main.path);
+    folders.id = "latex-new-folders"; folder.setAttribute("list", folders.id);
+    [...new Set([data.new_folder].concat(listed.map((p) => p.slice(0, Math.max(p.lastIndexOf("/"), 0)))))]
+      .filter(Boolean).forEach((f) => { const o = mk("option"); o.value = f; folders.appendChild(o); });
+    [["", t("不加入")]].concat(mains.map((m) => [m, m])).forEach(([value, label]) => { const o = mk("option", "", label); o.value = value; main.appendChild(o); });
+    main.value = mains.length === 1 ? mains[0] : "";
+    const mainField = field(t("加入主文件"), main), status = mk("span", "notice-status");
+    let named = false;
+    name.addEventListener("input", () => { named = true; });
+    folder.addEventListener("input", () => fill());
+    const kind = () => KINDS.find((k) => radios[k].checked) || KINDS[0];
+    // 文件名 follows 类型 and 文件夹 until the person types one: main.tex for a paper, intro.tex for a chapter, -2, -3 when taken
+    function fill() {
+      mainField.classList.toggle("hidden", kind() !== "chapter");
+      if (named) return;
+      const stem = kind() === "chapter" ? "intro" : "main", dir = folder.value.trim().replace(/^\/+|\/+$/g, "");
+      let n = 1;
+      while (taken.has(((dir ? dir + "/" : "") + stem + (n > 1 ? "-" + n : "") + ".tex").toLowerCase())) n += 1;
+      name.value = stem + (n > 1 ? "-" + n : "") + ".tex";
+    }
+    const close = () => { const f = newForm; newForm = null; if (f) { f.slot.replaceChildren(); f.opener.classList.remove("hidden"); } };
+    const go = mkButton(t("创建"), "btn btn-primary", async () => {
+      go.disabled = true;
+      setStatus(status, "", t("正在新建…"));
+      const body = { project: state.currentPath, kind: kind(), folder: folder.value, name: name.value, title: title.value };
+      if (body.kind === "chapter" && main.value) body.main = main.value;
+      let r;
+      try { r = await apiPost("/api/latex/new", body); } catch (err) {
+        go.disabled = false;
+        setStatus(status, "err", t("没能新建文稿"), err);
+        return;
+      }
+      newForm = null;
+      open(r.path, r.input && !r.input.added ? { note: r.input.message } : null);
+    });
+    const actions = mk("div", "latex-export-line");
+    actions.append(go, mkButton(t("取消"), "ws-text-link", close), status);
+    box.append(kinds, field(t("文件夹"), folder), folders, field(t("文件名"), name), field(t("标题（可选）"), title), mainField, actions);
+    fill();
+    return { box: box, slot: null, opener: null };
+  }
+
   // 正文 (22.10), the sidebar's page of the project's drafts: each main file with the files it brings in, then the rest.
   // A path opens the editor, whose 返回 comes back here; a file only in the cloud is text. One read, GET /api/latex/drafts,
   // which also counts each draft's passages; a main file's 导出 PDF is the exporter's, quiet. Writes nothing.
@@ -1592,8 +1654,12 @@
       return li;
     };
     const list = (rows) => { const ul = mk("ul", "res-list"); rows.forEach((d) => ul.appendChild(row(d))); return ul; };
-    const page = mk("div", "latex-drafts");
-    page.appendChild(mk("p", "node-sub", t("项目里的 LaTeX 文稿。点一份就在编辑器里打开；改动保存回原文件。")));
+    const page = mk("div", "latex-drafts"), bar = mk("div", "latex-export-line"), slot = mk("div", "latex-new-slot");
+    const place = () => { newForm.slot = slot; newForm.opener = opener; opener.classList.add("hidden"); slot.replaceChildren(newForm.box); };
+    const opener = mkButton(t("新建文稿"), "btn btn-primary", () => { newForm = newDraftForm(data); place(); });
+    bar.appendChild(opener);
+    page.append(mk("p", "node-sub", t("项目里的 LaTeX 文稿。点一份就在编辑器里打开；改动保存回原文件。")), bar, slot);
+    if (newForm) place();   // a redraw keeps the open form and what is typed in it
     if (data.message) page.appendChild(mk("p", "notice-status err", data.message));
     (data.groups || []).forEach((g) => {
       const block = mk("section", "res-block latex-draft-group"), head = row(g.main);
@@ -1617,7 +1683,7 @@
       page.appendChild(block);
     }
     if (!(data.groups || []).length && !(data.others || []).length) {
-      page.append(mk("p", "node-empty", t("这个项目里还没有 .tex 文稿。")), mk("p", "node-sub", t("把 .tex 文件放进项目文件夹后，这里会列出来。")));
+      page.appendChild(mk("p", "node-empty", t("这个项目里还没有 .tex 文稿。点「新建文稿」开始写，或把 .tex 文件放进项目文件夹。")));
     }
     if (data.truncated) page.appendChild(mk("p", "node-sub", t("项目里的 .tex 文件多于 {n} 个，这里只列出前 {n} 个。", { n: data.limit })));
     if (data.generated) page.appendChild(mk("p", "node-sub", t("另有 {n} 个由脚本生成的 .tex 表格，只能查看，不在这里编辑。", { n: data.generated })));
@@ -1631,7 +1697,7 @@
   }
 
   // A project switch or the editor's view dropped: nothing of the previous project stays open.
-  function reset() { discard(); fromView = null; lastShown = null; exporting = null; sourceShown.clear(); Object.keys(drawn).forEach((k) => { delete drawn[k]; }); }
+  function reset() { discard(); newForm = null; fromView = null; lastShown = null; exporting = null; sourceShown.clear(); Object.keys(drawn).forEach((k) => { delete drawn[k]; }); }
 
   if (typeof window.addEventListener === "function") window.addEventListener("focus", () => { checkRevision(); });
 
