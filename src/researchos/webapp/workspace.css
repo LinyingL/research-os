@@ -391,7 +391,7 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-link-button { position: absolute; z-index: 5; }
 /* the right column stays at the top while the text scrolls (the text scrolls in its own box); it narrows before the
    page would scroll sideways at the window's 900 px */
-.latex-side { flex: 0 1 19rem; min-width: 14rem; align-self: flex-start; position: sticky; top: 0; max-height: 100%; overflow: auto; display: flex; flex-direction: column; align-items: flex-start; gap: .9rem; font-size: .86rem; padding-left: 1.2rem; border-left: 1px solid var(--line); }
+.latex-side { flex: none; width: clamp(14rem, 100% - 28rem, 19rem); min-width: 0; align-self: flex-start; position: sticky; top: 0; max-height: 100%; overflow: auto; display: flex; flex-direction: column; align-items: flex-start; gap: .9rem; font-size: .86rem; padding-left: 1.2rem; border-left: 1px solid var(--line); }
 .latex-side > p { margin: 0; }
 .latex-side-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .6rem; }
 .latex-side-title { margin: 0; font-size: .95rem; }
@@ -492,7 +492,7 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-table tr.latex-rule-below-heavy > td { border-bottom: 2px solid var(--ink); } .latex-table tr.latex-rule-below-light > td { border-bottom: 1px solid var(--line-strong); }
 .latex-graphic { display: inline-flex; align-items: center; gap: .5rem; vertical-align: middle; font-family: var(--font-sans); color: var(--ink-soft); }
 div.latex-graphic { display: flex; flex-direction: column; margin: .2rem 0; }
-.latex-graphic-name { font-family: var(--font-mono); font-size: .76rem; }
+.latex-graphic-name { font-family: var(--font-sans); font-size: .76rem; color: var(--gray); }   /* quiet words, never code (B2) */
 .latex-graphic-thumb { max-width: 100%; max-height: 14rem; object-fit: contain; background: var(--paper); border: 1px solid var(--line); }
 span.latex-graphic .latex-graphic-thumb { max-height: 4rem; }
 /* The edit view shows no LaTeX code (DESIGN.md 22.1, 22.12 B1; the researcher, 2026-11-14): 「显示代码」 heads the right
@@ -531,3 +531,22 @@ span.latex-abstract-head { display: block; }
 .latex-short { font-family: var(--font-sans); font-size: .76rem; font-weight: 400; color: var(--gray); margin-left: .5em; }
 .latex-sc { font-variant: small-caps; } .latex-sup { vertical-align: super; font-size: .75em; } .latex-sub { vertical-align: sub; font-size: .75em; }
 .latex-boxed { border: 1px solid var(--line-strong); padding: 0 .2em; } .latex-strike { text-decoration: line-through; }
+/* 22.12 B2 (the researcher, 2026-11-14: "我觉得很简陋…还需要优化UI"): the page polished. A paragraph's first line follows
+   版式's 首行缩进 (--latex-indent, and --latex-indent-first right after a heading, set by the page from the main file); a
+   heading over the lines of an environment (摘要, a theorem's title) and a displayed formula fill their line as an
+   inline block, so the line keeps no empty strut above or below them; a figure's file name is quiet words, never code. */
+.latex-editor .cm-content.latex-word .cm-line.latex-para { text-indent: var(--latex-indent, 1.5em); }
+.latex-editor .cm-content.latex-word .cm-line.latex-para-first { text-indent: var(--latex-indent-first, 0); }
+.latex-editor .cm-content.latex-word .cm-line.latex-para *, .latex-editor .cm-content.latex-word .cm-line.latex-para-first * { text-indent: 0; }
+.latex-editor .cm-content.latex-word .latex-env-head, .latex-editor .cm-content.latex-word span.latex-abstract-head,
+.latex-editor .cm-content.latex-word span.latex-math-display { display: inline-block; width: 100%; vertical-align: top; }
+.latex-editor .cm-content.latex-word .latex-env-head { padding-top: .3rem; font-size: .84rem; color: var(--ink); }
+.latex-editor .cm-content.latex-word span.latex-abstract-head { padding: .5rem 0 .2rem; }
+/* CodeMirror's caret holders beside each hidden piece are taken out of the flow (they still give the caret its place),
+   so a line never breaks at them: naïve stays one word, a footnote's number stays on its word, and no holder makes an
+   empty line of its own above or below a heading or a formula. A chip that breaks keeps its edge on each part; a
+   reference's number never breaks. */
+.latex-editor .cm-content.latex-word img.cm-widgetBuffer { position: absolute; }
+.latex-editor .cm-content.latex-word .cm-line { min-height: calc(1.8em * var(--latex-stretch, 1)); }   /* a line of only what is hidden */
+.latex-editor .cm-content.latex-word .latex-chip { -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.latex-editor .cm-content.latex-word .latex-chip-ref { white-space: nowrap; }

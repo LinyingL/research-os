@@ -513,9 +513,199 @@ def test_the_right_column_stays_at_the_top_and_the_page_fits_the_shells_900_px_w
     rem = 16
     sidebar = 236                                                       # app.html's sidebar (196 only below 720 px)
     view = 2 * 0.025 * 900                                              # #view-latex's clamp(1rem, 2.5vw, 2rem) each side
-    side_min = float(side["min-width"].removesuffix("rem")) * rem
     gap = float(_declarations(".latex-body")["gap"].removesuffix("rem")) * rem
-    assert side["flex"] == "0 1 19rem" and side_min <= 14 * rem
+    # B2: the column's width is set, not shrunk by the flex share -- 14rem until the text has 28rem beside it, 19rem from
+    # there (before B2 it shrank in proportion with the text and kept 18rem at 900 px, the text 312 px)
+    assert side["flex"] == "none" and side["width"] == "clamp(14rem, 100% - 28rem, 19rem)" and side["min-width"] == "0"
     assert _declarations(".latex-main")["min-width"] == "0" and _declarations(".latex-editor")["min-width"] == "0"
-    left = 900 - sidebar - view - side_min - gap
-    assert left > 22 * rem          # the text's column keeps some 23rem at 900 px (a browser measured 376 px: DESIGN 22.12 B)
+    body = 900 - sidebar - view
+    side_w = min(max(14 * rem, body - 28 * rem), 19 * rem)
+    assert side_w == 14 * rem
+    left = body - side_w - gap
+    assert left > 23 * rem          # the text's column at 900 px: a browser measured 376 px (DESIGN 22.12 B2)
+    wide = 1400 - sidebar - 2 * 32                                     # a wide window: the column its full 19rem
+    assert min(max(14 * rem, wide - 28 * rem), 19 * rem) == 19 * rem
+
+
+# -- B2 (the researcher, 2026-11-14: "我觉得很简陋…还需要优化UI"): the page polished -----------------------------------------------
+# A paragraph's first line follows 版式's 首行缩进 where TeX starts a paragraph; the caret holders beside hidden pieces
+# never break a line or leave an empty strut; the right column narrows first at 900 px. DESIGN 22.12 B2.
+
+_PARAS = r"""
+const make = (doc) => CM.EditorState.create({doc, extensions: [P.wordExtensions(CM)]});
+// [the source line where a paragraph mark sits, its class]
+const paras = (doc) => { const st = make(doc), got = []; st.field(F.field).deco.between(0, doc.length, (a, b, v) => {
+  const c = v.spec.class; if (c && /latex-para/.test(c)) got.push([doc.slice(a).split('\n')[0], c]); }); return got; };
+const MAIN = ['\\documentclass{article}', '\\usepackage{amsmath}', 'Not the body.', '', '\\begin{document}', 'First words of the body.', 'Same paragraph goes on.', '',
+  'A new paragraph after a blank line.', '', '% a comment', '\\label{x}', 'After quiet lines.', '\\section{Intro}\\label{sec:i}', '% note', 'Right after a heading.', '',
+  '\\noindent Not indented.', '', '\\begin{itemize}', '\\item an item', '', '\\item another', '\\end{itemize}', 'Text after a list goes on.', '', '\\begin{quote}', 'Quoted words.', '',
+  'More quoted.', '\\end{quote}', '', '\\maketitle', 'After the title.', '\\[ x \\]', 'After a formula.', '\\subsection{Two}', '', 'A blank after a heading.', '',
+  '\\begin{table}', '\\caption{C}', '\\begin{tabular}{l}', 'a \\\\', '\\end{tabular}', '\\end{table}', '', '$x$ starts this one.', '\\end{document}', '', 'After the end.'].join('\n') + '\n';
+out.main = paras(MAIN);
+out.chapter = paras('Chapter text.\n\nSecond.\n\\subsection{S}\nThird.\n');
+out.quiet = ['% c', '\\label{a}', '\\noindent', '\\vspace{1em}', '\\centering \\label{b} % c', '', 'Words.', '\\maketitle', '\\section{S}', '\\foo', '\\label{a} x', '{\\large a}']
+  .map((s) => [s, P.quietLine(s)]);
+
+// drawn again only where a change reaches, equal to drawing whole -- among blank lines, comments, labels, headings, \noindent
+let seed = 7;
+const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+const bits = ['x', ' ', '\n', '\n\n', '% c\n', '\\label{l}\n', '\\noindent ', '\\section{S}\n', '\\maketitle\n', '\\begin{itemize}\n\\item i\n\\end{itemize}\n',
+  '\\begin{quote}\nq\n\\end{quote}\n', '\\vspace{2pt}\n', '中', '{', '}', '\\[ y \\]\n'];
+const sig = (s) => { const got = []; s.field(F.field).deco.between(0, s.doc.length, (a, b, v) => { const w = v.spec.widget;
+  got.push([a, b, v.spec.class || (v.spec.attributes && v.spec.attributes.class) || '', w ? w.constructor.name + JSON.stringify(w) : '', !!v.spec.block].join('|')); }); return got.sort(); };
+let cur = make(MAIN), mismatch = null, steps = 0, marked = 0;
+for (let k = 0; k < 3000 && !mismatch; k++) {
+  const len = cur.doc.length, r = rnd(10), a = rnd(len + 1);
+  const spec = r < 6 ? {changes: {from: a, insert: bits[rnd(bits.length)]}} : {changes: {from: a, to: Math.min(len, a + 1 + rnd(14))}};
+  cur = cur.update(spec).state;
+  steps += 1;
+  const x = sig(cur), y = sig(make(cur.doc.toString()));
+  marked += x.filter((z) => z.includes('latex-para')).length;
+  if (JSON.stringify(x) !== JSON.stringify(y)) mismatch = {step: k, doc: cur.doc.toString(), only: x.filter((z) => !y.includes(z)), missing: y.filter((z) => !x.includes(z))};
+}
+out.incremental = {steps, mismatch, marked};
+
+// the indent the page gives the paragraphs, from the main file's preamble as 版式 reads it
+const ind = (pre) => P.pageIndent(P.layoutOf(pre, []), pre);
+out.indent = {
+  article: ind('\\documentclass[12pt]{article}\n'),
+  ctex: ind('\\documentclass{ctexart}\n'),
+  none: ind('\\documentclass{article}\n\\setlength{\\parindent}{0pt}\n'),
+  two: ind('\\documentclass{article}\n\\setlength{\\parindent}{2em}\n'),
+  ctexNone: ind('\\documentclass{ctexart}\n\\setlength{\\parindent}{0pt}\n'),
+  indentfirst: ind('\\documentclass{article}\n\\usepackage{indentfirst}\n'),
+  parskip: ind('\\documentclass{article}\n\\usepackage{parskip}\n'),
+  parskipKeeps: ind('\\documentclass{article}\n\\usepackage[skip=6pt,indent]{parskip}\n'),
+  own: ind('\\documentclass{article}\n\\setlength{\\parindent}{3em}\n'),
+  ownPt: ind('\\documentclass{article}\n\\setlength{\\parindent}{18pt}\n'),
+  commented: ind('\\documentclass{article}\n% \\usepackage{indentfirst}\n'),
+  noMain: P.pageIndent(null, null),
+};
+console.log(JSON.stringify(out));
+"""
+
+
+@pytest.fixture(scope="module")
+def paras() -> dict:
+    return _node(_PARAS)
+
+
+@needs_node
+def test_a_paragraphs_first_line_is_marked_where_tex_starts_a_paragraph(paras):
+    """After \\begin{document}, a blank line (comments and labels between passed over), \\maketitle: latex-para. Right
+    after a heading, a blank line between or not: latex-para-first. A paragraph's second line, \\noindent, what follows a
+    list or a formula without a blank line, a list's and a quote's lines, the preamble and after \\end{document}: none."""
+    assert paras["main"] == [
+        ["First words of the body.", "latex-para"],
+        ["A new paragraph after a blank line.", "latex-para"],
+        ["", "latex-para"],                         # the blank line the hidden comment and label join to 'After quiet lines.'
+        ["% note", "latex-para-first"],             # the visual line of 'Right after a heading.' starts at the hidden note
+        ["After the title.", "latex-para"],
+        ["A blank after a heading.", "latex-para-first"],   # first after \subsection, across a blank line
+        ["$x$ starts this one.", "latex-para"],     # after a table and a blank line
+    ]
+    assert paras["chapter"] == [["Chapter text.", "latex-para"], ["Second.", "latex-para"], ["Third.", "latex-para-first"]]
+
+
+@needs_node
+def test_only_lines_the_edit_view_hides_whole_are_passed_over(paras):
+    assert dict(paras["quiet"]) == {"% c": True, "\\label{a}": True, "\\noindent": True, "\\vspace{1em}": True,
+                                    "\\centering \\label{b} % c": True, "": False, "Words.": False, "\\maketitle": False,
+                                    "\\section{S}": False, "\\foo": False, "\\label{a} x": False, "{\\large a}": False}
+
+
+@needs_node
+def test_paragraph_marks_drawn_again_only_where_a_change_reaches_equal_those_drawn_whole(paras):
+    inc = paras["incremental"]
+    assert inc["mismatch"] is None, inc["mismatch"]
+    assert inc["steps"] == 3000 and inc["marked"] > 3000      # the marks were there to be compared, edit after edit
+
+
+@needs_node
+def test_the_indent_follows_版式_and_the_class_as_the_pdf_has_it(paras):
+    i = paras["indent"]
+    assert i["article"] == {"all": "1.5em", "first": "0"}     # article: 1.5em, none after a heading
+    assert i["ctex"] == {"all": "2em", "first": "2em"}        # ctex: two characters, after a heading too
+    assert i["none"] == {"all": "0", "first": "0"}            # 版式 首行缩进 无
+    assert i["two"] == {"all": "2em", "first": "0"}           # 版式 首行缩进 2 字
+    assert i["ctexNone"] == {"all": "0", "first": "0"}
+    assert i["indentfirst"] == {"all": "1.5em", "first": "1.5em"}
+    assert i["parskip"] == {"all": "0", "first": "0"}         # the parskip package without its indent option
+    assert i["parskipKeeps"] == {"all": "1.5em", "first": "0"}
+    assert i["own"] == {"all": "3em", "first": "0"}           # the person's own length, in em, read as it is
+    assert i["ownPt"] == {"all": "1.5em", "first": "0"}       # one not in em: the class's
+    assert i["commented"] == {"all": "1.5em", "first": "0"}   # a commented line does not count
+    assert i["noMain"] == {"all": "1.5em", "first": "0"}
+
+
+from test_v17_layout_settings import _PANEL as _LAYOUT_PANEL  # noqa: E402  (its stand-in page's helpers, reused)
+
+_INDENT_PAGE = _LAYOUT_PANEL[:_LAYOUT_PANEL.index("const MAIN_PRE")] + r"""
+// the page's lines follow 版式: the box's custom properties as 首行缩进 and 行距 are chosen
+const MAIN = '\\documentclass[12pt]{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\section{A}\nFirst.\n\nSecond.\n\\end{document}\n';
+await openFile('paper/main.tex', MAIN, {mains: ['paper/main.tex'], format: {main: 'paper/main.tex', engine: 'pdflatex', folder: 'paper', preamble: null, local: []}});
+const box = byClass('latex-editor'); box.style = {props: {}, setProperty(k, v) { this.props[k] = v; }};
+tab('版式').fire('click');
+const props = () => Object.assign({}, box.style.props);
+out.opened = props();
+choose('首行缩进', '0pt'); out.none = props(); out.noneText = doc().includes('\\setlength{\\parindent}{0pt}');
+choose('首行缩进', '2em'); out.two = props();
+choose('行距', '2'); out.double = props();
+out.primaries = primaries();
+const ZH = '\\documentclass{ctexart}\n\\begin{document}\n\\section{引言}\n正文。\n\\end{document}\n';
+await openFile('zh/main.tex', ZH, {mains: ['zh/main.tex'], format: {main: 'zh/main.tex', engine: 'xelatex', folder: 'zh', preamble: null, local: []}});
+const box2 = byClass('latex-editor'); box2.style = {props: {}, setProperty(k, v) { this.props[k] = v; }};
+tab('版式').fire('click');
+out.ctex = Object.assign({}, box2.style.props);
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_the_pages_indent_and_line_height_follow_版式_on_the_page():
+    if NODE is None:
+        pytest.skip("node is not installed")
+    prelude = _DRIVER.split("const out = {};")[0] % {"cm": json.dumps(str(WEBAPP / "vendor" / "codemirror.js")),
+                                                     "latex": json.dumps(str(WEBAPP / "latex.js"))}
+    script = prelude + "(async () => {\n" + _INDENT_PAGE + "\n})().catch((err) => { console.log(JSON.stringify({error: String(err && err.stack || err)})); });"
+    done = subprocess.run([NODE, "-"], input=script, capture_output=True, text=True, timeout=60)
+    out = json.loads(done.stdout.strip().splitlines()[-1])
+    assert "error" not in out, out.get("error")
+    assert out["opened"] == {"--latex-stretch": "1", "--latex-indent": "1.5em", "--latex-indent-first": "0"}
+    assert out["noneText"] is True and out["none"]["--latex-indent"] == "0"
+    assert out["two"]["--latex-indent"] == "2em" and out["two"]["--latex-indent-first"] == "0"
+    assert out["double"]["--latex-stretch"] == "2" and out["double"]["--latex-indent"] == "2em"
+    assert out["primaries"] == []                                       # 版式 has no primary (22.7)
+    assert out["ctex"] == {"--latex-stretch": "1", "--latex-indent": "2em", "--latex-indent-first": "2em"}
+
+
+def test_the_style_sheet_indents_a_paragraphs_first_line_and_keeps_the_lines_whole():
+    word = ".latex-editor .cm-content.latex-word"
+    assert _declarations(f"{word} .cm-line.latex-para")["text-indent"] == "var(--latex-indent, 1.5em)"
+    assert _declarations(f"{word} .cm-line.latex-para-first")["text-indent"] == "var(--latex-indent-first, 0)"
+    assert _declarations(f"{word} .cm-line.latex-para *")["text-indent"] == "0"       # never inherited by a block inside
+    # the caret holders out of the flow: no break at them (naïve one word), no empty strut over a heading or a formula
+    assert _declarations(f"{word} img.cm-widgetBuffer")["position"] == "absolute"
+    assert _declarations(f"{word} .cm-line")["min-height"] == "calc(1.8em * var(--latex-stretch, 1))"
+    for sel in (f"{word} .latex-env-head", f"{word} span.latex-abstract-head", f"{word} span.latex-math-display"):
+        d = _declarations(sel)
+        assert d["display"] == "inline-block" and d["width"] == "100%", sel
+    # chips and a figure's file name are quiet words, never code: the sans, never the mono
+    assert _declarations(".latex-chip")["font-family"] == "var(--font-sans)"
+    assert _declarations(".latex-graphic-name")["font-family"] == "var(--font-sans)"
+    assert _declarations(f"{word} .latex-chip-ref")["white-space"] == "nowrap"
+    css = (WEBAPP / "workspace.css").read_text(encoding="utf-8")
+    block = css[css.index("/* 22.12 B2"):]
+    assert "#" not in re.sub(r"/\*.*?\*/", "", block, flags=re.S)       # palette tokens only
+    assert "font-mono" not in block
+
+
+def test_b2_adds_no_word_no_glyph_and_no_primary_button():
+    js = (WEBAPP / "latex.js").read_text(encoding="utf-8")
+    code = js[js.index("// 首行缩进 on the page (22.12 B2)"):js.index("const IMAGE_UNSAFE")]
+    code += js[js.index("// where a paragraph of running text starts"):js.index("// a figure's caption sits under its images")]
+    code += js[js.index("// The page's first-line indent (22.12 B2)"):js.index("// Where the settings come from")]
+    for glyph in ("->", "→", "▸", "›", "‹", "✓", "»", "«", "·", "•", "▾", "◂"):
+        assert glyph not in code.replace("=>", ""), glyph
+    assert not re.search(r"\bt\(", code)                               # nothing said: only lines and lengths
+    assert js.count("btn-primary") == 5                                 # 保存, 插入, 创建 … as pinned before (22.7)

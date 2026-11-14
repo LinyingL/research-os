@@ -402,7 +402,8 @@ EV = {revision: 'r1', links: [link('pl-5', {pending: true}), link('pl-6', {quote
 await open('p.tex');
 const P = view(), marks = [];
 for (const d of P.state.facet(real.EditorView.decorations)) {
-  if (typeof d !== 'function') d.between(0, P.state.doc.length, (from, to, value) => { if (!value.spec.widget) marks.push([from, value.spec.class]); });
+  // the underlines only: the edit view's own line classes (B2: a paragraph's first line, latex-para) aside
+  if (typeof d !== 'function') d.between(0, P.state.doc.length, (from, to, value) => { if (!value.spec.widget && /latex-passage/.test(value.spec.class || '')) marks.push([from, value.spec.class]); });
 }
 out.pendingMarks = marks;
 out.pendingCounts = texts(side().children.find((c) => c.classList.contains('latex-counts'))).join('|');

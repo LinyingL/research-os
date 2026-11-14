@@ -7323,7 +7323,7 @@ for nothing. `~/paperleaf` (an unfinished, never-run prototype) is not reused.
 The parts: 22.1 the editor; 22.2 passages and their supporting files; 22.3 the
 kinds of evidence; 22.4 export to PDF; 22.5 a team; 22.6 words; 22.7
 presentation; 22.8 batches and acceptance; 22.9 what the review changed; 22.10
-正文 in the sidebar; 22.11 新建文稿; 22.12 格式与插入, the page, and the edit view that shows no code (B1).
+正文 in the sidebar; 22.11 新建文稿; 22.12 格式与插入, the page, the edit view that shows no code (B1) and the page polished (B2).
 
 ### 22.0 Rulings that need the researcher's word
 
@@ -7897,7 +7897,14 @@ emoji, arrow or glyph.
   and rules in the palette's tokens, never a glyph. The right column stays at
   the top beside the text, its groups apart by space and a hairline, 「选中一段文字，
   可以关联依据文件。」 under the panel; at the shell's 900 px it narrows (to 14rem)
-  before anything scrolls sideways.
+  before anything scrolls sideways. *B2:* its width is set, not shared out by
+  flex -- `clamp(14rem, 100% - 28rem, 19rem)` -- so at 900 px the text keeps
+  376 px (it had 312 with the column at 18rem); 19rem from a window of about 1,040 px.
+- The page polished (22.12 B2): a paragraph's first line is indented as 版式's
+  首行缩进 says, where TeX starts a paragraph; a figure's file name is quiet sans
+  words (it was mono); a reference chip never breaks, a chip that breaks keeps its
+  edge on each part; no empty strut above or below 摘要, a theorem's title or a
+  displayed formula. No new word, no glyph, no new button: 保存 stays the one primary.
 - The edit view (22.12 B1): what stands for hidden code -- chips, the 「公式」 word, the 「分页」 and 目录 lines, the
   preamble's line -- is quiet words in the palette's tokens, never a glyph. Under the switch, the right column's hint
   (「表格内容要在「显示代码」里改。」 and the like) is a quiet sentence with a text link; a footnote's words a plain text
@@ -8699,7 +8706,8 @@ opens:*
   hint 「选中一段文字，可以关联依据文件。」 under the panel; it narrows from 19rem to
   14rem, so the whole page fits the shell's 900 px without scrolling sideways
   (measured in a browser at 900 by 640: the text's column 376 px wide, nothing
-  wider than the window).
+  wider than the window). *B2 measured it again after B1 had filled the column: 312 px, the column holding 18rem; the
+  column's width is now set (22.7), and the text has 376 px again.*
 - **Typing** stays under 16 ms a key on 22.1's 3,000-line file with the page's
   blocks among its lines (a title, an abstract, a table float every 50 lines,
   a figure every 70, font groups in the running text): median 4.5 ms, p95
@@ -8708,7 +8716,7 @@ opens:*
 - *Not done in B:* the first-line indent that A2 left to B (the Word view's
   paragraphs following 首行缩进): which line starts a paragraph depends on the
   line before it, which the redraw would have to read one line wider; left for a
-  later step.
+  later step. *Done in B2 (below).*
 - **Words** (13.4 rows): 正文开始 Start of the text; 正文结束 End of the text;
   （没有设置标题） (No title set); 日期：导出当天 Date: the day of the export; 表：
   Table:; 图： Figure:; {n} 字 {n} words; 正在保存 Saving; 有未保存的改动 Unsaved
@@ -8780,7 +8788,7 @@ typeset in the edit view and changed only in the code. 22.1 states the rule; how
   them out (⌘/), which would move or hide what the edit view does not show; two authors read 「A 和 B」.
 - *Not done in B1:* a heading's short title is shown, not editable, in the edit view; a description list's term and a
   theorem's title are read-only; tables and figures with subfigures are changed in the code; the first-line indent of
-  22.12 B is still left; this was tested under node and a stand-in page, not yet in the app's window with a real paper.
+  22.12 B is still left (done in B2); this was tested under node and a stand-in page, not yet in the app's window with a real paper.
 - **Measured** (`tests/test_v17_no_code_view.py`): over three papers -- the Chinese and English templates of 新建文稿 with
   every tool of A, A2 and A3 applied, and a hand-written paper with comments, unknown macros, tikz, verbatim, align,
   citations, footnotes, lists, tables and figures -- no markup character in what the edit view shows of the source and
@@ -8805,3 +8813,52 @@ typeset in the edit view and changed only in the code. 22.1 states the rule; how
   until-focused rule is gone), `test_v17_format_panel.py` and `test_v17_layout_settings.py` (the switch is 「显示代码」
   in the column; 版式 stays on in the code; 文档信息 is the first group), `test_v17_latex_passages.py` (the edit view's
   own pieces set aside when the underlines are counted).
+
+**The page polished (B2; the researcher, 2026-11-14: "我觉得很简陋…还需要优化UI").** Seen on a new English paper from
+新建文稿, after B1: the page of B was there, but with gaps and breaks that made it read as a tool, not a page. Looked at in a
+browser (the stand-in page at 900, 1,200 and 1,280 px wide, the English and Chinese templates and B1's hand-written paper),
+what B2 changed -- B's blocks and B1's rule (no code in the edit view) kept as they were:
+
+- **首行缩进 on the page.** A paragraph's first line is indented where TeX starts a paragraph, by what 版式 has (22.12 A2):
+  - *where:* after a blank line, at the body's start (or a chapter file's first line), after `\maketitle`, a contents line
+    or a page break -- `latex-para`; the first paragraph after `\part` to `\subsubsection`, a blank line between or not
+    (TeX's `\@afterheading`) -- `latex-para-first`. Lines the edit view hides whole (a comment, `\label`, `\noindent`,
+    `\vspace{…}` alone on their line) are passed over both ways. Not indented: a paragraph's later lines, a line starting
+    `\noindent`, what follows a list, a quote or a displayed formula without a blank line (TeX goes on with the same
+    paragraph), the lines of lists and of text environments (quote, abstract, a theorem), the preamble, after
+    `\end{document}`;
+  - *how much:* 无 none; 2 字 2em; 默认 the class's own (ctex 2em, others 1.5em); the person's own `\setlength{\parindent}`
+    in em or `\ccwd` read as it is (any other unit: the class's); the parskip package without its `indent` option none;
+  - *after a heading:* the same only in a ctex class or with the indentfirst package; else none, as the PDF;
+  - *built:* two line classes from the edit view's pieces; the page sets `--latex-indent` and `--latex-indent-first`
+    beside `--latex-stretch` (A2's 行距) whenever 版式 reads the preamble; no main file read: 1.5em, none after a heading.
+    The redraw reaches back over the quiet and blank lines before a change and on to the next line with words (the
+    reading "one line wider" 22.12 B left), measured equal to drawing whole over 3,000 seeded edits.
+- **No empty struts, no breaks inside a word.** CodeMirror puts a zero-width caret holder (an `img`) beside every hidden
+  piece; a line may break at one, and alone beside a block it makes an empty line of its own. Measured before B2: 「摘要」's
+  line was 93 px for 35 px of words, a theorem's title had an empty line under it, a displayed formula one above and
+  one below, `na\"ive` broke as 「naï / ve」 and a footnote's number fell to a line of its own. Now in the edit view the
+  holders are out of the flow (`position: absolute`; they still give the caret its place, measured in the browser: the
+  caret drawn beside a hidden accent, after a footnote and at a heading's end), each line keeps at least one line's
+  height (a line of only hidden comments was 0 px), and 摘要, a theorem's title and a displayed formula fill their line as
+  an inline block (`latex-math-display`'s own rule kept as `test_v17_editor_fixes` pins it, overridden in the page).
+- **Quiet words, never code.** A figure's file name is in the sans, gray (it was mono); a `\ref` chip (「第 2 节」) never
+  breaks, any chip that breaks keeps its edge on each part.
+- **The right column narrows first** (22.7): at 900 px 14rem beside 376 px of text, 19rem from a window of about 1,040 px.
+- **Unchanged and checked:** the measure (46rem), the paper, line height 1.8 times 行距's stretch, the title block's cases,
+  摘要, the label lines, the table and the figure, the font groups, the chips, the status line (words, 已保存 /
+  有未保存的改动 / 正在保存, measured in the browser after typing: 「32 字」 「有未保存的改动」), the column's order (显示代码, the
+  tabs, the hint), the header in the text's column. B2 adds no word, no glyph and no button.
+- **Typing** (22.1's 16 ms, the measures of B and B1, with B2's wider redraw): the page's file median 3.8 ms, p95 6.3 ms,
+  in a table cell 3.3 / 4.4; the edit view's file median 3.4 ms, p95 5.2 ms; opening it 40 ms.
+- **Tests** (`tests/test_v17_page_look.py`, B2's section): where paragraphs start in a paper and a chapter; which lines are
+  passed over; 3,000 seeded edits among blank lines, comments, labels, headings, lists and `\noindent` drawn again only
+  where they reach, equal to drawing whole; the indent from twelve preambles; the stand-in page's custom properties as
+  首行缩进 and 行距 are chosen, in an article and a ctexart main file, with no primary; the style sheet's indent, holders,
+  line height, inline blocks, sans file names and chips, palette tokens only; no word, glyph or new primary in B2's code.
+  Changed on purpose: the 900 px test (the column's width, not its flex share) and `test_v17_latex_passages.py`'s count
+  of a waiting link's underline (it now keeps the underlines only, since a paragraph's line class is a decoration too).
+- *Not done in B2:* a theorem's title still reads only its optional words (「Main」, not 「Theorem 1 (Main)」) and sits at the
+  list's indent when a list ends on the line before it; an abstract's own paragraphs are not indented (the PDF indents
+  them); the indent of a length in pt or cm is the class's; tried in a browser on the stand-in page, not yet in the app's
+  window with a real paper.

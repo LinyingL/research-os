@@ -1157,6 +1157,7 @@
 
       // the preamble and \begin{document}: one quiet line (版式 edits it; 显示代码 shows it); \end{document} and after
       const docEnv = read.preamble ? read.envs.find((e) => e.name === "document" && e.from === read.preamble.to) : null;
+      const bodyFrom = docEnv ? docEnv.beginTo : read.preamble ? read.preamble.to : 0, bodyTo = docEnv && docEnv.endFrom < docEnv.to ? docEnv.endFrom : len;
       if (docEnv) {
         const bl = lineOf(docEnv.beginTo), whole = !codePart(text.slice(docEnv.beginTo, bl.to)).trim();
         const words = preambleWords(read.meta);
@@ -1465,6 +1466,21 @@
         }
         if (depth) linesOut.push([L.from, "latex-li latex-li-" + Math.min(depth, 4)]);
         if (cls) linesOut.push([L.from, cls]);
+        else if (!depth) { const p = paraStart(L); if (p) linesOut.push([L.from, p]); }
+      }
+      // where a paragraph of running text starts, for 首行缩进 (22.12 B2): its first words' line, and the line before
+      // the quiet lines above it
+      function paraStart(L) {
+        if (L.from < bodyFrom || L.from >= bodyTo) return null;
+        let C = L, gap = false;
+        while (C.number < doc.lines && (quietLine(C.text) || blank(C)) && covered(C.to)) { if (blank(C)) gap = true; C = doc.line(C.number + 1); }
+        if (C.from >= bodyTo || kindOf(C) !== "text" || /^\s*\\noindent(?![A-Za-z])/.test(C.text)) return null;
+        // a heading's first paragraph stays so across a blank line, as TeX's \@afterheading does
+        let k = L.number - 1;
+        while (k >= 1 && (quietLine(doc.line(k).text) || blank(doc.line(k)))) { if (blank(doc.line(k))) gap = true; k -= 1; }
+        if (k < 1 || doc.line(k).to <= bodyFrom) return "latex-para";
+        if (HEADING_LINE.test(doc.line(k).text)) return "latex-para-first";
+        return gap || PARA_AFTER.test(doc.line(k).text) ? "latex-para" : null;
       }
       // a figure's caption sits under its images, centred
       for (const p of out) if (p.frame && p.frame.kind === "figure") linesOut.push([lineOf(p.from).from, "latex-figure-line"]);
@@ -1529,13 +1545,14 @@
         const wide = (x) => [doc.lineAt(Math.max(0, Math.min(x[0], doc.length))).from, doc.lineAt(Math.max(0, Math.min(x[1], doc.length))).to];
         for (let s of spans || []) {
           let d = null;
+          s = paraReach(doc, s);
           for (let n = 0; n < 6; n++) {
             // the pieces already drawn that meet the place, and those to be drawn, may reach past it: widen it to them
             let lo = s[0], hi = s[1];
             atoms.between(lo, hi, (f, t2) => { if (f < lo - 1) lo = f; if (t2 > hi + 1) hi = t2; });
-            if (lo < s[0] - 1 || hi > s[1] + 1) { s = wide([Math.min(lo, s[0]), Math.max(hi, s[1])]); continue; }
+            if (lo < s[0] - 1 || hi > s[1] + 1) { s = paraReach(doc, wide([Math.min(lo, s[0]), Math.max(hi, s[1])])); continue; }
             d = decorations(doc, read, info, s);
-            if (d.from < s[0] - 1 || d.to > s[1] + 1) { s = wide([Math.min(d.from, s[0]), Math.max(d.to, s[1])]); d = null; continue; }
+            if (d.from < s[0] - 1 || d.to > s[1] + 1) { s = paraReach(doc, wide([Math.min(d.from, s[0]), Math.max(d.to, s[1])])); d = null; continue; }
             break;
           }
           if (!d) return whole(tr.state, read, info, math);
@@ -2075,6 +2092,34 @@
     "usepackage", "documentclass", "bibliography", "bibliographystyle", "addbibresource", "graphicspath", "href"]);
   // A line that is a command or an environment of its own, never part of a paragraph a heading or a list is made of.
   const STRUCTURAL = /^\s*(?:\\(?:begin|end|item|part|chapter|section|subsection|subsubsection|paragraph|caption|label|centering|includegraphics|maketitle|tableofcontents|bibliography|bibliographystyle|printbibliography|appendix|input|include|subfile|newpage|clearpage)\b|%|\\\[|\$\$)/;
+  // 首行缩进 on the page (22.12 B2): a line the edit view hides whole (a comment, a \label, \noindent, \vspace{…} …) is
+  // passed over when it is asked where a paragraph starts; a paragraph starts after a blank line, at the body's start,
+  // after \maketitle, a contents line or a page break ("latex-para"), or as the first after a heading, blank lines
+  // between or not ("latex-para-first", indented only where the class does: ctex, indentfirst). What follows a list or
+  // a float without a blank line goes on the paragraph before it, as TeX sets it, and \noindent is never indented.
+  function quietLine(line) {
+    if (!line.trim()) return false;
+    let s = codePart(line).trim();
+    for (let n = 0; n < 40 && s; n++) {
+      const m = /^\\([A-Za-z@]+)\*?\s*/.exec(s);
+      if (!m || m[1] === "maketitle" || !(SILENT.has(m[1]) || SILENT_ARGS.has(m[1]) || m[1] === "label")) return false;
+      s = s.slice(m[0].length);
+      for (let g = /^(?:\{[^{}]*\}|\[[^\]]*\])\s*/.exec(s); g; g = /^(?:\{[^{}]*\}|\[[^\]]*\])\s*/.exec(s)) s = s.slice(g[0].length);
+    }
+    return !s;
+  }
+  const PARA_AFTER = /^\s*\\(?:begin\s*\{document\}|maketitle|tableofcontents|listoffigures|listoftables|newpage|clearpage|cleardoublepage|pagebreak)(?![A-Za-z])/;
+  const HEADING_LINE = /^\s*\\(?:part|chapter|section|subsection|subsubsection)\*?\s*[[{]/;
+  // A change on a line can start or end the paragraph of the next line with words, and a quiet or blank line's place is
+  // drawn from what follows it: the place drawn again reaches back over the quiet and blank lines before it and on, over
+  // those after it, to the next line with words.
+  function paraReach(doc, s) {
+    let a = doc.lineAt(Math.max(0, Math.min(s[0], doc.length))).number, b = doc.lineAt(Math.max(0, Math.min(s[1], doc.length))).number;
+    const still = (n) => { const t2 = doc.line(n).text; return !t2.trim() || quietLine(t2); };
+    while (a > 1 && still(a - 1)) a -= 1;
+    if (b < doc.lines) { b += 1; while (b < doc.lines && still(b)) b += 1; }
+    return [Math.min(s[0], doc.line(a).from), Math.max(s[1], doc.line(b).to)];
+  }
   const IMAGE_UNSAFE = /[%#{}\\~$^&]/;   // a file name \includegraphics cannot take
   const CARET = "\u0001";   // where the cursor goes in a block
 
@@ -4759,6 +4804,26 @@
     if (!done) drawLayout(me, true);
   }
 
+  // The page's first-line indent (22.12 B2), as the PDF has it: 版式's 首行缩进 (无 none, 2 字 2em), else the class's own
+  // (ctex 2em, the others 1.5em); the parskip package without its indent option sets none. After a heading only ctex
+  // and the indentfirst package indent. With no main file read, 1.5em and none after a heading.
+  function pageIndent(layout, pre) {
+    if (!layout) return { all: "1.5em", first: "0" };
+    const S = layout.settings && layout.settings.indent, code = (pre || "").split("\n").map(codePart).join("\n");
+    let all = layout.ctex ? "2em" : "1.5em";
+    if (S && !S.mine && S.value === "0pt") all = "0";
+    else if (S && !S.mine && S.value === "2em") all = "2em";
+    else if (S && S.mine) {
+      // the person's own: a plain length in em (or ctex's \ccwd) read as it is; the parskip package without indent none
+      const own = [...code.matchAll(/\\setlength\s*\{?\s*\\parindent\s*\}?\s*\{\s*(\d*\.?\d+)\s*(em|\\ccwd)\s*\}/g)].pop();
+      const pk = /\\usepackage\s*(?:\[([^\]]*)\])?\s*\{\s*parskip\s*\}/.exec(code);
+      if (pk && !/(?:^|,)\s*indent\s*(?:,|$)/.test(pk[1] || "")) all = "0";
+      else if (own) all = Number(own[1]) ? Math.min(Number(own[1]), 6) + "em" : "0";
+    }
+    const first = layout.ctex || /\\usepackage\s*(?:\[[^\]]*\])?\s*\{[^}]*\bindentfirst\b[^}]*\}/.test(code) ? all : "0";
+    return { all: all, first: first };
+  }
+
   // Where the settings come from: the open file's preamble when it is the main file, else the main file's (`format`).
   function layoutState(me) {
     const facts = panelFacts(me), off = layoutOff(me);
@@ -4785,7 +4850,13 @@
     const layout = L.layout, why = st.why || (layout && layout.why) || "";
     // like Word (22.1, A2's C): the editor's lines follow 行距, roughly
     const sp = layout && !layout.why ? layout.settings.spacing : null, n = sp && !sp.mine && sp.n ? sp.n : 1;
-    if (me.ui.box.style && typeof me.ui.box.style.setProperty === "function") me.ui.box.style.setProperty("--latex-stretch", String(Math.min(Math.max(n, 0.8), 2.5)));
+    if (me.ui.box.style && typeof me.ui.box.style.setProperty === "function") {
+      me.ui.box.style.setProperty("--latex-stretch", String(Math.min(Math.max(n, 0.8), 2.5)));
+      // and its paragraphs' first lines follow 首行缩进 (22.12 B2)
+      const ind = pageIndent(layout && !layout.why ? layout : null, st.pre);
+      me.ui.box.style.setProperty("--latex-indent", ind.all);
+      me.ui.box.style.setProperty("--latex-indent-first", ind.first);
+    }
     if (me.ui.format.panes.layout.classList.contains("hidden") && !force) return;
     const main = st.facts.main;
     drawInfo(me, L, st, st.why);
@@ -5285,6 +5356,7 @@
       paragraphState: paragraphState, pageBreakSpec: pageBreakSpec, tocSpec: tocSpec, refSpec: refSpec, urlSpec: urlSpec, labelsOf: labelsOf,
       bodyWords: bodyWords, tabularGrid: tabularGrid, columnsOf: columnsOf, inlineInto: inlineInto, preambleWords: preambleWords,
       unsureWhy: unsureWhy, enterSpec: enterSpec, backSpec: backSpec, plainOf: plainOf, numbersOf: numbersOf, plainWords: plainWords,
-      docInfoOf: docInfoOf, docInfoSpec: docInfoSpec, unescapeTex: unescapeTex, escapeTyped: escapeTyped }),
+      docInfoOf: docInfoOf, docInfoSpec: docInfoSpec, unescapeTex: unescapeTex, escapeTyped: escapeTyped,
+      quietLine: quietLine, paraReach: paraReach, pageIndent: pageIndent }),
   });
 })();
