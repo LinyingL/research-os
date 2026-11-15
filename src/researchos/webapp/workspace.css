@@ -343,28 +343,38 @@
 }
 /* DESIGN.md 22.1, 22.7: the LaTeX editor, a page of its own the width of the window (canvas-mode); the source in the mono face
    on the paper, scrolled inside its box; 保存 primary, the rest text links. */
-body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 1rem 2rem 1.2rem; }
-.latex-page { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: .6rem; }
-.latex-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .4rem 1rem; padding-top: 1rem; }
+body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: .8rem clamp(1rem, 2.5vw, 2rem) 1rem; }
+.latex-page { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: .6rem; --latex-measure: 46rem; }
+.latex-page.is-source { --latex-measure: none; }
+.latex-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .4rem 1rem; padding-top: .4rem; }
+.latex-head .node-path { flex: 1 1 10rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; color: var(--ink-soft); }
 .latex-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .9rem; }
 .latex-act { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .9rem; }
 .latex-read-only, .latex-notice { margin: 0; }
 .latex-notice { display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .9rem; }
 .latex-notice details { width: 100%; }
 .latex-held { max-height: 30vh; overflow: auto; white-space: pre-wrap; font-family: var(--font-mono); font-size: .8rem; background: var(--paper-alt); padding: .6rem .8rem; }
-.latex-body { flex: 1; min-height: 0; display: flex; gap: 1rem; }
+/* 22.12 B: the text's column (the header, the notices, the editor and its status line), the right column beside it */
+.latex-body { flex: 1; min-height: 0; display: flex; gap: 1.2rem; }
+.latex-main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: .5rem; }
+.latex-main > :not(.latex-editor) { width: 100%; max-width: var(--latex-measure); margin-inline: auto; }
 .latex-editor { flex: 1; min-width: 0; min-height: 12rem; position: relative; border: 1px solid var(--line); background: var(--paper); }
+.latex-statusbar { display: flex; flex-wrap: wrap; gap: .2rem 1.2rem; font-size: .76rem; color: var(--gray); }
+.latex-save-state.is-unsaved { color: var(--ink-soft); }
 .latex-editor .cm-editor { height: 100%; }
 .latex-editor .cm-editor.cm-focused { outline: 1px solid var(--line-strong); }
 .latex-editor .cm-scroller { font-family: var(--font-mono); font-size: .86rem; line-height: 1.7; }
 .latex-editor .cm-content { padding: .8rem 0; caret-color: var(--ink); }
 .latex-editor .cm-line { position: relative; padding: 0 2.4rem 0 1rem; }
-/* 22.1 like Word (B3b): running text in the sans, commands shown as written in the mono, headings in the serif; formulas
-   by KaTeX, one it cannot typeset as written; cite and ref quiet chips; list items indented with their bullet or number. */
+/* 22.1 like Word (B3b; B1 of 22.12: no code is ever shown): running text in the sans, headings in the serif; formulas by
+   KaTeX, one it cannot typeset a quiet 公式; cite and ref quiet chips; list items indented with their bullet or number. */
 .latex-editor .cm-content.latex-word { font-family: var(--font-sans); font-size: .95rem; }
-.latex-word .latex-cmd { font-family: var(--font-mono); font-size: .82rem; }
 .latex-word .latex-h { font-family: var(--font-serif); font-weight: 600; }
-.latex-h1 { font-size: 1.4rem; } .latex-h2 { font-size: 1.25rem; } .latex-h3 { font-size: 1.1rem; } .latex-h4, .latex-h5 { font-size: 1rem; }
+.latex-h4, .latex-h5 { font-size: 1rem; }
+/* 22.12 M (F6): a heading's number as the PDF prints it, in the heading's face and size, a space after it ("1 引言") but
+   none after 一、 or （一） (latex-hnum-tight), as ctex sets them; shown only, never selected as text */
+.latex-word .latex-hnum { margin-right: .6em; user-select: none; }
+.latex-word .latex-hnum.latex-hnum-tight { margin-right: 0; }
 .latex-b { font-weight: 600; } .latex-i { font-style: italic; } .latex-u { text-decoration: underline; }
 .latex-chip { font-family: var(--font-sans); font-size: .78rem; color: var(--ink-soft); background: var(--paper-alt); border: 1px solid var(--line); border-radius: 3px; padding: 0 .3em; }
 /* a formula wider than the column scrolls inside its own line, never past the column (as KaTeX's own advice) */
@@ -372,20 +382,21 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 /* an equation's number follows it: KaTeX sets it at the right edge, over the formula's last characters when the column is
    narrow. In the flow, the formula and its number are centred together, so the formula sits half a number to the left. */
 .latex-math-display .katex-display > .katex > .katex-html > .katex-tag { position: static; margin-left: 1.2em; }
-.latex-math-raw { font-family: var(--font-mono); font-size: .82rem; color: var(--ink); }
 .latex-item { display: inline-block; min-width: 1.4em; color: var(--ink-soft); }
 .latex-bullet::before { content: ""; display: inline-block; width: .32em; height: .32em; border-radius: 50%; background: var(--ink-soft); vertical-align: middle; }
 .latex-editor .cm-line.latex-li-1 { padding-left: 2.2rem; } .latex-editor .cm-line.latex-li-2 { padding-left: 3.4rem; }
 .latex-editor .cm-line.latex-li-3 { padding-left: 4.6rem; } .latex-editor .cm-line.latex-li-4 { padding-left: 5.8rem; }
 .latex-preamble { display: flex; align-items: center; width: 100%; padding: .1rem 1rem; background: none; border: 0; text-align: left; font-family: var(--font-sans); font-size: .8rem; color: var(--ink-soft); cursor: pointer; }
-.latex-source[aria-pressed="true"] { color: var(--ink); text-decoration: underline; }
 .latex-include { margin-left: .6rem; font-family: var(--font-sans); font-size: .78rem; color: var(--ink-soft); }
 /* 22.2, 22.7: a found passage dotted in ink, one 待复核 in ochre; the count of its files quiet, in the margin */
 .latex-passage { text-decoration: underline dotted var(--ink); text-underline-offset: 3px; cursor: pointer; }
 .latex-passage.latex-wait { text-decoration-color: var(--ochre); }
 .latex-count { position: absolute; right: .6rem; font-family: var(--font-sans); font-size: .75rem; color: var(--gray); cursor: pointer; }
 .latex-link-button { position: absolute; z-index: 5; }
-.latex-side { width: 19rem; flex: none; overflow: auto; display: flex; flex-direction: column; align-items: flex-start; gap: .5rem; font-size: .86rem; }
+/* the right column stays at the top while the text scrolls (the text scrolls in its own box); it narrows before the
+   page would scroll sideways at the window's 900 px */
+.latex-side { flex: none; width: clamp(14rem, 100% - 28rem, 19rem); min-width: 0; align-self: flex-start; position: sticky; top: 0; max-height: 100%; overflow: auto; display: flex; flex-direction: column; align-items: flex-start; gap: .9rem; font-size: .86rem; padding-left: 1.2rem; border-left: 1px solid var(--line); }
+.latex-side > p { margin: 0; }
 .latex-side-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .6rem; }
 .latex-side-title { margin: 0; font-size: .95rem; }
 .latex-side .ws-input { width: 100%; box-sizing: border-box; }
@@ -416,3 +427,184 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-new > .latex-new-kinds { flex: 1 1 100%; }
 .latex-new-kinds .ws-field-label { display: block; margin-bottom: .3rem; }
 .latex-new-kind { display: inline-flex; align-items: baseline; gap: .3rem; margin-right: .9rem; font-size: .86rem; }
+/* 22.12: 格式与插入 at the top of the editor's right column -- two word tabs, quiet groups with small headings, the
+   tools as small quiet buttons whose pressed state is an ink edge on the paper; a picker inside it. Nothing in the column
+   is wider than it (review, 22.7): a select or a field wraps or shrinks, a file name breaks anywhere. */
+.latex-format { width: 100%; display: flex; flex-direction: column; gap: .7rem; padding-bottom: .9rem; border-bottom: 1px solid var(--line); }
+.latex-tabs { display: flex; gap: 1rem; border-bottom: 1px solid var(--line); }
+.latex-tab { font: inherit; font-size: .86rem; background: none; border: 0; border-bottom: 2px solid transparent; padding: .2rem 0; margin-bottom: -1px; color: var(--ink-soft); cursor: pointer; }
+.latex-tab.is-on { color: var(--ink); border-bottom-color: var(--ink); }
+.latex-tab-pane { display: flex; flex-direction: column; gap: .7rem; }
+.latex-format-group + .latex-format-group { border-top: 1px solid var(--line); padding-top: .7rem; }
+.latex-format-group { display: flex; flex-direction: column; gap: .35rem; }
+.latex-format-title { margin: 0; font-size: .75rem; font-weight: 600; color: var(--gray); }
+.latex-format-row { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .4rem; }
+.latex-format-label { font-size: .76rem; color: var(--ink-soft); white-space: nowrap; }
+.latex-format-field { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .2rem .3rem; max-width: 100%; min-width: 0; }
+.latex-side .latex-format-select { width: auto; max-width: 100%; min-width: 0; padding: .1rem .3rem; font-size: .8rem; }
+.latex-format, .latex-layout-item, .latex-picker { max-width: 100%; min-width: 0; box-sizing: border-box; }
+.latex-side-rest { width: 100%; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: .9rem; }
+.latex-side-rest > p { margin: 0; }
+.latex-file-name { min-width: 0; overflow-wrap: anywhere; font-family: var(--font-sans); }
+.latex-tool[aria-pressed="true"] { border-color: var(--ink); background: var(--paper); }
+/* 22.12 M (F2, browser acceptance 2026-11-14): a button of the right column that cannot be used looks it, as the disabled
+   selects beside it do -- gray words on no fill and a faint edge, never pressed, no hover. */
+.latex-side .btn:disabled, .latex-side .btn:disabled:hover { color: var(--gray); background: transparent; border-color: var(--line); cursor: default; }
+.latex-side .btn:disabled .latex-key { color: inherit; }
+.latex-key { font-size: .75rem; color: var(--gray); }
+.latex-format-reason, .latex-format-note { margin: 0; }
+.latex-picker { display: flex; flex-direction: column; align-items: flex-start; gap: .4rem; padding: .5rem .6rem; background: var(--paper-alt); border: 1px solid var(--line); }
+.latex-images, .latex-bibs { width: 100%; display: flex; flex-direction: column; gap: .2rem; max-height: 14rem; overflow: auto; }
+.latex-image, .latex-bib { display: flex; flex-wrap: wrap; align-items: center; gap: .2rem .5rem; width: 100%; box-sizing: border-box; min-width: 0; padding: .2rem .3rem; text-align: left; font: inherit; font-size: .8rem; color: var(--ink); background: none; border: 1px solid transparent; cursor: pointer; }
+.latex-image[aria-pressed="true"], .latex-bib[aria-pressed="true"] { border-color: var(--ink); background: var(--paper); }
+.latex-image:disabled { color: var(--ink-soft); cursor: default; }
+.latex-thumb { width: 2.6rem; height: 2rem; object-fit: contain; background: var(--paper); border: 1px solid var(--line); }
+.latex-bib-title { flex: 1 1 100%; color: var(--ink-soft); }
+.latex-side .latex-number { width: 4rem; }
+.latex-grid { display: grid; grid-template-columns: repeat(8, .9rem); gap: 2px; }
+.latex-grid-cell { width: .9rem; height: .9rem; padding: 0; background: var(--paper); border: 1px solid var(--line-strong); cursor: pointer; }
+.latex-grid-cell.is-on { background: var(--paper-alt); border-color: var(--ink); }   /* a choice is ink, never ochre (21.8) */
+.latex-format-check { display: inline-flex; align-items: center; gap: .3rem; font-size: .8rem; }
+/* 22.12 A2: 版式 -- each setting a labelled select, its 自定义 fields under it, and a quiet line where the setting is
+   the person's own; like Word, the editor's lines follow the main file's 行距, roughly (--latex-stretch, set by the page). */
+.latex-layout-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .6rem; }
+.latex-layout-head p { margin: 0; }
+.latex-layout-item { display: flex; flex-direction: column; align-items: flex-start; gap: .2rem; }
+.latex-layout-note { margin: 0; font-size: .76rem; }
+.latex-editor .cm-content.latex-word { line-height: calc(1.8 * var(--latex-stretch, 1)); }
+/* 22.12 B: like Word, a page -- the text a centred column of a page's measure on the paper, the desk's tone around it,
+   generous padding, the body at 1rem; 显示代码 keeps the full-width code. Headings in the serif with space above. */
+.latex-page:not(.is-source) .latex-editor { background: var(--paper-alt); }
+.latex-editor .cm-content.latex-word { flex: 1 1 auto; box-sizing: border-box; max-width: var(--latex-measure); margin: 0 auto; min-height: 100%;
+  padding: 2.4rem clamp(.4rem, 3vw, 2.4rem) 4rem; background: var(--paper); border-inline: 1px solid var(--line); font-size: 1rem; }
+.latex-editor .cm-content.latex-word .cm-line.latex-hline { padding-top: 1.1rem; }
+.latex-h1 { font-size: 1.5rem; } .latex-h2 { font-size: 1.3rem; } .latex-h3 { font-size: 1.12rem; }
+.latex-sf { font-family: var(--font-sans); } .latex-rm { font-family: var(--font-serif); } .latex-tt { font-family: var(--font-mono); font-size: .9em; }
+.latex-f-song { font-family: var(--font-serif); } .latex-f-hei { font-family: var(--font-sans); }
+.latex-f-kai { font-family: "Kaiti SC", STKaiti, KaiTi, var(--font-serif); }
+.latex-s-small { font-size: .9em; } .latex-s-large { font-size: 1.2em; } .latex-s-larger { font-size: 1.44em; }
+.latex-doc-mark { display: flex; align-items: center; gap: .6rem; padding: .3rem 1rem; font-family: var(--font-sans); font-size: .75rem; line-height: 1.4; color: var(--gray); }
+.latex-doc-mark::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+.latex-titleblock { padding: 1rem 1rem 1.4rem; text-align: center; line-height: 1.45; }
+.latex-title { font-family: var(--font-serif); font-size: 1.65rem; font-weight: 600; }
+.latex-title-author { margin-top: .7rem; font-size: 1rem; }
+.latex-title-date { margin-top: .25rem; font-size: .9rem; color: var(--ink-soft); }
+.latex-title-none { font-size: .9rem; color: var(--gray); }
+.latex-title-and { display: inline-block; width: 2em; }
+.latex-abstract-head { padding: .6rem 1rem .2rem; text-align: center; font-family: var(--font-sans); font-size: .78rem; font-weight: 600; letter-spacing: .08em; font-variant: small-caps; color: var(--ink-soft); }
+.latex-abstract-end { height: .6rem; }
+.latex-editor .cm-content.latex-word .cm-line.latex-abstract-line { padding-left: 2.6rem; padding-right: 3.4rem; font-size: .94em; }
+.latex-table-preview, .latex-figure-preview { padding: .6rem 1rem; overflow-x: auto; text-align: center; line-height: 1.5; }
+.latex-caption { margin: 0 0 .35rem; font-size: .85rem; color: var(--ink-soft); }
+.latex-figure-preview .latex-caption { margin: .4rem 0 0; }
+.latex-caption-word { color: var(--gray); }
+.latex-table { margin: 0 auto; border-collapse: collapse; font-size: .9rem; text-align: left; }
+.latex-table td { padding: .15rem .8rem; vertical-align: top; }
+.latex-table .latex-col-c { text-align: center; } .latex-table .latex-col-r { text-align: right; }
+.latex-table tr.latex-rule-heavy > td { border-top: 2px solid var(--ink); } .latex-table tr.latex-rule-light > td { border-top: 1px solid var(--line-strong); }
+.latex-table tr.latex-rule-below-heavy > td { border-bottom: 2px solid var(--ink); } .latex-table tr.latex-rule-below-light > td { border-bottom: 1px solid var(--line-strong); }
+.latex-graphic { display: inline-flex; align-items: center; gap: .5rem; vertical-align: middle; font-family: var(--font-sans); color: var(--ink-soft); }
+div.latex-graphic { display: flex; flex-direction: column; margin: .2rem 0; }
+.latex-graphic-name { font-family: var(--font-sans); font-size: .76rem; color: var(--gray); }   /* quiet words, never code (B2) */
+.latex-graphic-thumb { max-width: 100%; max-height: 14rem; object-fit: contain; background: var(--paper); border: 1px solid var(--line); }
+span.latex-graphic .latex-graphic-thumb { max-height: 4rem; }
+.latex-graphic-thumb.latex-thumb-loading { visibility: hidden; border-color: transparent; }
+/* a figure's own images (a PDF's first page too) are drawn at the figure's size, not the inline 4rem (22.12 R) */
+.latex-figure-part span.latex-graphic .latex-graphic-thumb { max-height: 14rem; }
+/* The edit view shows no LaTeX code (DESIGN.md 22.1, 22.12 B1; the researcher, 2026-11-14): 「显示代码」 heads the right
+   column as a switch (aria-pressed), words with an ink edge when on, never a glyph; what is hidden is replaced by quiet
+   words, chips and blocks in the palette's tokens. */
+.latex-switch-row { display: flex; align-items: center; gap: .5rem; }
+.latex-switch { font: inherit; font-size: .84rem; color: var(--ink-soft); background: var(--paper); border: 1px solid var(--line-strong); border-radius: 3px; padding: .15rem .6rem; cursor: pointer; }
+.latex-switch[aria-pressed="true"] { color: var(--ink); border-color: var(--ink); }
+/* disabled (a file the edit view cannot show): gray words on no fill, a faint edge -- as the right column's disabled
+   buttons (22.12 R); still pressed, it says so in aria-pressed and in the sentence under it */
+.latex-side .btn:focus-visible, .latex-switch:focus-visible { outline: 1px solid var(--ink); outline-offset: 1px; }
+/* 导出 PDF while an export runs: as the right column's disabled buttons, not the app's ink-soft on paper-alt (22.12 R) */
+.latex-tools .btn:disabled:not(.btn-primary) { color: var(--gray); background: transparent; border-color: var(--line); cursor: default; }
+.latex-switch:disabled, .latex-switch:disabled[aria-pressed="true"] { cursor: default; color: var(--gray); background: transparent; border-color: var(--line); }
+.latex-code-why, .latex-context p { margin: 0; }
+.latex-context { display: flex; flex-direction: column; gap: .3rem; width: 100%; }
+.latex-note { display: flex; flex-direction: column; gap: .3rem; width: 100%; }
+.latex-note-text { min-height: 4rem; resize: vertical; font: inherit; font-size: .84rem; }
+.latex-chip-unit, .latex-chip-url { font-style: normal; }
+.latex-chip-block { display: block; margin: .3rem 1rem; padding: .3rem .6rem; text-align: center; }
+.latex-math-tag { font-family: var(--font-sans); font-size: .78rem; color: var(--gray); border: 1px dashed var(--line-strong); border-radius: 3px; padding: 0 .3em; }
+div.latex-math-tag { display: block; width: fit-content; margin: .2rem auto; }
+.latex-note-mark { font-family: var(--font-sans); font-size: .75em; color: var(--ink-soft); cursor: pointer; padding: 0 .1em; }
+.latex-line-mark { display: flex; align-items: center; gap: .6rem; padding: .3rem 1rem; font-family: var(--font-sans); font-size: .76rem; color: var(--gray); }
+.latex-line-mark::after { content: ""; flex: 1; border-top: 1px dashed var(--line); }
+.latex-preamble-block .latex-preamble { cursor: pointer; }
+.latex-verbatim { font-family: var(--font-mono); font-size: .82rem; color: var(--ink); }
+pre.latex-verbatim { margin: .3rem 1rem; padding: .4rem .6rem; background: var(--paper-alt); white-space: pre-wrap; }
+.latex-br { display: block; height: 0; }
+.latex-figure-part { display: inline; }   /* its images a block of their own, 「图 N：」 in the caption's line */
+.latex-figure-part .latex-graphic { display: flex; flex-direction: column; align-items: center; margin: .2rem 0; }
+.latex-figure-part .latex-graphic-thumb { max-height: 14rem; }
+.latex-figure-part .latex-caption-word { display: inline; }
+.latex-editor .cm-content.latex-word .cm-line.latex-figure-line { text-align: center; font-size: .9em; color: var(--ink-soft); }
+.latex-editor .cm-content.latex-word .cm-line.latex-align-c { text-align: center; }
+.latex-editor .cm-content.latex-word .cm-line.latex-align-r { text-align: right; }
+.latex-editor .cm-content.latex-word .cm-line.latex-quote-line, .latex-editor .cm-content.latex-word .cm-line.latex-env-line { padding-left: 2.6rem; padding-right: 2.6rem; }
+.latex-env-head { display: block; font-family: var(--font-sans); font-size: .8rem; font-weight: 600; color: var(--ink-soft); }
+span.latex-abstract-head { display: block; }
+.latex-term { font-weight: 600; margin-right: .3em; }
+.latex-short { font-family: var(--font-sans); font-size: .76rem; font-weight: 400; color: var(--gray); margin-left: .5em; }
+.latex-sc { font-variant: small-caps; } .latex-sup { vertical-align: super; font-size: .75em; } .latex-sub { vertical-align: sub; font-size: .75em; }
+.latex-boxed { border: 1px solid var(--line-strong); padding: 0 .2em; } .latex-strike { text-decoration: line-through; }
+/* 22.12 B2 (the researcher, 2026-11-14: "我觉得很简陋…还需要优化UI"): the page polished. A paragraph's first line follows
+   版式's 首行缩进 (--latex-indent, and --latex-indent-first right after a heading, set by the page from the main file); a
+   heading over the lines of an environment (摘要, a theorem's title) and a displayed formula fill their line as an
+   inline block, so the line keeps no empty strut above or below them; a figure's file name is quiet words, never code. */
+.latex-editor .cm-content.latex-word .cm-line.latex-para { text-indent: var(--latex-indent, 1.5em); }
+.latex-editor .cm-content.latex-word .cm-line.latex-para-first { text-indent: var(--latex-indent-first, 0); }
+.latex-editor .cm-content.latex-word .cm-line.latex-para *, .latex-editor .cm-content.latex-word .cm-line.latex-para-first * { text-indent: 0; }
+/* 22.12 M (F5, browser acceptance 2026-11-14): paragraphs apart as 段间距 says -- --latex-parskip, none, half a line or a
+   line, set by the page from the main file -- whatever the blank lines between them in the source, which take no room;
+   F7: a \par between words is a new line there, its first line indented as 首行缩进 says. */
+.latex-editor .cm-content.latex-word .cm-line.latex-para, .latex-editor .cm-content.latex-word .cm-line.latex-para-first { padding-top: var(--latex-parskip, 0); }
+.latex-word .latex-parbreak-line { display: block; }
+.latex-word .latex-parbreak-indent { display: inline-block; width: var(--latex-indent, 1.5em); }
+.latex-word .latex-parbreak-first .latex-parbreak-indent { width: var(--latex-indent-first, 0); }
+/* 22.12 R: words after a figure's \end on its line -- not the centred caption line: a line of the body's own */
+.latex-word .latex-after-float { display: block; text-align: left; font-size: 1rem; color: var(--ink); }
+.latex-word .latex-after-float-para { text-indent: var(--latex-indent, 1.5em); }
+.latex-word .latex-after-float-first { text-indent: var(--latex-indent-first, 0); }
+.latex-word .latex-after-float * { text-indent: 0; }
+.latex-editor .cm-content.latex-word .latex-env-head, .latex-editor .cm-content.latex-word span.latex-abstract-head,
+.latex-editor .cm-content.latex-word span.latex-math-display { display: inline-block; width: 100%; vertical-align: top; }
+.latex-editor .cm-content.latex-word .latex-env-head { padding-top: .3rem; font-size: .84rem; color: var(--ink); }
+.latex-editor .cm-content.latex-word span.latex-abstract-head { padding: .5rem 0 .2rem; }
+/* CodeMirror's caret holders beside each hidden piece are taken out of the flow (they still give the caret its place),
+   so a line never breaks at them: naïve stays one word, a footnote's number stays on its word, and no holder makes an
+   empty line of its own above or below a heading or a formula. A chip that breaks keeps its edge on each part; a
+   reference's number never breaks. */
+.latex-editor .cm-content.latex-word img.cm-widgetBuffer { position: absolute; }
+.latex-editor .cm-content.latex-word .cm-line { min-height: calc(1.8em * var(--latex-stretch, 1)); }   /* a line of only what is hidden */
+.latex-editor .cm-content.latex-word .latex-chip { -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.latex-editor .cm-content.latex-word .latex-chip-ref { white-space: nowrap; }
+/* 22.12 T (acceptance, 2026-11-14: tables are filled in like Word): a table the reader is sure of is a grid of the text
+   itself -- each row one line of the page drawn as a row of cells (a table of its own, its columns' widths set by the
+   editor the same in every row, so they line up), each cell's words typed in place; rules as the PDF draws them, a
+   column rule where the spec has "|"; an empty cell keeps a cell's size, the cursor standing in it. The caption's line is
+   centred over it, as a figure's. Tokens only. */
+.latex-editor .cm-content.latex-word .cm-line.latex-trow { display: table; table-layout: fixed; margin: 0 auto; padding: 0; text-indent: 0;
+  border-collapse: separate; border-spacing: 0; font-size: .9rem; line-height: 1.5; }
+/* what CodeMirror puts in a row for the hidden & and \\ (empty placeholders) stays out of the grid's flow */
+.latex-editor .cm-content.latex-word .cm-line.latex-trow > br { display: none; }
+.latex-editor .cm-content.latex-word .cm-line.latex-trow > :not(.latex-cell) { position: absolute; }
+.latex-word .latex-cell { display: table-cell; box-sizing: border-box; height: 1.9em; padding: .15rem .6rem; vertical-align: top; text-align: left; }
+/* 22.12 R: a word or a number is never broken letter by letter in a cell (CodeMirror's wrapping breaks anywhere); a
+   table too wide for the page's measure is drawn compact */
+.latex-editor .cm-content.latex-word .latex-cell { overflow-wrap: break-word; word-break: normal; }
+.latex-editor .cm-content.latex-word .cm-line.latex-trow-compact { font-size: .8rem; }
+.latex-editor .cm-content.latex-word .cm-line.latex-trow-compact .latex-cell { padding: .15rem .2rem; }
+.latex-word .latex-cell.latex-col-c { text-align: center; } .latex-word .latex-cell.latex-col-r { text-align: right; }
+.latex-word .latex-cell-empty { background: var(--paper-alt); background-clip: content-box; }
+.latex-word .latex-cell-bl { border-left: 1px solid var(--line-strong); } .latex-word .latex-cell-br { border-right: 1px solid var(--line-strong); }
+.latex-editor .cm-content.latex-word .cm-line.latex-trule-heavy { border-top: 2px solid var(--ink); }
+.latex-editor .cm-content.latex-word .cm-line.latex-trule-light { border-top: 1px solid var(--line-strong); }
+.latex-editor .cm-content.latex-word .cm-line.latex-trule-below-heavy { border-bottom: 2px solid var(--ink); }
+.latex-editor .cm-content.latex-word .cm-line.latex-trule-below-light { border-bottom: 1px solid var(--line-strong); }
+.latex-editor .cm-content.latex-word .cm-line.latex-tcap-line { text-align: center; font-size: .85rem; color: var(--ink-soft); padding-top: .4rem; }
+.latex-editor .cm-content.latex-word .cm-line.latex-tcap-below { padding-top: .2rem; padding-bottom: .4rem; }

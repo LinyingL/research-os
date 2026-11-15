@@ -176,6 +176,17 @@ ALLOWED_CHINESE: dict[str, str] = {
     "提议/你的邮箱/": "13.1: the 提议 folder's fixed name on the shared drive",
     "提议/": "13.1: the 提议 folder's fixed name, before a member's id (team.js sendWrites)",
     "已发布/outcomes/": "13.1: the 已发布 folder's fixed name, where the PI's answers are written",
+    # 22.12 (A3): LaTeX source 版式 writes into the paper, never shown as a word of the interface -- the Chinese heading
+    # numbers' parentheses and comma, and the Chinese caption names
+    "（\\chinese{subsection}）": "22.12 A3: \\thesubsection as 版式 writes it into the preamble",
+    ",、": "22.12 A3: ctex's section/name value (nothing before the number, 、 after it) as 版式 writes it",
+    # whole lines, so a bare 图 or 表 elsewhere is still an untranslated word (review)
+    "\\renewcommand{\\figurename}{图}": "22.12 A3: \\figurename as 版式 writes it into the preamble",
+    "\\renewcommand{\\tablename}{表}": "22.12 A3: \\tablename as 版式 writes it into the preamble",
+    # 22.12 M (F4, F6): what a ctex document prints for its parts and numbers, shown in the edit view as its PDF prints them
+    # whatever the interface's language -- never words of the interface
+    "图|表|摘要|目录|插图|表格|参考文献|证明|附录|第|章|十|、|（|）": "22.12 M: the names and number marks a ctex document prints",
+    "〇一二三四五六七八九": "22.12 M: the Chinese digits of ctex's \\chinese numbers (第一章, 一、, （一）)",
 }
 
 CJK = re.compile("[\u2e80-\u2fff\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")

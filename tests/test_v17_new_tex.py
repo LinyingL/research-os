@@ -12,6 +12,7 @@ import hashlib
 import http.client
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -66,12 +67,12 @@ def test_each_kind_is_written_from_its_template_in_utf8_with_lf_and_a_history_en
     zh_text, en_text, ch_text = ((root / r["path"]).read_bytes() for r in (zh, en, ch))
     for raw in (zh_text, en_text, ch_text):
         assert b"\r" not in raw and raw.decode("utf-8")
-    assert zh_text.decode().startswith("\\documentclass[12pt]{ctexart}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n"
+    assert zh_text.decode().startswith("\\documentclass[a4paper,12pt]{ctexart}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n"
                                        "\\usepackage{booktabs}\n")
     # the title is escaped, so it cannot break the file; the author is left for the person; no bibliography
     assert "\\title{人民币 \\& 50\\% 的\\_路径}\n\\author{}\n" in zh_text.decode()
     assert "\\section{引言}" in zh_text.decode() and "\\begin{abstract}" in zh_text.decode()
-    assert en_text.decode().startswith("\\documentclass[12pt]{article}\n\\usepackage[T1]{fontenc}\n")
+    assert en_text.decode().startswith("\\documentclass[a4paper,12pt]{article}\n\\usepackage[T1]{fontenc}\n")
     assert "\\section{Introduction}" in en_text.decode() and "\\title{}" in en_text.decode()
     for raw in (zh_text, en_text):
         assert b"bibliograph" not in raw and b"biblatex" not in raw and raw.endswith(b"\\end{document}\n")
@@ -398,6 +399,31 @@ def test_both_paper_templates_and_a_chapter_brought_in_export_to_pdf(tmp_path, m
     assert en["exported"] and en["engine"] == "pdflatex", en["log"][-3000:]
     for answer in (zh, en):
         assert answer["errors"] == [] and (root / answer["pdf"]).read_bytes().startswith(b"%PDF")
+        if PDFINFO:   # every new paper is A4 (22.12, A3): 595.28 x 841.89 PostScript points, as pdfinfo names it
+            info = subprocess.run([PDFINFO, str(root / answer["pdf"])], capture_output=True, text=True, timeout=60).stdout
+            assert re.search(r"^Page size:\s+595\.2\d* x 841\.89 pts \(A4\)$", info, re.M), info
+
+
+PDFINFO = shutil.which("pdfinfo") or next((p for p in ("/opt/homebrew/bin/pdfinfo", "/usr/local/bin/pdfinfo") if os.access(p, os.X_OK)), None)
+LATEXMK = shutil.which("latexmk") or ("/Library/TeX/texbin/latexmk" if os.access("/Library/TeX/texbin/latexmk", os.X_OK) else None)
+
+
+@pytest.mark.skipif(LATEXMK is None, reason="latexmk is not installed")
+@pytest.mark.parametrize("kind, engine", [("zh_paper", "-xelatex"), ("en_paper", "-pdf")])
+def test_every_new_paper_is_a4_measured_by_tex(tmp_path, kind, engine):
+    """22.12 (A3, the researcher: 纸张 "这个不需要"): no paper control; instead each paper template puts a4paper in its
+    \\documentclass options -- article and ctexart are US Letter otherwise. TeX's own \\paperwidth and \\paperheight,
+    printed by a probe line, are A4's 597.50787 pt x 845.04684 pt (210 mm x 297 mm in TeX points)."""
+    text = latex_edit.TEMPLATES[kind].replace("<TITLE>", "T").replace(
+        "\\begin{document}\n", "\\begin{document}\n\\typeout{PROBE pw=\\the\\paperwidth\\space ph=\\the\\paperheight}\n")
+    (tmp_path / "main.tex").write_text(text, encoding="utf-8")
+    (tmp_path / "home").mkdir()
+    env = {"PATH": f"{Path(LATEXMK).parent}:/usr/bin:/bin", "HOME": str(tmp_path / "home"), "LANG": "en_US.UTF-8"}
+    done = subprocess.run([LATEXMK, "-norc", engine, "-interaction=nonstopmode", "-halt-on-error", "main.tex"], cwd=tmp_path,
+                          env=env, capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL)
+    log = (tmp_path / "main.log").read_text(encoding="utf-8", errors="replace")
+    assert done.returncode == 0, log[-2000:]
+    assert "PROBE pw=597.50787pt ph=845.04684pt" in log
 
 
 # -- the endpoint -----------------------------------------------------------------------------------------------------------

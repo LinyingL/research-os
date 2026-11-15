@@ -1,6 +1,7 @@
-"""DESIGN.md 22.1 "Like Word" (task V17, B3b): the LaTeX range reader, the decorations it feeds (a state field, the markup
-hidden only where the selection does not touch it), KaTeX formulas, cite and ref chips, the folded 导言区, 显示源码, and
-Return by context -- run under node on the vendored CodeMirror and KaTeX. The Return results are typeset by pdfLaTeX to
+"""DESIGN.md 22.1 "Like Word" (task V17, B3b; changed by B1 of 22.12, the researcher, 2026-11-14: "编辑的时候是看不到latex
+代码的"): the LaTeX range reader, the decorations it feeds (a state field; the markup hidden wherever the selection is),
+KaTeX formulas, cite and ref chips, the 导言区 line, 显示代码, and Return -- run under node on the vendored CodeMirror and
+KaTeX. The edit view's own rules (no code anywhere, the caret, typing, deleting) are tests/test_v17_no_code_view.py. The Return results are typeset by pdfLaTeX to
 show the file still exports. Every test names its scenario.
 
 Typing time, measured on this Mac (2026-11-13, node benchmark below; state updates, plus every widget within 60 lines
@@ -37,8 +38,9 @@ vm.runInContext(fs.readFileSync(__CM__, 'utf8'), ctx);
 const kctx = vm.createContext({});
 vm.runInContext(fs.readFileSync(__KATEX__, 'utf8'), kctx);
 global.window = {ROCodeMirror: ctx.ROCodeMirror};
-global.mk = (tag, cls, text) => ({tag, className: cls || '', textContent: text == null ? '' : String(text), innerHTML: '', attrs: {},
-  setAttribute(k, v) { this.attrs[k] = v; }, addEventListener() {}});
+// children, since 22.12 B's blocks (the title, a table, a figure) are built of elements
+global.mk = (tag, cls, text) => ({tag, className: cls || '', textContent: text == null ? '' : String(text), innerHTML: '', attrs: {}, children: [],
+  setAttribute(k, v) { this.attrs[k] = v; }, addEventListener() {}, append(...k) { this.children.push(...k); }, appendChild(k) { this.children.push(k); }});
 eval(fs.readFileSync(__LATEX__, 'utf8'));
 const CM = ctx.ROCodeMirror, P = window.ROLatex._pure, F = P.wordField(CM);
 const out = {};
@@ -92,17 +94,20 @@ out.noMath = drawn(noMath);
 window.katex = kctx.katex;
 out.mathArrives = drawn(noMath.update({effects: F.mathOn.of(true)}).state);
 // a selection move that shows and hides nothing new keeps the very same decorations
-const st0 = make(DOC, DOC.length), st1 = st0.update({selection: {anchor: DOC.length - 2}}).state;
+// (inside running text: since 22.12 B the cursor on \end{document}'s line shows its source, as any construct's)
+const st0 = make(DOC, DOC.indexOf('Text ') + 1), st1 = st0.update({selection: {anchor: DOC.indexOf('Text ') + 2}}).state;
 out.sameDeco = st0.field(F.field).deco === st1.field(F.field).deco;
 out.newDeco = st1.field(F.field).deco !== st1.update({selection: {anchor: DOC.indexOf('bold')}}).state.field(F.field).deco;
 
-// -- Return by context --
+// -- Return: the edit view's (B1: enterSpec), and 显示代码's plain newline --
 const ret = (marked, sep, opts) => {
   opts = opts || {};
   const pos = marked.indexOf('|'), text = marked.replace('|', ''), head = opts.head != null ? opts.head : pos;
   const st = CM.EditorState.create({doc: text.split('\n').join(sep), selection: {anchor: pos, head},
     extensions: [CM.EditorState.lineSeparator.of(sep), P.breakFilter(CM, sep)].concat(opts.source ? [] : [P.wordExtensions(CM)])});
-  const value = st.field(F.field, false), tr = st.update(P.returnSpec(st, value ? value.read : null)), after = tr.state;
+  const value = st.field(F.field, false), spec = value ? P.enterSpec(CM, st, value, !!opts.shift) : P.returnSpec(st, null);
+  if (spec.refused) return {refused: spec.refused};
+  const tr = st.update(spec), after = tr.state;
   const at = after.selection.main.head, plainText = after.doc.toString();
   return {text: plainText.slice(0, at) + '|' + plainText.slice(at), file: after.doc.sliceString(0, after.doc.length, sep),
           edits: P.serverEdits(st.doc, tr.changes, sep)};
@@ -112,29 +117,31 @@ const RET = {
   runningEnd: 'Some text.|\nMore of it.',
   blankLine: 'a\n\n|',
   heading: '\\section{Int|ro}\\label{s}\nNext',
+  headingEnd: '\\section{Intro|}\\label{s}\nNext',
+  headingStart: 'x\n\n\\section{|Intro}',
   headingLast: 'x\n\\subsection*{A|b}',
   textbf: 'A \\textbf{bo|ld} b',
-  caption: '\\caption{a|b}',
+  textbfEdge: 'A \\textbf{|bold} b',
+  figureCaption: '\\begin{figure}\n\\includegraphics{a.png}\n\\caption{a|b}\n\\end{figure}',
   item: '\\begin{itemize}\n  \\item one|\n\\end{itemize}',
   itemMiddle: '\\begin{enumerate}\n\\item on|e\n\\end{enumerate}',
   emptyItem: '\\begin{itemize}\n  \\item one\n  \\item |\n\\end{itemize}\nAfter',
   emptyItemEnd: '\\begin{itemize}\n  \\item one\n  \\item |\n\\end{itemize}',
   beforeItem: '\\begin{itemize}|\n  \\item one\n\\end{itemize}',
-  inlineMath: 'a $x|y$ b',
-  displayEnv: '\\begin{align}\na &= b|\n\\end{align}',
-  verbatim: '\\begin{verbatim}\nx|\n\\end{verbatim}',
-  tabular: '\\begin{tabular}{l}\na|\n\\end{tabular}',
-  preamble: '\\documentclass{x}\n\\usepackage{y}|\n\\begin{document}\nz\n\\end{document}',
+  afterMath: 'a $xy$| b',
+  preambleEdge: '|\\documentclass{x}\n\\usepackage{y}\n\\begin{document}\nz\n\\end{document}',
   inDocument: '\\documentclass{x}\n\\begin{document}\nz|\n\\end{document}',
-  comment: 'a % note|\nb',
+  afterComment: 'a % note|\nb',
 };
 out.ret = {};
 for (const sep of ['\n', '\r\n']) for (const k of Object.keys(RET)) out.ret[k + (sep === '\n' ? '' : '@crlf')] = ret(RET[k], sep);
 out.retSource = ret('Some |text here.', '\n', {source: true});
 out.retSelection = ret('Some |text here.', '\n', {head: 'Some text'.length + 1});
-// ⇧Return, an input method composing, a read-only file
+out.shift = {inText: ret('Some |text here.', '\n', {shift: true}), inHeading: ret('\\section{Int|ro}', '\n', {shift: true}),
+  atStart: ret('a\n\n|b', '\n', {shift: true})};
+// ⇧Return in 显示代码 (no word field), an input method composing, a read-only file
 const fake = (st, composing) => ({state: st, composing, sent: [], dispatch(spec) { this.sent.push(spec); this.state = this.state.update(spec).state; }});
-const v1 = fake(make('\\section{Int|ro}'.replace('|', ''), 12), false);
+const v1 = fake(CM.EditorState.create({doc: '\\section{Intro}', selection: {anchor: 12}}), false);
 out.shiftReturn = {handled: P.onReturn(CM, true)(v1), text: v1.state.doc.toString()};
 const v2 = fake(make('Some text', 4), true);
 out.composing = {handled: P.onReturn(CM, false)(v2), sent: v2.sent.length};
@@ -148,13 +155,13 @@ let st = CM.EditorState.create({doc: '\\documentclass{article}\n\\usepackage{ams
 const press = (anchor, offset) => {
   const at = anchor == null ? st.selection.main.head : st.doc.toString().indexOf(anchor) + offset;
   st = st.update({selection: {anchor: at}}).state;
-  st = st.update(P.returnSpec(st, st.field(F.field).read)).state;
+  st = st.update(P.enterSpec(CM, st, st.field(F.field), false)).state;
 };
-const type = (s) => { const at = st.selection.main.head; st = st.update({changes: {from: at, insert: s}, selection: {anchor: at + s.length}}).state; };
-press('Intro', 2); type('Body of the introduction.');
+const type = (s) => { const at = st.selection.main.head; st = st.update({changes: {from: at, insert: s}, selection: {anchor: at + s.length}, userEvent: 'input.type'}).state; };
+press('Intro', 5); type('Body of the introduction.');
 press('bold words', 4);
 press('\\item one', 9); type('two'); press(null); press(null); type('After the list.');
-press('a = b', 3);
+press('end.', 4);
 out.exported = st.doc.toString();
 console.log(JSON.stringify(out));
 """
@@ -177,12 +184,13 @@ const ms = (t0) => Number(process.hrtime.bigint() - t0) / 1e6, stats = (xs) => {
 const typing = (doc, at, n, key) => {
   let st = CM.EditorState.create({doc, extensions: [P.wordExtensions(CM)], selection: {anchor: at}});
   const shown = (s) => { const l = s.doc.lineAt(s.selection.main.head), from = s.doc.line(Math.max(1, l.number - 60)).from, to = s.doc.line(Math.min(s.doc.lines, l.number + 60)).to, got = []; s.field(F.field).deco.between(from, to, (a, b, v) => { if (v.spec.widget) got.push({a, b, w: v.spec.widget}); }); return got; };
-  for (let k = 0; k < 20; k++) st = st.update({changes: {from: st.selection.main.head, insert: 'w'}, selection: {anchor: st.selection.main.head + 1}}).state;  // warm up
+  // typed as the edit view types (B1: through its filter, userEvent input.type), so a key never lands in hidden markup
+  for (let k = 0; k < 20; k++) st = st.update({changes: {from: st.selection.main.head, insert: 'w'}, selection: {anchor: st.selection.main.head + 1}, userEvent: 'input.type'}).state;  // warm up
   const keys = [];
   let drawnAnew = 0;
   for (let k = 0; k < n; k++) {
     const at = st.selection.main.head, before = shown(st), t0 = process.hrtime.bigint();
-    const tr = st.update({changes: {from: at, insert: key(k)}, selection: {anchor: at + 1}});
+    const tr = st.update({changes: {from: at, insert: key(k)}, selection: {anchor: at + 1}, userEvent: 'input.type'});
     st = tr.state;
     st.field(F.field);
     let spent = ms(t0);
@@ -204,7 +212,7 @@ for (let k = 0; k < 100; k++) { const t0 = process.hrtime.bigint(); st = st.upda
 const body = lines.slice(3, -1), big = lines.slice(0, 3);
 for (let i = 0, bytes = 0; bytes < 1.95e6; i++) { big.push(body[i % body.length]); bytes += Buffer.byteLength(body[i % body.length]) + 1; }
 const bigText = big.concat(['\\end{document}']).join('\n');
-const large = typing(bigText, bigText.length >> 1, 100, () => 'x');
+const large = typing(bigText, bigText.indexOf('Running text', bigText.length >> 1), 100, () => 'x');   // in running text (B1)
 console.log(JSON.stringify({lines: st.doc.lines, formulas: P.readLatex(text).maths.length, key: small.keys, drawnAnew: small.drawnAnew,
   read: stats(reads), move: stats(moves), bigBytes: Buffer.byteLength(bigText), bigLines: large.st.doc.lines, bigKey: large.keys}));
 """
@@ -296,103 +304,97 @@ def test_the_preamble_runs_to_begin_document_and_a_math_environment_is_one_formu
 
 
 @needs_node
-def test_away_from_the_selection_headings_and_emphasis_hide_their_markup_and_take_their_style(run):
-    d = run["away"]
-    assert _find(d, "\\section{") and _find(d, "Intro", cls="latex-h latex-h2")
-    assert _find(d, "bold", cls="latex-b") and _find(d, "it", cls="latex-i") and _find(d, "\\textbf{") and _find(d, "\\emph{")
+def test_headings_and_emphasis_hide_their_markup_and_take_their_style_wherever_the_cursor_is(run):
+    for d in (run["away"], run["inHeading"], run["inMath"]):          # B1: nothing drawn depends on the cursor
+        assert _find(d, "\\section{") and _find(d, "Intro", cls="latex-h latex-h2")
+        assert _find(d, "bold", cls="latex-b") and _find(d, "it", cls="latex-i") and _find(d, "\\textbf{") and _find(d, "\\emph{")
+        assert not [x for x in d if x["cls"] == "latex-cmd"]         # never a command shown as written
+    assert run["away"] == run["inHeading"] == run["inMath"]
 
 
 @needs_node
-def test_a_construct_the_selection_touches_shows_its_source_with_only_the_command_in_mono(run):
-    d = run["inHeading"]
-    assert not _find(d, "\\section{") and not _find(d, "Intro", cls="latex-h latex-h2")
-    assert _find(d, "\\section", cls="latex-cmd")
-    assert _find(d, "bold", cls="latex-b")                         # the rest stays as it was
-    m = run["inMath"]
-    assert not _find(m, "$x^2$") and _find(m, "\\[ \\frac{1}{2} \\]")
-
-
-@needs_node
-def test_formulas_are_typeset_by_katex_and_one_it_cannot_typeset_is_shown_as_written_in_mono(run):
+def test_formulas_are_typeset_by_katex_and_one_it_cannot_typeset_is_a_quiet_word_never_its_code(run):
     d = run["away"]
     inline = _find(d, "$x^2$")[0]["widget"]
     assert inline["cls"] == "latex-math" and 'class="katex"' in inline["html"]
+    assert "annotation" not in inline["html"] and "x^2" not in inline["html"]   # HTML only: no TeX in the page's text
     display = _find(d, "\\[ \\frac{1}{2} \\]")[0]["widget"]
     assert display["cls"] == "latex-math latex-math-display" and "katex-display" in display["html"]
     eq = _find(d, "\\begin{equation}\na = b \\label{eq:1}\n\\end{equation}")[0]["widget"]   # crosses lines; \label dropped
     assert eq["cls"] == "latex-math latex-math-display" and 'class="katex"' in eq["html"]
     bad = _find(d, "$\\frac{a}{$")[0]["widget"]
-    assert bad == {"cls": "latex-math-raw", "text": "$\\frac{a}{$", "html": ""}
+    assert bad["cls"] == "latex-math-tag" and bad["text"] == "公式" and bad["html"] == ""
 
 
 @needs_node
-def test_until_katex_is_in_formulas_stay_as_written_and_they_are_typeset_when_it_arrives(run):
-    assert not [d for d in run["noMath"] if d["widget"] and "latex-math" in d["widget"]["cls"]]
-    assert len([d for d in run["mathArrives"] if d["widget"] and "latex-math" in d["widget"]["cls"]]) == 4
+def test_until_katex_is_in_formulas_are_a_quiet_word_and_they_are_typeset_when_it_arrives(run):
+    assert not [d for d in run["noMath"] if d["widget"] and "latex-math " in d["widget"]["cls"] + " "]
+    assert len([d for d in run["noMath"] if d["widget"] and d["widget"]["cls"] == "latex-math-tag"]) == 4
+    assert len([d for d in run["mathArrives"] if d["widget"] and d["widget"]["cls"].startswith("latex-math ") or d["widget"] and d["widget"]["cls"] == "latex-math"]) == 3
 
 
 @needs_node
-def test_cite_and_ref_are_quiet_chips_with_their_keys_and_unknown_commands_show_as_written(run):
+def test_cite_and_ref_are_quiet_chips_and_unknown_commands_a_chip_of_their_words_never_written(run):
     d = run["away"]
-    assert _find(d, "\\citep[p.~3]{a, b}")[0]["widget"]["text"] == "a, b"
-    assert _find(d, "\\citep[p.~3]{a, b}")[0]["widget"]["cls"] == "latex-chip latex-chip-cite"
-    assert [x["widget"]["text"] for x in _find(d, "\\ref{sec:i}")] == ["sec:i"]
-    assert [x["widget"]["text"] for x in _find(d, "\\label{sec:i}")] == ["sec:i"]
-    assert _find(d, "\\newcommand", cls="latex-cmd") and _find(d, "\\unknown", cls="latex-cmd")
-    assert _find(d, "\\begin{tabular}", cls="latex-cmd") and _find(d, "\\end{tabular}", cls="latex-cmd")
-    # nothing of the comment, nor the arguments of an unknown command, is hidden or typeset
-    assert not [x for x in d if "$q$" in x["text"] or x["text"] in ("{\\R}", "\\mathbb{R}", "{x}")]
+    cite = _find(d, "\\citep[p.~3]{a, b}")[0]["widget"]
+    assert cite == {"cls": "latex-chip latex-chip-cite", "text": "a；b，p. 3", "html": ""}   # no .bib read: the keys; review: its note too
+    assert [x["widget"]["text"] for x in _find(d, "\\ref{sec:i}")] == ["1"]   # the number the PDF prints, known here (22.12 M: alone, as printed)
+    assert [x["widget"] for x in _find(d, "\\label{sec:i}")] == [None]              # hidden
+    assert _find(d, "\\newcommand{\\R}{\\mathbb{R}}")[0]["widget"]["text"] == "LaTeX 内容"
+    assert _find(d, "\\unknown{x}")[0]["widget"]["text"] == "x"                     # its plain words, never its name
+    # 22.12 T: a tabular the grid reader is sure of is its cells, typed in place; its markup hidden
+    assert [x["text"] for x in d if x["cls"] and x["cls"].startswith("latex-cell")] == ["a ", " b "]
+    assert _find(d, "&") and _find(d, "\\\\\n\\end{tabular}")
+    comment = [x for x in d if x["text"].startswith("% a comment")]
+    assert comment and comment[0]["widget"] is None                                   # a comment leaves no trace
 
 
 @needs_node
 def test_list_items_are_indented_with_a_bullet_or_their_number_and_the_item_command_hidden(run):
     d = run["away"]
-    items = [x["widget"] for x in d if x["text"].startswith("\\item")]
+    items = [x["widget"] for x in d if x["text"].lstrip().startswith("\\item")]
     assert [(w["cls"], w["text"]) for w in items] == [("latex-item latex-bullet", ""), ("latex-item", "1."), ("latex-item", "2.")]
-    assert [x["text"] for x in d if x["text"].startswith("\\item")] == ["\\item ", "\\item ", "\\item "]
+    assert [x["text"] for x in d if x["text"].lstrip().startswith("\\item")] == ["  \\item ", "  \\item ", "  \\item "]
     assert len([x for x in d if x["cls"] == "latex-li latex-li-1"]) == 3
+    assert _find(d, "\n\\begin{itemize}") and _find(d, "\n\\end{itemize}")       # each with the line break before it
 
 
 @needs_node
-def test_the_preamble_is_folded_under_its_label_and_opens_as_source_by_its_button_or_a_cursor_inside(run):
-    fold = [x for x in run["away"] if x["widget"] and "latex-preamble" in x["widget"]["cls"]]
-    assert len(fold) == 1 and fold[0]["block"] and fold[0]["from"] == 0
-    assert fold[0]["text"] == "\\documentclass{article}\n\\usepackage{amsmath}"
-    assert fold[0]["widget"] == {"cls": "latex-preamble", "text": "导言区（已折叠，点开）", "html": "", "expanded": "false"}
-    for opened in (run["opened"], run["cursorInPreamble"]):
-        bar = [x for x in opened if x["widget"] and "latex-preamble" in x["widget"]["cls"]]
-        assert len(bar) == 1 and bar[0]["from"] == bar[0]["to"] == 0 and bar[0]["widget"]["expanded"] == "true"
-        assert bar[0]["widget"]["text"] == "收起导言区"
-        assert not [x for x in opened if 0 < x["from"] < len("\\documentclass{article}\n\\usepackage{amsmath}")]
+def test_the_preamble_and_begin_document_are_one_quiet_line_that_never_opens(run):
+    pre = "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}"
+    for d in (run["away"], run["opened"], run["cursorInPreamble"]):    # 导言区 is 版式's; 显示代码 shows it (B1)
+        line = [x for x in d if x["from"] == 0 and x["widget"]]
+        assert len(line) == 1 and line[0]["block"] and line[0]["text"] == pre
+        assert line[0]["widget"]["cls"] == "latex-preamble-block"
+        assert not [x for x in d if 0 < x["from"] < len(pre)]
 
 
 @needs_node
-def test_a_selection_move_that_changes_nothing_shown_keeps_the_decorations(run):
-    assert run["sameDeco"] is True and run["newDeco"] is True
+def test_a_selection_move_keeps_the_decorations(run):
+    assert run["sameDeco"] is True and run["newDeco"] is False         # B1: nothing drawn depends on the selection
 
 
-# -- Return by context -------------------------------------------------------------------------------------------------
+# -- Return (B1: the edit view's; 显示代码's a plain newline) ---------------------------------------------------------
 
 RETURNS = {
     "running": "Some \n\n|text here.",
-    "runningEnd": "Some text.\n\n|\nMore of it.",
+    "runningEnd": "Some text.\n|\nMore of it.",                      # 22.12 M: inside a paragraph, split there (no empty one)
     "blankLine": "a\n\n\n|",
-    "heading": "\\section{Intro}\\label{s}\n\n|\n\nNext",
-    "headingLast": "x\n\\subsection*{Ab}\n\n|",
-    "textbf": "A \\textbf{bo\n|ld} b",
-    "caption": "\\caption{a\n|b}",
+    "heading": "\\section{Int}\\label{s}\n\n|ro\n\nNext",           # the words after the cursor leave the heading
+    "headingEnd": "\\section{Intro}\\label{s}\n\n|\n\nNext",
+    "headingStart": "x\n\n\n\\section{|Intro}",                      # an empty paragraph above it
+    "headingLast": "x\n\\subsection*{A}\n\n|b",
+    "textbf": "A \\textbf{bo}\n\n\\textbf{|ld} b",                     # the style closed before and opened after
+    "textbfEdge": "A \n\n|\\textbf{bold} b",
     "item": "\\begin{itemize}\n  \\item one\n  \\item |\n\\end{itemize}",
     "itemMiddle": "\\begin{enumerate}\n\\item on\n\\item |e\n\\end{enumerate}",
     "emptyItem": "\\begin{itemize}\n  \\item one\n\\end{itemize}\n\n|\n\nAfter",
     "emptyItemEnd": "\\begin{itemize}\n  \\item one\n\\end{itemize}\n\n|",
-    "beforeItem": "\\begin{itemize}\n|\n  \\item one\n\\end{itemize}",
-    "inlineMath": "a $x\n|y$ b",
-    "displayEnv": "\\begin{align}\na &= b\n|\n\\end{align}",
-    "verbatim": "\\begin{verbatim}\nx\n|\n\\end{verbatim}",
-    "tabular": "\\begin{tabular}{l}\na\n|\n\\end{tabular}",
-    "preamble": "\\documentclass{x}\n\\usepackage{y}\n|\n\\begin{document}\nz\n\\end{document}",
-    "inDocument": "\\documentclass{x}\n\\begin{document}\nz\n\n|\n\\end{document}",
-    "comment": "a % note\n|\nb",
+    "beforeItem": "\\begin{itemize}\n  \\item \n  \\item |one\n\\end{itemize}",   # typed at \begin's end: the first item
+    "afterMath": "a $xy$\n\n| b",
+    "preambleEdge": "\\documentclass{x}\n\\usepackage{y}\n\\begin{document}\n\n\n\n|z\n\\end{document}",   # 22.12 M: an empty paragraph above z, shown
+    "inDocument": "\\documentclass{x}\n\\begin{document}\nz\n\n|\n\n\\end{document}",   # 22.12 M: a blank line each side, shown
+    "afterComment": "a % note\n\n|b",                                # the comment and its line break are one, never cut
 }
 
 
@@ -407,10 +409,18 @@ def test_return_does_what_22_1_says_where_the_cursor_is_in_an_lf_and_a_crlf_file
 
 
 @needs_node
-def test_with_source_shown_or_shift_return_return_is_a_plain_newline(run):
+def test_return_in_a_caption_is_refused_with_a_sentence(run):
+    assert run["ret"]["figureCaption"] == {"refused": "图注里不能分段。"}
+
+
+@needs_node
+def test_shift_return_is_a_line_break_in_a_paragraph_and_in_show_code_a_plain_newline(run):
     assert run["retSource"]["text"] == "Some \n|text here."
-    assert run["shiftReturn"] == {"handled": True, "text": "\\section{Int\nro}"}
+    assert run["shiftReturn"] == {"handled": True, "text": "\\section{Int\nro}"}   # 显示代码: typed as it is
     assert run["retSelection"]["text"] == "Some \n\n|here."           # the selected "text " is replaced
+    sh = run["shift"]
+    assert sh["inText"]["text"] == "Some \\\\\n|text here."
+    assert sh["inHeading"] == {"refused": "标题里不能换行。"} and sh["atStart"] == {"refused": "段落开头不能换行。"}
 
 
 @needs_node
@@ -421,11 +431,11 @@ def test_return_leaves_an_input_methods_composition_and_a_read_only_file_alone(r
 
 @needs_node
 @pytest.mark.skipif(PDFLATEX is None, reason="pdfLaTeX is not installed")
-def test_a_draft_edited_by_return_in_a_heading_a_textbf_a_list_and_a_formula_still_typesets(run, tmp_path):
+def test_a_draft_edited_by_return_in_a_heading_a_textbf_and_a_list_still_typesets(run, tmp_path):
     text = run["exported"]
     assert text == ("\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\section{Intro}\n\n"
-                    "Body of the introduction.\n\nSome text here. \\textbf{bold\n words} end.\n\\begin{itemize}\n"
-                    "  \\item one\n  \\item two\n\\end{itemize}\n\nAfter the list.\n\n\\begin{equation}\na =\n b\n"
+                    "Body of the introduction.\n\nSome text here. \\textbf{bold}\n\n\\textbf{ words} end.\n\n\n\n\\begin{itemize}\n"
+                    "  \\item one\n  \\item two\n\\end{itemize}\n\nAfter the list.\n\n\\begin{equation}\na = b\n"
                     "\\end{equation}\n\\end{document}\n")
     (tmp_path / "home").mkdir()
     (tmp_path / "paper.tex").write_text(text, encoding="utf-8")
@@ -455,44 +465,21 @@ def test_typing_stays_under_16_ms_a_key_on_a_3000_line_file_with_hundreds_of_for
 _REVIEW = r"""
 window.katex = kctx.katex;
 const DOC = '\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\nHello \\textbf{world}.\n\\end{document}\n';
-const PRE = '\\documentclass{article}\n\\usepackage{amsmath}'.length;
 const state = (anchor, head) => CM.EditorState.create({doc: DOC, selection: {anchor, head: head == null ? anchor : head}, extensions: [P.wordExtensions(CM)]});
-const fold = (st) => { let got = null; st.field(F.field).deco.between(0, 0, (a, b, v) => { if (v.spec.widget && v.spec.block) got = {from: a, to: b, open: v.spec.widget.open}; }); return got; };
-out.fold = {
-  crossing: fold(state(DOC.indexOf('amsmath'), DOC.indexOf('Hello') + 2)),
-  crossingUp: fold(state(DOC.indexOf('Hello') + 2, DOC.indexOf('amsmath'))),
-  fromStart: fold(state(0, DOC.indexOf('world'))),
-  atStart: fold(state(0)),
-  inBody: fold(state(DOC.indexOf('Hello'))),
-  body: DOC.slice(P.bodyStart(state(0).doc, P.readLatex(DOC))),
-  noPreamble: P.bodyStart(CM.Text.of(['Just text']), P.readLatex('Just text')),
-};
-// moving the selection across the boundary opens and folds it again
-let st = state(DOC.indexOf('Hello'));
-st = st.update({selection: {anchor: DOC.indexOf('Hello'), head: DOC.indexOf('amsmath')}}).state;
-out.fold.extended = fold(st);
-st = st.update({selection: {anchor: DOC.indexOf('Hello')}}).state;
-out.fold.collapsed = fold(st);
-
-// the 导言区 button: what it is, and a click (Return and Space press a button the same way)
+out.fold = {body: DOC.slice(P.bodyStart(state(0).doc, P.readLatex(DOC))), noPreamble: P.bodyStart(CM.Text.of(['Just text']), P.readLatex('Just text'))};
+// the 导言区 line (B1): a click on it opens 版式 (the editor's hook), never the code
+let hooked = 0;
+F.hooks.preamble = () => { hooked += 1; };
 const made = [];
-global.mk = (tag, cls, text) => { const el = {tag, className: cls || '', textContent: String(text || ''), attrs: {}, on: {}, setAttribute(k, v) { this.attrs[k] = v; },
-  addEventListener(k, f) { this.on[k] = f; }}; made.push(el); return el; };
-const viewOf = (s) => ({state: s, focused: false, dispatch(spec) { this.state = this.state.update(spec).state; }, focus() { this.focused = true; }});
-const press = (v) => { let w = null; v.state.field(F.field).deco.between(0, 0, (a, b, d) => { if (d.spec.widget && d.spec.block) w = d.spec.widget; });
-  const el = w.toDOM(v); let prevented = false; el.on.mousedown({preventDefault() { prevented = true; }}); el.on.click(); return {tag: el.tag, type: el.attrs.type, prevented}; };
-const v1 = viewOf(state(DOC.indexOf('amsmath')));             // opened by the cursor inside: a click folds and moves it out
-const b1 = press(v1);
-out.button = {el: b1, folded: fold(v1.state), cursor: DOC.slice(v1.state.selection.main.head), focused: v1.focused};
-const v2 = viewOf(state(DOC.indexOf('world')));               // folded, cursor in the body: a click opens, the cursor stays
-press(v2);
-out.button.opened = fold(v2.state);
-out.button.stays = v2.state.selection.main.head === DOC.indexOf('world');
-press(v2);                                                    // and a second click folds it, the cursor still where it was
-out.button.again = fold(v2.state);
-out.button.stillStays = v2.state.selection.main.head === DOC.indexOf('world');
+global.mk = (tag, cls, text) => { const el = {tag, className: cls || '', textContent: String(text || ''), attrs: {}, on: {}, children: [], setAttribute(k, v) { this.attrs[k] = v; },
+  addEventListener(k, f) { this.on[k] = f; }, append(...k) { this.children.push(...k); }, appendChild(k) { this.children.push(k); }}; made.push(el); return el; };
+let w = null; state(DOC.indexOf('world')).field(F.field).deco.between(0, 0, (a, b, d) => { if (d.spec.widget && d.spec.block) w = d.spec.widget; });
+const el = w.toDOM({state: state(0), dispatch() {}, focus() {}}); let prevented = false;
+el.on.mousedown({button: 0, preventDefault() { prevented = true; }});
+out.button = {cls: el.className, line: el.children.map((c) => [c.tag, c.className, c.textContent]), prevented, hooked};
+F.hooks.preamble = null;
 
-// what KaTeX refuses with trust off is drawn as written, never in its error colour
+// what KaTeX refuses with trust off is a quiet word (B1: never the code), never in its error colour
 global.mk = (tag, cls, text) => ({tag, className: cls || '', textContent: text == null ? '' : String(text), innerHTML: '', attrs: {}, setAttribute() {}, addEventListener() {}});
 out.katex = {};
 for (const src of ['x \\href{https://a.b}{x}', '\\url{https://a.b}', '\\includegraphics{a.png}', '\\htmlClass{a}{b}', '\\textcolor{red}{x}', 'x^2']) {
@@ -500,13 +487,15 @@ for (const src of ['x \\href{https://a.b}{x}', '\\url{https://a.b}', '\\includeg
   out.katex[src] = {cls: box.className, text: box.textContent, red: /#cc0000|#0e0e0f/i.test(box.innerHTML)};
 }
 
-// Return in environments of running text, and in those shown as written
+// Return in environments of running text makes a paragraph; one the edit view does not open is one unit, Return after it
 const ret = (marked) => { const pos = marked.indexOf('|'), text = marked.replace('|', '');
   const s0 = CM.EditorState.create({doc: text, selection: {anchor: pos}, extensions: [P.wordExtensions(CM)]});
-  const s1 = s0.update(P.returnSpec(s0, s0.field(F.field).read)).state, at = s1.selection.main.head, t = s1.doc.toString();
+  const r = P.enterSpec(CM, s0, s0.field(F.field), false);
+  if (r.refused) return r.refused;
+  const s1 = s0.update(r).state, at = s1.selection.main.head, t = s1.doc.toString();
   return t.slice(0, at) + '|' + t.slice(at); };
 out.envs = {};
-for (const env of ['doublespace', 'onehalfspace', 'spacing', 'proof', 'theorem', 'lemma*', 'minipage', 'appendices', 'frame', 'hyp', 'tabular', 'tikzpicture', 'eqnarray', 'figure'])
+for (const env of ['doublespace', 'onehalfspace', 'spacing', 'proof', 'theorem', 'lemma*', 'appendices', 'frame', 'hyp', 'tabular', 'tikzpicture', 'eqnarray', 'figure'])
   out.envs[env] = ret('\\newtheorem{hyp}{Hypothesis}\n\\begin{' + env + '}\nSo it holds.|\n\\end{' + env + '}');
 
 // the decorations drawn again only where a change or the selection asks equal those drawn whole, edit after edit
@@ -546,40 +535,35 @@ def review() -> dict:
 
 
 @needs_node
-def test_a_selection_that_covers_any_of_the_preamble_opens_it_so_nothing_hidden_is_typed_over(review):
-    f, pre = review["fold"], len("\\documentclass{article}\n\\usepackage{amsmath}")
-    opened = {"from": 0, "to": 0, "open": True}
-    for case in ("crossing", "crossingUp", "fromStart", "atStart", "extended"):
-        assert f[case] == opened, case
-    assert f["inBody"] == f["collapsed"] == {"from": 0, "to": pre, "open": False}
-    assert f["body"] == "Hello \\textbf{world}.\n\\end{document}\n"       # where the editor puts its first cursor
+def test_the_first_cursor_is_where_the_body_starts(review):
+    f = review["fold"]
+    assert f["body"] == "Hello \\textbf{world}.\n\\end{document}\n"
     assert f["noPreamble"] == 0
 
 
 @needs_node
-def test_the_preamble_header_is_a_button_whose_click_always_folds_or_opens_it(review):
+def test_the_preamble_line_is_words_and_a_click_on_it_opens_layout_never_the_code(review):
     b = review["button"]
-    assert b["el"] == {"tag": "button", "type": "button", "prevented": True}
-    assert b["folded"]["open"] is False and b["cursor"].startswith("Hello") and b["focused"] is True
-    assert b["opened"]["open"] is True and b["stays"] is True
-    assert b["again"]["open"] is False and b["stillStays"] is True
+    assert b["cls"] == "latex-preamble-block"
+    assert b["line"] == [["button", "latex-preamble", "导言区：文档类 article，1 个宏包"], ["div", "latex-doc-mark", "正文开始"]]
+    assert b["prevented"] is True and b["hooked"] == 1
 
 
 @needs_node
-def test_what_katex_refuses_with_trust_off_is_shown_as_written_and_never_in_red(review):
+def test_what_katex_refuses_with_trust_off_is_a_quiet_word_and_never_in_red(review):
     k = review["katex"]
     for src in ("x \\href{https://a.b}{x}", "\\url{https://a.b}", "\\includegraphics{a.png}", "\\htmlClass{a}{b}"):
-        assert k[src] == {"cls": "latex-math-raw", "text": "$" + src + "$", "red": False}, src
+        assert k[src] == {"cls": "latex-math-tag", "text": "公式", "red": False}, src
     assert k["x^2"]["cls"] == "latex-math" and k["\\textcolor{red}{x}"]["cls"] == "latex-math"   # the writer's own colour stays
 
 
 @needs_node
-def test_return_makes_a_paragraph_in_environments_of_running_text_and_a_newline_in_those_shown_as_written(review):
+def test_return_makes_a_paragraph_in_environments_of_running_text_and_after_one_the_edit_view_does_not_open(review):
     e = review["envs"]
-    for env in ("doublespace", "onehalfspace", "spacing", "proof", "theorem", "lemma*", "minipage", "appendices", "frame", "hyp"):
-        assert e[env].endswith("So it holds.\n\n|\n\\end{" + env + "}"), env    # hyp: declared by \newtheorem in the file
-    for env in ("tabular", "tikzpicture", "eqnarray", "figure"):
-        assert e[env].endswith("So it holds.\n|\n\\end{" + env + "}"), env
+    for env in ("doublespace", "onehalfspace", "spacing", "proof", "theorem", "lemma*", "appendices", "frame", "hyp"):
+        assert e[env].endswith("So it holds.\n\n|\n\n\\end{" + env + "}"), env    # hyp: declared by \newtheorem in the file; 22.12 M: shown
+    for env in ("tabular", "tikzpicture", "eqnarray", "figure"):                      # one unit: the cursor is never inside
+        assert e[env].endswith("So it holds.\n\\end{" + env + "}\n\n|"), env
 
 
 @needs_node
@@ -588,7 +572,7 @@ def test_decorations_drawn_again_only_where_needed_equal_those_drawn_whole_after
     assert review["incremental"]["steps"] == 3000
 
 
-# -- in the editor: 显示源码, passages, words ----------------------------------------------------------------------------
+# -- in the editor: 显示代码, passages, words ----------------------------------------------------------------------------
 
 _EDITOR = r"""
 FakeView.prototype.dispatch = function (spec) {
@@ -612,7 +596,7 @@ await open('a.tex');
 let V = viewsMade[viewsMade.length - 1];
 V.dispatch({selection: {anchor: TEXT.length}});
 out.word = shown(V);
-const source = button('显示源码');
+const source = button('显示代码');
 out.sourceClass = source.className;
 source.fire('click');
 out.source = shown(V);
@@ -624,14 +608,14 @@ out.otherFile = shown(V).includes('Intro=latex-h latex-h2');
 await open('a.tex');
 V = viewsMade[viewsMade.length - 1]; V.dispatch({selection: {anchor: TEXT.length}});
 out.reopened = shown(V).includes('Intro=latex-h latex-h2');
-button('显示源码').fire('click');
+button('显示代码').fire('click');
 out.back = shown(V).includes('Intro=latex-h latex-h2') && shown(V).includes('显著=latex-passage');
 console.log(JSON.stringify(out));
 """
 
 
 @needs_node
-def test_show_source_turns_like_word_off_for_the_file_and_passages_stay_underlined_either_way():
+def test_show_code_turns_the_edit_view_off_for_the_file_and_passages_stay_underlined_either_way():
     prelude = _DRIVER.split("const out = {};")[0] % {"cm": json.dumps(str(WEBAPP / "vendor" / "codemirror.js")),
                                                      "latex": json.dumps(str(WEBAPP / "latex.js"))}
     script = prelude + "(async () => {\n" + _EDITOR + "\n})().catch((err) => { console.log(JSON.stringify({error: String(err && err.stack || err)})); });"
@@ -640,20 +624,23 @@ def test_show_source_turns_like_word_off_for_the_file_and_passages_stay_underlin
     assert "error" not in out, out.get("error")
     assert "Intro=latex-h latex-h2" in out["word"] and "c=latex-b" in out["word"] and "显著=latex-passage" in out["word"]
     assert "\\section{=hidden" in out["word"]
-    assert out["sourceClass"] == "ws-text-link latex-source"       # a text link (22.7)
+    assert out["sourceClass"] == "latex-switch"                    # the switch at the top of the right column (B1, 22.7)
     assert out["source"] == ["=widget", "显著=latex-passage"]          # only the passage and its count remain
     assert out["docSame"] is True                                  # a view change, never an edit
     assert out["otherFile"] is True and out["reopened"] is False and out["back"] is True
 
 
-def test_the_words_of_like_word_go_through_t_with_their_english_and_the_toolbar_has_no_glyph():
+def test_the_words_of_the_edit_view_go_through_t_with_their_english_and_the_switch_has_no_glyph():
     js = (WEBAPP / "latex.js").read_text(encoding="utf-8")
     i18n = (WEBAPP / "i18n.js").read_text(encoding="utf-8")
-    assert 'mkButton(t("显示源码"), "ws-text-link latex-source"' in js
-    assert 'mk("button", "latex-preamble", this.open ? t("收起导言区") : t("导言区（已折叠，点开）"))' in js  # words, no chevron
-    assert '"导言区（已折叠，点开）": "Preamble (folded, click to open)",' in i18n
-    assert '"收起导言区": "Fold the preamble",' in i18n and '"显示源码": "Show source",' in i18n
+    assert 'ui.code = mkButton(t("显示代码"), "latex-switch", () => toggleSource(me));' in js
+    assert 'ui.code.setAttribute("aria-pressed", "false");' in js
+    assert 'if (!meta || !meta.cls) return t("导言区");' in js
+    assert 't("导言区：文档类 {cls}，{n} 个宏包", { cls: meta.cls, n: meta.packages || 0 })' in js
+    assert '"显示代码": "Show code",' in i18n and '"导言区": "Preamble",' in i18n
+    for gone in ("显示源码", "收起导言区", "（已折叠，点开）"):                 # the earlier rule's words are gone (B1)
+        assert gone not in js and gone not in i18n
     css = (WEBAPP / "workspace.css").read_text(encoding="utf-8")
-    block = css[css.index("/* 22.1 like Word (B3b)"):css.index(".latex-include {")]
+    block = css[css.index("/* 22.1 like Word (B3b"):css.index(".latex-include {")]
     assert "#" not in block.replace("/*", "").split("*/", 1)[1]       # palette tokens only
     assert 'content: ""' in block and "content: \"\\" not in block

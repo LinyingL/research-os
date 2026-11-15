@@ -176,7 +176,136 @@ def read_tex(root: str | Path, rel: Any, lang: str = "zh", links: bool = True) -
     raw = _read(root, rel)
     opened = _opened(root, rel, raw)
     payload = _payload(rel, raw, opened, lang)
-    return {**payload, **include_links(root, rel, opened["text"])} if links else payload
+    if not links:
+        return payload
+    found = include_links(root, rel, opened["text"])
+    if not opened["read_only"]:
+        found["format"] = format_facts(root, rel, found["mains"])
+    return {**payload, **found}
+
+
+#: The most of a main file's preamble 格式与插入 is given (22.12): what comes before `\begin{document}`.
+PREAMBLE_LIMIT = 64 * 1024
+
+
+def format_facts(root: Path, rel: str, mains: list[str]) -> dict[str, Any]:
+    """What 格式与插入 (22.12) needs of the main file the export would compile `rel` in: its path, the engine the
+    export would use, the folder TeX runs in (the main file's; with none, the draft's own) and, when that main file is
+    another file, its preamble (the text before `\\begin{document}`, at most `PREAMBLE_LIMIT`), from which the page
+    reads the class, the packages and `\\graphicspath`. The open file's own preamble the page reads from what it
+    holds. Reads files, runs nothing."""
+    from researchos import latex_export   # it imports this module
+
+    main, engine = latex_export.planned(root, rel, mains)
+    facts: dict[str, Any] = {"main": main, "engine": engine, "folder": posixpath.dirname(main or rel), "preamble": None,
+                             "local": []}
+    if main:
+        _known, text_of = tex_reader(root, [main])
+        text = text_of(main)
+        # the first \\begin{document} outside a comment (positions kept), as TeX reads it
+        at = "\n".join(line if (cut := uncommented(line)) == line else cut + " " * (len(line) - len(cut))
+                        for line in text.split("\n")).find("\\begin{document}")
+        whole = text if at < 0 else text[:at]
+        preamble = whole[:PREAMBLE_LIMIT]
+        if len(whole) > PREAMBLE_LIMIT:
+            facts["cut"] = True   # 版式 cannot read all of it: the page says so rather than show defaults
+        if main != rel:
+            facts["preamble"] = preamble
+            # 22.12 M (F6): a chapter file's headings, figures and notes are numbered on from what the main file reads before it
+            facts["before"] = text_before(main, rel, text_of)
+        facts["local"] = local_styles(root, main, preamble)
+    return facts
+
+
+#: The most text `text_before` gives (22.12 M): beyond it the page shows no numbers in a chapter file.
+BEFORE_LIMIT = 1024 * 1024
+
+
+def _masked(text: str) -> str:
+    """`text` with every comment turned into spaces, line by line, so each position stays where it was."""
+    return "\n".join(line if (cut := uncommented(line)) == line else cut + " " * (len(line) - len(cut)) for line in text.split("\n"))
+
+
+def text_before(main: str, rel: str, text_of: Any) -> str | None:
+    """What TeX reads of the main file's body before the chapter file `rel` (22.12 M, F6), so the page numbers its
+    headings, figures and footnotes on from there: the body from `\\begin{document}` to the `\\input` or `\\include` that
+    brings `rel` in, each file an earlier one brings in put in its place. None when that is not cheap or not sure -- `rel`
+    not brought in by the main file itself, or more than once; an earlier file that brings in others or is not a
+    readable project `.tex`; more than `BEFORE_LIMIT` -- and the page then shows no number rather than a wrong one."""
+    text = text_of(main)
+    code = _masked(text)
+    at = code.find("\\begin{document}")
+    if at < 0:
+        return None
+    pos = at + len("\\begin{document}")
+    pieces: list[str] = []
+    found = None
+    for m in _INCLUDE_RE.finditer(code, pos):
+        if m.group(1):
+            command, args = m.group(1), (m.group(2),)
+        elif m.group(3):
+            command, args = "input", (m.group(4),)
+        else:
+            return None   # \import and \subimport: not read here
+        target = resolve_include(command, args, posixpath.dirname(main), posixpath.dirname(main))
+        if target == rel:
+            if found is not None:
+                return None   # brought in twice: which place it is numbered from is not sure
+            pieces.append(text[pos:m.start()])
+            found = "".join(pieces)
+            continue
+        if found is not None:
+            continue
+        sub = text_of(target) if target else ""
+        if not sub or includes(sub):
+            return None
+        pieces.extend([text[pos:m.start()], "\n", sub, "\n"])
+        pos = m.end()
+        if sum(len(p) for p in pieces) > BEFORE_LIMIT:
+            return None
+    if found is None or len(found) > BEFORE_LIMIT:
+        return None
+    # a conditional (\iffalse … \fi) or a catcode trick: what TeX counts in it is not sure (22.12 R), as the page's own
+    # reader is not sure of a body that holds one
+    if any(_UNSURE_RE.fullmatch(name) for name in re.findall(r"\\([A-Za-z@]+)", _masked(found))):
+        return None
+    return found
+
+
+#: The commands that make the page's reader unsure of a body (latex.js `UNSURE_CMDS`).
+_UNSURE_RE = re.compile(r"if(?!thenelse$|def$|undef$|strequal$|boolexpr$|toggle$)[A-Za-z@]*|fi|else|or|makeatletter|makeatother|catcode|csname"
+                        r"|endcsname|expandafter|begingroup|endgroup|loop|repeat")
+
+
+_CLASS_RE = re.compile(r"\\documentclass\s*(?:\[[^\]]*\])?\s*\{([^{}]*)\}")
+_PACKAGE_RE = re.compile(r"\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^{}]*)\}")
+#: The most project `.sty`/`.cls` files 版式 reads (22.12, A2).
+LOCAL_STYLE_LIMIT = 20
+
+
+def local_styles(root: Path, main: str, preamble: str) -> list[dict[str, Any]]:
+    """The project's own `.cls` and `.sty` files the main file's preamble loads (`\\documentclass`, `\\usepackage`,
+    `\\RequirePackage`), found in the main file's folder as TeX finds them (it runs there, 22.4): each `{name, path,
+    text}`, the text at most `PREAMBLE_LIMIT`, read as a draft is read (a regular file, no link, not only in the cloud).
+    版式 (22.12) shows a setting one of them makes as the file's own, never as a value it can change. Reads only."""
+    code = uncommented(preamble)
+    wanted: list[str] = []
+    for m in _CLASS_RE.finditer(code):
+        wanted.append(m.group(1).strip() + ".cls")
+    for m in _PACKAGE_RE.finditer(code):
+        wanted.extend(name.strip() + ".sty" for name in m.group(1).split(","))
+    folder = posixpath.dirname(main)
+    found: list[dict[str, Any]] = []
+    for name in dict.fromkeys(wanted):
+        stem = name[:-4]
+        if not stem or stem.startswith((".", "-")) or any(c in stem for c in "/\\%#{}$~^&") or len(found) >= LOCAL_STYLE_LIMIT:
+            continue
+        path = posixpath.join(folder, name) if folder else name
+        _known, text_of = tex_reader(root, [path])
+        text = text_of(path)
+        if text:
+            found.append({"name": name, "path": path, "text": text[:PREAMBLE_LIMIT]})
+    return found
 
 
 # -- includes and the main file (22.1 "One file at a time", 22.4 "Which file") --------------------------------------
@@ -547,10 +676,11 @@ def undo_save(root: str | Path, body: Any, lang: str = "zh") -> dict[str, Any]:
 
 # -- 新建文稿, a new draft (22.11) -------------------------------------------------------------------------------------
 
-_PAPER = ("\\documentclass[12pt]{%s}\n%s\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\usepackage{booktabs}\n\n"
+_PAPER = ("\\documentclass[a4paper,12pt]{%s}\n%s\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\usepackage{booktabs}\n\n"
           "\\title{<TITLE>}\n\\author{}\n\\date{\\today}\n\n\\begin{document}\n\\maketitle\n\n"
           "\\begin{abstract}\n%s\n\\end{abstract}\n\n\\section{%s}\n%s\n\n\\end{document}\n")
-#: What each kind starts as (22.11): minimal and compilable, no bibliography; `<TITLE>` is the title, escaped.
+#: What each kind starts as (22.11): minimal and compilable, no bibliography; `<TITLE>` is the title, escaped. A paper is
+#: A4 (22.12, A3: article and ctexart would otherwise be US Letter); 版式 never changes a paper's size.
 TEMPLATES = {
     "zh_paper": _PAPER % ("ctexart", "", "在这里写摘要。", "引言", "在这里开始写正文。"),
     "en_paper": _PAPER % ("article", "\\usepackage[T1]{fontenc}\n", "Write the abstract here.", "Introduction",
@@ -1007,6 +1137,315 @@ def _own_paper(root: Path, draft: str) -> set[str]:
         own.add(posixpath.splitext(main)[0] + ".pdf")
     own.update(e["pdf"] for e in papers.exports(root) if e["main"] in mains and isinstance(e["pdf"], str))
     return {files_ingest.fold(rel) for rel in own}
+
+
+def _exported_pdfs(root: Path, walked: list[str]) -> set[str]:
+    """The PDFs any paper of the project was exported to (folded), never offered as an image (22.12 M, F8 -- browser
+    acceptance 2026-11-14: 图片 listed paper/english.pdf and paper/main.pdf): each export recorded in papers.toml, and
+    a `.pdf` beside a `.tex` of the same name that is a document (`\\documentclass`), as TeX writes `<main>.pdf`, or in a
+    build folder beside it (`build/`, `out/`: latexmk's -outdir, 22.12 R) -- not a `standalone` one, whose PDF is a
+    figure made to be included."""
+    found = {e["pdf"] for e in papers.exports(root) if isinstance(e.get("pdf"), str)}
+    present = {files_ingest.fold(p) for p in walked if p.lower().endswith(".pdf")}
+    made = {tex: [pdf for pdf in _outputs_of(tex) if files_ingest.fold(pdf) in present] for tex in walked if tex.lower().endswith(".tex")}
+    made = {tex: pdfs for tex, pdfs in made.items() if pdfs}
+    _known, text_of = tex_reader(root, list(made))
+    for tex, pdfs in made.items():
+        m = _CLASS_RE.search(uncommented(text_of(tex)))
+        if m and m.group(1).strip() != "standalone":
+            found.update(pdfs)
+    return {files_ingest.fold(p) for p in found}
+
+
+#: The folders beside a document that TeX tools write its PDF into (latexmk's -outdir, VS Code's LaTeX Workshop).
+_OUTPUT_DIRS = ("build", "out", "output", "_build")
+
+
+def _outputs_of(tex: str) -> list[str]:
+    """Where a compile of the document `tex` puts its PDF (22.12 R): beside it, or in a build folder beside it."""
+    folder, name = posixpath.split(tex[:-4])
+    return [posixpath.join(folder, name + ".pdf")] + [posixpath.join(folder, d, name + ".pdf") for d in _OUTPUT_DIRS]
+
+
+#: A PDF or EPS figure's first page as a small PNG (22.12 M, F9): what is drawn, its longest side in pixels, the largest
+#: file read, the longest a converter may run and the largest picture kept.
+THUMB_SUFFIXES = (".pdf", ".eps")
+THUMB_PIXELS = 480
+THUMB_SOURCE_LIMIT = 50 * 1024 * 1024
+THUMB_SECONDS = 10
+THUMB_LIMIT = 2 * 1024 * 1024
+#: The most the thumbnail cache of one project keeps (22.12 R): past it the oldest pictures go when one is written.
+THUMB_CACHE_LIMIT = 64 * 1024 * 1024
+THUMB_CACHE_FILES = 4000
+_TOOL_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", "/Library/TeX/texbin", "/usr/bin")
+
+
+def _tool(name: str) -> str | None:
+    """A converter by name, found where macOS and its package managers put it (the app's own PATH is short)."""
+    import shutil
+
+    found = shutil.which(name)
+    if found:
+        return found
+    for folder in _TOOL_DIRS:
+        candidate = os.path.join(folder, name)
+        if os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def _thumb_commands(source: Path, out: Path) -> list[list[str]]:
+    """The ways to draw `source`'s first page into the PNG `out`, best first: poppler's pdftoppm for a PDF, Ghostscript
+    (safe mode, the figure's own bounding box) for an EPS, and macOS's `sips`, which draws a PDF, for either."""
+    tools = []
+    if source.suffix.lower() == ".pdf" and (pdftoppm := _tool("pdftoppm")):
+        tools.append([pdftoppm, "-png", "-f", "1", "-l", "1", "-singlefile", "-scale-to", str(THUMB_PIXELS), str(source), str(out)[:-4]])
+    if source.suffix.lower() == ".eps" and (gs := _tool("gs")):
+        tools.append([gs, "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-dEPSCrop", "-sDEVICE=png16m", "-r96", "-dFirstPage=1", "-dLastPage=1",
+                      f"-sOutputFile={out}", str(source)])
+    if sips := _tool("sips"):
+        tools.append([sips, "-s", "format", "png", "-Z", str(THUMB_PIXELS), str(source), "--out", str(out)])
+    return tools
+
+
+def _drawable(root: Path, rel: str) -> bool:
+    """Whether `figure_thumbnail` may draw `rel`: a PDF or EPS of at most `THUMB_SOURCE_LIMIT`."""
+    if not rel.lower().endswith(THUMB_SUFFIXES):
+        return False
+    try:
+        return os.stat(root / rel).st_size <= THUMB_SOURCE_LIMIT
+    except OSError:
+        return False
+
+
+def figure_thumbnail(root: str | Path, rel: Any, project_id: str) -> bytes:
+    """A small PNG of the first page of the project's PDF or EPS figure `rel` (22.12 M, F9 -- browser acceptance
+    2026-11-14: a PDF figure showed only its file name, while most papers' figures are PDFs). Made on demand into the
+    engine's own cache, `<home>/latex-thumbs/<project id>/<24 hex of the file's path, size and time>.png` (mode 0700),
+    never into the project, and kept while the file is unchanged. The path is guarded as the editor's are: project-
+    relative, no hidden component, no symbolic link, not only in the cloud (409 `cloud`, nothing is downloaded), a
+    regular file of at most 50 MB; the converter runs at most 10 s with no shell, in a folder of the cache, and its
+    picture is taken only when it is a PNG of at most 2 MB. Refused with 404 `no_thumbnail` when none can be made: the
+    page then shows the file's name alone. The converters together run at most 10 s, and none after one ran out of
+    time; a file none could draw is remembered (an empty `<key>.fail`), so it is not tried again until it changes
+    (22.12 R: a dense plot cost 20 s on every request). The cache is pruned when a picture is written, the oldest
+    first, past `THUMB_CACHE_LIMIT` or `THUMB_CACHE_FILES`."""
+    import subprocess
+    import tempfile
+    import time
+
+    root = workspace._root(root)  # noqa: SLF001
+    refused = _refuse("path", f"{rel!r} is not a figure the editor can draw", "只能显示项目里的 PDF 或 EPS 图片", 400)
+    if not isinstance(rel, str) or not rel.lower().endswith(THUMB_SUFFIXES):
+        raise refused
+    try:
+        if papers.clean_draft(rel) != rel:
+            raise refused
+    except ValueError as exc:
+        raise refused from exc
+    if any(part.startswith(".") or not part for part in rel.split("/")):
+        raise refused
+    full = workspace._confined(root, rel)  # noqa: SLF001 -- symbolic links and the cloud
+    try:
+        info = os.lstat(full)
+    except OSError as exc:
+        raise _refuse("not_found", f"{rel} does not exist", "这个文件已不存在，请刷新后重试", 404) from exc
+    if not stat.S_ISREG(info.st_mode):
+        raise refused
+    none = _refuse("no_thumbnail", f"No picture of {rel} can be made here", "这张图片在这里画不出预览", 404)
+    if info.st_size > THUMB_SOURCE_LIMIT:
+        raise none
+    folder = paths.researchos_home() / "latex-thumbs" / re.sub(r"[^A-Za-z0-9_-]", "_", project_id or "project")
+    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(folder, 0o700)
+    key = hashlib.sha256(f"{full.resolve()}\0{info.st_size}\0{info.st_mtime_ns}".encode()).hexdigest()[:24]
+    kept, failed = folder / f"{key}.png", folder / f"{key}.fail"
+    if kept.is_file():
+        return kept.read_bytes()
+    if failed.exists():
+        raise none
+    deadline = time.monotonic() + THUMB_SECONDS
+    with tempfile.TemporaryDirectory(dir=folder) as work:
+        out = Path(work) / "thumb.png"
+        for command in _thumb_commands(full, out):
+            left = deadline - time.monotonic()
+            if left < 0.5:
+                break
+            try:
+                subprocess.run(command, cwd=work, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               timeout=left, check=False)
+            except subprocess.TimeoutExpired:
+                break   # a figure one converter cannot draw in time, the next would not either
+            except (OSError, subprocess.SubprocessError):
+                continue
+            try:
+                made = out.read_bytes() if out.is_file() and out.stat().st_size <= THUMB_LIMIT else b""
+            except OSError:
+                made = b""
+            if made.startswith(b"\x89PNG\r\n\x1a\n"):
+                os.replace(out, kept)
+                _prune_thumbs(folder, kept)
+                return made
+            out.unlink(missing_ok=True)
+    try:
+        failed.touch()
+        _prune_thumbs(folder, failed)
+    except OSError:
+        pass
+    raise none
+
+
+def _prune_thumbs(folder: Path, keep: Path) -> None:
+    """The oldest pictures (and failure marks) of `folder` taken away until it holds at most `THUMB_CACHE_LIMIT` bytes
+    and `THUMB_CACHE_FILES` files; `keep`, just written, stays."""
+    try:
+        entries = []
+        for entry in os.scandir(folder):
+            if entry.is_file(follow_symlinks=False) and entry.name.endswith((".png", ".fail")) and entry.path != str(keep):
+                info = entry.stat(follow_symlinks=False)
+                entries.append((info.st_mtime_ns, info.st_size, entry.path))
+        size = sum(e[1] for e in entries) + (keep.stat().st_size if keep.exists() else 0)
+        count = len(entries) + 1
+        for _mtime, length, path in sorted(entries):
+            if size <= THUMB_CACHE_LIMIT and count <= THUMB_CACHE_FILES:
+                break
+            os.unlink(path)
+            size -= length
+            count -= 1
+    except OSError:
+        pass
+
+
+#: What 格式与插入's 图片 offers (22.12): the files `\includegraphics` takes in the engines of 22.4.
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".pdf", ".eps")
+#: The most images or bibliography entries one answer lists, and the most `.bib` files read for it.
+INSERT_LIMIT = 2000
+BIB_FILE_LIMIT = 50
+
+
+def _bib_text(value: Any, limit: int) -> str:
+    text = re.sub(r"\s+", " ", re.sub(r"[{}]", "", value or "")).strip()
+    return text[:limit]
+
+
+def insertables(root: str | Path, rel: Any, what: Any) -> dict[str, Any]:
+    """What 格式与插入's pickers offer for the draft `rel` (22.12), read without writing: `what` = `images`, the
+    project's image files as the scan walks it (no hidden folder, no symlink), never a PDF exported from the draft's
+    paper (`_own_paper`) or any paper's exported PDF (`_exported_pdfs`), each with `thumb` when the asset route can
+    show it (21.5) or it is a PDF or EPS the engine draws (`figure_thumbnail`); `bib`, the entries of the
+    project's `.bib` files (key, author, year, title, the file), each file read as `tex_reader` reads a draft (a
+    regular file, not only in the cloud, at most 2 MB), the first entry of a key kept; `labels` (A2's 交叉引用), the
+    `\\label{}` keys of the other files of the paper -- the main file the export would compile `rel` in and the files it
+    brings in, as 正文 groups them (`_closure`) -- each with its kind (`labels_in`); the open file's own the page reads
+    from what it holds. At most `INSERT_LIMIT` (`more`)."""
+    from researchos import kind_rows
+    from researchos.ingest import latex as latex_ingest
+
+    root = workspace._root(root)  # noqa: SLF001
+    rel = checked_path(root, rel)
+    if what == "images":
+        try:
+            own = _own_paper(root, rel)
+        except (WorkspaceError, OSError, ValueError):
+            own = {files_ingest.fold(rel)}
+        walk = list(itertools.islice(files_ingest.iter_files(root), _FILE_WALK_LIMIT + 1))
+        own |= _exported_pdfs(root, [path for path, _c in walk[:_FILE_WALK_LIMIT]])
+        images, walked, cut = [], 0, False
+        for path, _category in walk:
+            walked += 1
+            if walked > _FILE_WALK_LIMIT or len(images) > INSERT_LIMIT:
+                cut = True   # the list is not the whole project: `more` says so, and the page says to search
+                break
+            if path.lower().endswith(IMAGE_SUFFIXES) and files_ingest.fold(path) not in own:
+                # a file only in the cloud has no thumbnail: the asset route refuses it (409) and nothing is downloaded;
+                # a PDF or EPS figure's is its first page, drawn by the engine (22.12 M, F9)
+                thumb = (kind_rows.thumbnail(root, path) or _drawable(root, path)) and not paths.is_dataless(root / path)
+                images.append({"path": path, "thumb": bool(thumb)})
+        return {"images": images[:INSERT_LIMIT], "more": cut or len(images) > INSERT_LIMIT}
+    if what == "bib":
+        walk = list(itertools.islice(files_ingest.iter_files(root), _FILE_WALK_LIMIT + 1))
+        bibs = [path for path, _c in walk[:_FILE_WALK_LIMIT] if path.lower().endswith(".bib")]
+        cut = len(walk) > _FILE_WALK_LIMIT or len(bibs) > BIB_FILE_LIMIT
+        bibs = bibs[:BIB_FILE_LIMIT]
+        _known, text_of = tex_reader(root, bibs)
+        entries: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for bib in bibs:
+            for entry in latex_ingest.parse_bib_entries(text_of(bib)):
+                key = entry.key.strip()
+                if not key or key.casefold() in seen or re.search(r"[\s,{}%\\#]", key):
+                    continue
+                seen.add(key.casefold())
+                entries.append({"key": key, "author": _bib_text(entry.fields.get("author"), 120),
+                                "year": _bib_text(entry.fields.get("year"), 12),
+                                "title": _bib_text(entry.fields.get("title"), 160), "file": bib})
+        return {"files": bibs, "entries": entries[:INSERT_LIMIT], "more": cut or len(entries) > INSERT_LIMIT}
+    if what == "labels":
+        from researchos import latex_export   # it imports this module
+
+        main, _engine = latex_export.planned(root, rel, main_files(root, rel))
+        known, text_of = tex_reader(root)
+        files = [main] + _closure(main, set(known), text_of) if main else []
+        labels: list[dict[str, Any]] = []
+        for path in files:
+            if path != rel:
+                labels.extend({**found, "file": path} for found in labels_in(text_of(path)))
+        return {"main": main, "labels": labels[:INSERT_LIMIT], "more": len(labels) > INSERT_LIMIT}
+    raise _refuse("invalid", f"{what!r} is not a list 格式与插入 offers", "内容格式不对，请检查后重试")
+
+
+_LABEL_RE = re.compile(r"\\label\s*\{([^{}]+)\}|\\(begin|end)\s*\{([^{}]+)\}")
+_LABEL_PREFIXES = (("figure", re.compile(r"(?:fig|figure)[:_-]", re.I)), ("table", re.compile(r"(?:tab|table|tbl)[:_-]", re.I)),
+                   ("equation", re.compile(r"(?:eq|eqn|equation)[:_-]", re.I)),
+                   ("section", re.compile(r"(?:sec|ssec|subsec|chap|ch|chapter|section|part|app)[:_-]", re.I)))
+_LABEL_ENVS = {"figure": "figure", "figure*": "figure", "wrapfigure": "figure", "subfigure": "figure",
+               "table": "table", "table*": "table", "longtable": "table", "sidewaystable": "table"}
+_EQUATION_ENV_RE = re.compile(r"(?:equation|align|alignat|flalign|gather|multline|eqnarray)\*?\Z")
+_HEADING_START_RE = re.compile(r"\\(?:part|chapter|section|subsection|subsubsection|paragraph)\*?\s*(?:\[[^\]]*\])?\s*\{")
+
+
+def _after_heading(code: str, at: int) -> bool:
+    """Whether only spaces lie between the end of a heading's argument and `at`."""
+    for m in _HEADING_START_RE.finditer(code, max(0, at - 2000), at):
+        depth, j = 1, m.end()
+        while j < at and depth:
+            if code[j] == "\\":
+                j += 2
+                continue
+            depth += {"{": 1, "}": -1}.get(code[j], 0)
+            j += 1
+        if not depth and not code[j:at].strip():
+            return True
+    return False
+
+
+def labels_in(text: str) -> list[dict[str, str]]:
+    """The `\\label{}` keys of `text` outside comments, each with its kind for 交叉引用 (22.12, A2): by its prefix
+    (`fig:`, `tab:`, `eq:`, `sec:` and their like), else by the environment it sits in (a figure, a table, a formula),
+    else `section` right after a heading, else `other`. The page reads the open file the same way (`labelsOf`)."""
+    code = uncommented(text)
+    stack: list[str] = []
+    found: list[dict[str, str]] = []
+    for m in _LABEL_RE.finditer(code):
+        if m.group(2):
+            env = m.group(3).strip()
+            if m.group(2) == "begin":
+                stack.append(env)
+            elif env in stack:
+                del stack[len(stack) - 1 - stack[::-1].index(env):]
+            continue
+        key = m.group(1).strip()
+        kind = next((k for k, rx in _LABEL_PREFIXES if rx.match(key)), None)
+        if kind is None:
+            for env in reversed(stack):
+                if env in _LABEL_ENVS or _EQUATION_ENV_RE.match(env):
+                    kind = _LABEL_ENVS.get(env, "equation")
+                    break
+        if kind is None:
+            kind = "section" if _after_heading(code, m.start()) else "other"
+        if key:
+            found.append({"key": key, "kind": kind})
+    return found
 
 
 def supporting_files(root: str | Path, query: Any, limit: int = 50, draft: Any = None) -> dict[str, Any]:

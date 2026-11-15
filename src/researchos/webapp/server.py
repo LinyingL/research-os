@@ -471,7 +471,11 @@ Endpoints (all GET unless noted):
                             text, revision (sha256 of the bytes), line ending,
                             `read_only` with the reason, and the files its
                             includes (input, include, subfile, import) open
-                            (`links`, resolved from its main files, `mains`);
+                            (`links`, resolved from its main files, `mains`)
+                            and, for a writable file, what 格式与插入 needs of
+                            its main file (`format`, DESIGN.md 22.12: its
+                            preamble and the project's own .sty/.cls it
+                            loads, for 版式);
                             `&links=0` leaves those out (the revision check
                             on focus). Reads only.
     GET  /api/latex/drafts -- 正文 (DESIGN.md 22.10): the project's .tex drafts,
@@ -506,6 +510,19 @@ Endpoints (all GET unless noted):
                             the other drafts of its paper or the PDF exported
                             from it. Reads directory listings, the paper's
                             .tex files and papers.toml.
+    GET  /api/latex/insert -- `?path=<.tex>&what=images|bib|labels`: what
+                            格式与插入's pickers offer (DESIGN.md 22.12): the
+                            project's image files (never a PDF exported from
+                            the draft's paper), the entries of its .bib files,
+                            or the \\label keys of the paper's other .tex files
+                            (交叉引用). Reads directory listings and those files
+                            only.
+    GET  /api/latex/thumb -- `?path=<.pdf or .eps>`: a figure's first page
+                            as a small PNG (DESIGN.md 22.12 M), made on demand
+                            by pdftoppm, Ghostscript or sips (no shell, 10 s)
+                            into `<home>/latex-thumbs/<project id>/`, never into
+                            the project; 404 `no_thumbnail` when none can be
+                            made. Reads the figure only.
     POST /api/latex/evidence/<link|reanchor|withdraw|undo> -- `{project, …}`:
                             one entry in `.researchos/evidence.toml`, the PI or
                             a single researcher only (a member's links wait
@@ -4294,6 +4311,30 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                     file = (query.get("file") or [""])[0]
                     payload = self._workspace_api(lambda: latex_edit.passages_supported(served.root, file, self._lang()))
                 self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/latex/insert":
+                # 22.12: what 格式与插入's pickers offer -- the project's images or its .bib entries. Reads only.
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                rel, what = (query.get("path") or [""])[0], (query.get("what") or [""])[0]
+                payload = self._workspace_api(lambda: latex_edit.insertables(served.root, rel, what))
+                self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/latex/thumb":
+                # 22.12 M (F9): a PDF or EPS figure's first page as a small PNG, made into the engine's own cache
+                # (never into the project). Reads the figure; runs a converter with no shell for at most 10 s.
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                rel = (query.get("path") or [""])[0]
+                raw = self._workspace_api(lambda: latex_edit.figure_thumbnail(served.root, rel, served.project_id))
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(raw)))
+                self.send_header("X-Content-Type-Options", "nosniff")
+                # kept a minute by the page (22.12 R): a figure is drawn again on every redraw and page open
+                self.send_header("Cache-Control", "private, max-age=60")
+                self.end_headers()
+                self.wfile.write(raw)
             elif path == "/api/workspace/exists":
                 # Which of the paths a document names are files it may link to: the page's list of files stops at
                 # `workspace.FILE_LIMIT`, and a link to an existing file beyond it is still a link (DESIGN.md 18.3).

@@ -30,8 +30,9 @@
 // a click does, through POST /api/latex/evidence/<link|reanchor|withdraw>. Also
 // 以它为依据的段落 on a file's page and the counts on 论文正文's rows (node.js).
 //
-// Like Word (22.1, B3b): the range reader `readLatex`, a state field of decorations (markup hidden where the selection does
-// not touch it, formulas by KaTeX, cite and ref chips, list items, the folded 导言区), 「显示源码」, and Return by context.
+// The edit view (22.1; B1 of 22.12, the researcher, 2026-11-14): the range reader `readLatex`, a state field of decorations
+// that show no LaTeX at all (markup hidden, formulas by KaTeX, chips, list items, the 导言区 one quiet line), the input
+// filter that keeps typing literal, Return like Word, and 「显示代码」 in the right column for the code.
 //
 // Export to PDF (22.4, B2b): 「导出 PDF」, a quiet button beside 保存 and on a .tex draft's own page (`exporter`), with the
 // settings line GET /api/latex/export answers, POST /api/latex/export and /api/latex/export/stop, and the result.
@@ -155,8 +156,10 @@
         specs.push({ from: fromA, to: toA, insert: fixed });
       });
       if (!odd) return tr;
-      const changes = tr.startState.changes(specs);
-      return { changes: changes, selection: tr.startState.selection.map(changes, 1), scrollIntoView: true };
+      // what the transaction was (a paste, typing) is kept, so the edit view's filter, which runs after this one, still
+      // sees it as the researcher's own edit and keeps it literal and balanced (22.1, B1)
+      const changes = tr.startState.changes(specs), ev = tr.annotation(CM.Transaction.userEvent);
+      return { changes: changes, selection: tr.startState.selection.map(changes, 1), scrollIntoView: true, effects: tr.effects, userEvent: ev || undefined };
     });
   }
 
@@ -192,7 +195,12 @@
   // a construct's markup only where the selection does not touch it; `returnSpec` is Return by context.
 
   const HEADINGS = new Map([["chapter", 1], ["section", 2], ["subsection", 3], ["subsubsection", 4], ["paragraph", 5]]);
-  const STYLES = new Map([["textbf", "latex-b"], ["textit", "latex-i"], ["emph", "latex-i"], ["underline", "latex-u"]]);
+  const STYLES = new Map([["textbf", "latex-b"], ["textit", "latex-i"], ["emph", "latex-i"], ["underline", "latex-u"],
+    ["textsf", "latex-sf"], ["texttt", "latex-tt"], ["textrm", "latex-rm"]]);
+  // 22.12 B: the font and size groups of 格式与插入 ({\heiti …}, {\large …}), drawn in their face or size, the switch hidden.
+  const GROUP_CLASSES = new Map([["songti", "latex-f-song"], ["fangsong", "latex-f-song"], ["heiti", "latex-f-hei"], ["kaishu", "latex-f-kai"],
+    ["small", "latex-s-small"], ["large", "latex-s-large"], ["Large", "latex-s-larger"]]);
+  const PREAMBLE_META = new Set(["documentclass", "usepackage", "title", "author", "date"]);
   const CITE_RE = /^(?:cite(?:p|t|alp)?|Citep|Citet|parencite|textcite|autocite)$/;   // ingest/latex.py's _CITE_RE
   const REFS = new Set(["ref", "eqref", "label"]);
   const LIST_ENVS = new Set(["itemize", "enumerate", "description"]);
@@ -204,7 +212,8 @@
     "conjecture", "claim", "hypothesis", "fact", "condition", "note"]);
   const MATH_ENVS = /^(?:equation|align|gather|multline)\*?$/;
   const VERBATIM_ENVS = /^(?:verbatim|Verbatim|BVerbatim|lstlisting|minted|comment|filecontents)\*?$/;
-  const SPECIAL = /[\\%$]/g;
+  // B1 (22.1): braces, ties and one-character commands are read too, for the edit view that shows no code
+  const SPECIAL = /[\\%$~{}]/g;
 
   // A blank line starts at the "\n" at `i`: only spaces, tabs or CR up to the next "\n".
   function blankAfter(text, i) {
@@ -234,6 +243,22 @@
     return -1;
   }
 
+  // A group read as raw text (a web address, \lstinline{…}): from the "{" at `i` to its matching "}", braces counted,
+  // no comment or escape; the index after it, or -1 when a blank line or the end comes first.
+  function rawGroup(text, i) {
+    let depth = 0;
+    for (let j = i; j < text.length; j++) {
+      const c = text[j];
+      if (c === "{") depth += 1;
+      else if (c === "}" && --depth === 0) return j + 1;
+      else if (c === "\n" && blankAfter(text, j)) return -1;
+    }
+    return -1;
+  }
+  const VERB_LIKE = new Set(["lstinline", "Verb", "path", "mintinline", "spverb"]);
+  const URL_LIKE = new Set(["url", "nolinkurl", "href"]);
+  const RAW_CMDS = new Map([...Array.from(VERB_LIKE, (n) => [n, 1]), ...Array.from(URL_LIKE, (n) => [n, 2])]);
+
   // The end of math whose content starts at `from`, closed by `close`: the index after the close, or -1 when a blank
   // line (which TeX refuses in math) or the end comes first.
   function mathEnd(text, from, close) {
@@ -247,24 +272,32 @@
     return -1;
   }
 
-  // {cmds, maths, envs, raws, preamble, end}: positions are indices into `text`. A command is {name, role (heading,
+  // {cmds, maths, envs, raws, preamble, end, ...}: positions are indices into `text`. A command is {name, role (heading,
   // style, cite, ref, item or other), from, nameTo, to, args: [{from, to, opt}]}; an item has its list and number. An
   // environment {name, role (list, text or raw), from, beginTo, endFrom, to}; math {from, to, display, src}; raw text
   // (comments, \verb, verbatim-like environments) {from, to, kind}. Nothing inside math or raw text is read.
+  // For the edit view (22.1, B1): `braces`, every pair of braces read as text {from, to} (a command's argument among
+  // them: `argStarts` holds where those open); `symbols`, each one-character command {from, to, ch} (\%, \\, \' …);
+  // `tildes`; `defs`, the commands that define others (\newcommand …), so a key need not look for them among all; and
+  // `bad`, what TeX would stop at or the reader cannot follow {at, why: brace, env or math}.
   function readLatex(text) {
-    const out = { cmds: [], maths: [], envs: [], raws: [], preamble: null, end: -1 }, theorems = new Set();
-    const stack = [], n = text.length;
+    const out = { cmds: [], maths: [], envs: [], raws: [], groups: [], preamble: null, end: -1, meta: {}, braces: [], symbols: [], tildes: [], bad: [], defs: [] }, theorems = new Set();
+    const stack = [], n = text.length, argStarts = new Set(), meta = { packages: 0 }, open = [];
+    out.argStarts = argStarts;
     let i = 0;
     while (i < n) {
+      // test, not exec: no match object a character (the reader runs on every key; every special is one character)
       SPECIAL.lastIndex = i;
-      const m = SPECIAL.exec(text);
-      if (!m) break;
-      i = m.index;
+      if (!SPECIAL.test(text)) break;
+      i = SPECIAL.lastIndex - 1;
       const c = text[i];
       if (c === "%") { let e = text.indexOf("\n", i); if (e < 0) e = n; out.raws.push({ from: i, to: e, kind: "comment" }); i = e; continue; }
+      if (c === "~") { out.tildes.push(i); i += 1; continue; }
+      if (c === "{") { open.push(i); i += 1; continue; }
+      if (c === "}") { if (open.length) out.braces.push({ from: open.pop(), to: i + 1 }); else out.bad.push({ at: i, why: "brace" }); i += 1; continue; }
       if (c === "$") {
-        const display = text[i + 1] === "$", open = display ? 2 : 1, e = mathEnd(text, i + open, display ? "$$" : "$");
-        if (e > 0) { out.maths.push({ from: i, to: e, display: display, src: text.slice(i + open, e - open) }); i = e; } else i += open;
+        const display = text[i + 1] === "$", wide = display ? 2 : 1, e = mathEnd(text, i + wide, display ? "$$" : "$");
+        if (e > 0) { out.maths.push({ from: i, to: e, display: display, src: text.slice(i + wide, e - wide) }); i = e; } else { out.bad.push({ at: i, why: "math" }); i += wide; }
         continue;
       }
       const s = i + 1;
@@ -275,7 +308,8 @@
         if (d === "(" || d === "[") {
           const end = mathEnd(text, s + 1, d === "(" ? "\\)" : "\\]");
           if (end > 0) { out.maths.push({ from: i, to: end, display: d === "[", src: text.slice(s + 1, end - 2) }); i = end; continue; }
-        }
+          out.bad.push({ at: i, why: "math" });
+        } else if (d !== undefined) out.symbols.push({ from: i, to: s + 1, ch: d });
         i = s + 1;
         continue;
       }
@@ -283,16 +317,30 @@
       if (name === "verb") {   // \verb|...|: to the same delimiter on the same line
         const d = text[e + star], close = d && d !== "\n" && d !== "\r" ? text.indexOf(d, e + star + 1) : -1, eol = text.indexOf("\n", e + star + 1);
         if (close > 0 && (eol < 0 || close < eol)) { out.raws.push({ from: i, to: close + 1, kind: "verb" }); i = close + 1; continue; }
+        out.bad.push({ at: i, why: "env" });
+        i = e;
+        continue;
+      }
+      const rawKind = RAW_CMDS.get(name);   // one lookup a command (the reader runs on every key)
+      if (rawKind === 1) {   // \lstinline, \Verb, \path, \mintinline{lang}: raw text, as \verb's, between any two
+        let at = e + star;          // delimiters or in braces
+        if (text[at] === "[") { const g = skipGroup(text, at, true); if (g > 0) at = g; }
+        if (name === "mintinline" && text[at] === "{") { const g = skipGroup(text, at, true); if (g > 0) at = g; }
+        const d = text[at], eol = text.indexOf("\n", at), close = d === "{" ? rawGroup(text, at) : d && !/[\s\\%a-zA-Z]/.test(d) ? text.indexOf(d, at + 1) + 1 : 0;
+        if (close > 0 && (eol < 0 || close <= eol)) { out.raws.push({ from: i, to: close, kind: "verb", inner: [at + 1, close - 1] }); i = close; continue; }
+        out.bad.push({ at: i, why: "env" });
         i = e;
         continue;
       }
       if (name === "begin" || name === "end") {
         const at = skipSpaces(text, e), g = text[at] === "{" ? skipGroup(text, at, true) : -1;
-        if (g < 0) { i = e; continue; }
+        if (g < 0) { out.bad.push({ at: i, why: "env" }); i = e; continue; }
         const env = text.slice(at + 1, g - 1).trim();
         if (name === "end") {
           let k = stack.length - 1;
           while (k >= 0 && stack[k].name !== env) k -= 1;
+          // an \end that closes nothing, closes an outer environment over an open inner one, or crosses a brace
+          if (k !== stack.length - 1 || k < 0 || stack[k].depth !== open.length) out.bad.push({ at: i, why: "env" });
           if (k >= 0) { stack[k].endFrom = i; stack[k].to = g; stack.length = k; }
           if (env === "document" && out.end < 0) out.end = g;
           i = g;
@@ -302,28 +350,50 @@
         if (MATH_ENVS.test(env)) {
           const end = mathEnd(text, g, "\\end{" + env + "}");
           if (end > 0) { out.maths.push({ from: i, to: end, display: true, src: text.slice(i, end) }); i = end; continue; }
+          out.bad.push({ at: i, why: "math" });
         }
         if (VERBATIM_ENVS.test(env)) {
           const close = "\\end{" + env + "}", end = text.indexOf(close, g), to = end < 0 ? n : end + close.length;
+          if (end < 0) out.bad.push({ at: i, why: "env" });
           out.raws.push({ from: i, to: to, kind: "verbatim" });
           i = to;
           continue;
         }
         const base = env.replace(/\*$/, ""), prose = TEXT_ENVS.has(base) || theorems.has(base);
-        const frame = { name: env, role: LIST_ENVS.has(env) ? "list" : prose ? "text" : "raw", from: i, beginTo: g, endFrom: n, to: n, items: 0 };
+        const frame = { name: env, role: LIST_ENVS.has(env) ? "list" : prose ? "text" : "raw", from: i, beginTo: g, endFrom: n, to: n, items: 0, depth: open.length, itemCmds: [] };
         stack.push(frame);
         out.envs.push(frame);
         i = g;
         continue;
       }
       const role = HEADINGS.has(name) ? "heading" : STYLES.has(name) ? "style" : CITE_RE.test(name) ? "cite" : REFS.has(name) ? "ref" : name === "item" ? "item" : "other";
-      const cmd = { name: name, role: role, from: i, nameTo: e + star, to: e + star, args: [] };
+      const cmd = { name: name, role: role, from: i, nameTo: e + star, to: e + star, args: [], raw: 0 };
+      if (GROUP_CLASSES.has(name) && !star) {   // {\heiti …}: a group of its own, not a command's argument (as declAt reads it)
+        let o = i - 1;
+        while (o >= 0 && (text[o] === " " || text[o] === "\t")) o -= 1;
+        let run = 0;
+        while (o - run - 1 >= 0 && text[o - run - 1] === "\\") run += 1;
+        const close = o >= 0 && text[o] === "{" && run % 2 === 0 && !argStarts.has(o) ? skipGroup(text, o, false) : -1;
+        if (close > 0) {
+          const g = { name: name, from: o, nameTo: e + (text[e] === " " || text[e] === "\t" ? 1 : 0), to: close };
+          out.groups.push(g);
+          cmd.group = g;
+        }
+      }
       let at = cmd.nameTo;
+      if (rawKind === 2 && text[at] === "{") {   // a web address is read as hyperref reads it: % and # are its own
+        const g = rawGroup(text, at);
+        if (g > 0) { cmd.args.push({ from: at, to: g, opt: false }); argStarts.add(at); cmd.raw = g; at = g; }
+      }
       if (role === "other") {   // a command it does not know: the groups right after it are its arguments
+        // (a wrapper's are counted: "\uline{a}{\heiti b}" is a wrapper and a group of its own, as TeX reads it)
+        const most = WRAPPERS.has(name) ? WRAPPERS.get(name)[1] : 9;
         while (cmd.args.length < 9 && (text[at] === "{" || text[at] === "[")) {
+          if (text[at] === "{" && cmd.args.filter((x) => !x.opt).length >= most) break;
           const g = skipGroup(text, at, false);
           if (g < 0) break;
           cmd.args.push({ from: at, to: g, opt: text[at] === "[" });
+          argStarts.add(at);
           at = g;
         }
       } else {
@@ -335,10 +405,10 @@
           at = skipSpaces(text, g);
         }
         const g = role !== "item" && text[at] === "{" ? skipGroup(text, at, true) : -1;
-        if (g > 0) cmd.args.push({ from: at, to: g, opt: false });
+        if (g > 0) { cmd.args.push({ from: at, to: g, opt: false }); argStarts.add(at); }
         else if (role !== "item") cmd.role = "other";   // no argument: shown as written
         if (role === "item") {
-          for (let k = stack.length - 1; k >= 0; k--) if (stack[k].role === "list") { cmd.list = stack[k]; cmd.n = ++stack[k].items; break; }
+          for (let k = stack.length - 1; k >= 0; k--) if (stack[k].role === "list") { cmd.list = stack[k]; cmd.n = ++stack[k].items; stack[k].itemCmds.push(cmd); break; }
           cmd.depth = stack.filter((f) => f.role === "list").length;
         }
       }
@@ -347,10 +417,63 @@
         const a = cmd.args.find((x) => !x.opt);
         if (a) theorems.add(text.slice(a.from + 1, a.to - 1).trim());
       }
+      if (PREAMBLE_META.has(name) && !out.preamble && !stack.length) {   // what the 导言区 line and \maketitle show
+        const a = cmd.args.filter((x) => !x.opt).pop(), arg = a ? text.slice(a.from + 1, a.to - 1) : null;
+        if (name === "usepackage") meta.packages += arg ? arg.split(",").filter((x) => x.trim()).length : 0;
+        else if (arg != null) meta[name === "documentclass" ? "cls" : name] = name === "documentclass" ? arg.trim() : arg;
+      }
       out.cmds.push(cmd);
-      i = cmd.role === "cite" || cmd.role === "ref" ? cmd.to : cmd.nameTo;   // the arguments' text is read as text
+      if (DEFINITIONS.has(name)) out.defs.push(cmd);
+      i = cmd.role === "cite" || cmd.role === "ref" ? cmd.to : cmd.raw || cmd.nameTo;   // the arguments' text is read as text
     }
+    if (out.preamble) out.meta = meta;
+    open.forEach((at) => out.bad.push({ at: at, why: "brace" }));
+    stack.forEach((f) => out.bad.push({ at: f.from, why: "env" }));
+    if (out.braces.length > 1) out.braces.sort((a, b) => a.from - b.from);
     return out;
+  }
+
+  // The items of one of the reader's lists (each in order of `from`; tildes are positions) that may meet [lo, hi], as
+  // [start, end): those before start end before lo, those from end on start after hi. Found by two binary searches over
+  // the list's running maximum of `to`, kept once a list, so what a key looks up costs the same in a long file as in a
+  // short one. A list whose ends rise with its starts (comments, formulas, symbols, ties: none holds another) needs no
+  // running maximum. A list not in order (none is) is looked through whole.
+  const meetsCache = new WeakMap();
+  const startOf = (x) => (typeof x === "number" ? x : x.from), endOf = (x) => (typeof x === "number" ? x + 1 : x.to);
+  function meetRange(list, lo, hi) {
+    const n = list.length;
+    let pm = meetsCache.get(list);
+    if (pm === undefined) {
+      pm = true;
+      if (n && typeof list[0] === "number") { for (let k = 1; k < n; k++) if (list[k] < list[k - 1]) { pm = null; break; } }
+      else {
+        let last = -Infinity, m = -1;
+        for (let k = 0; k < n; k++) {
+          const x = list[k], from = x.from, to = x.to;
+          if (from < last) { pm = null; break; }
+          last = from;
+          if (to < m) pm = false; else m = to;
+        }
+      }
+      if (pm === false) {
+        pm = new Int32Array(n);
+        let m = -1;
+        for (let k = 0; k < n; k++) { const to = list[k].to; if (to > m) m = to; pm[k] = m; }
+      }
+      meetsCache.set(list, pm);
+    }
+    if (pm === null) return [0, n];
+    let a = 0, b = n;
+    if (pm === true) while (a < b) { const mid = (a + b) >> 1; if (endOf(list[mid]) < lo) a = mid + 1; else b = mid; }
+    else while (a < b) { const mid = (a + b) >> 1; if (pm[mid] < lo) a = mid + 1; else b = mid; }
+    let c = a, d = n;
+    while (c < d) { const mid = (c + d) >> 1; if (startOf(list[mid]) <= hi) c = mid + 1; else d = mid; }
+    return [a, c];
+  }
+  // Each item of `list` that may meet [lo, hi], in the list's order (a superset: the caller checks its own condition).
+  function eachMeeting(list, lo, hi, fn) {
+    const [a, b] = meetRange(list, lo, hi);
+    for (let k = a; k < b; k++) fn(list[k]);
   }
 
   // What KaTeX is given: \label (which it does not know) dropped, multline set as gather.
@@ -360,17 +483,643 @@
   // \url, \includegraphics ...) KaTeX draws in its error colour instead of throwing: that colour, set to one no formula
   // asks for, counts as a failure too.
   const KATEX_ERROR = "#0e0e0f";
+  // HTML only (B1): KaTeX's MathML would carry the formula's TeX into the page's text; the box is named 公式 for a
+  // screen reader instead.
   function mathDOM(src, display, whole) {
     const box = mk("span", display ? "latex-math latex-math-display" : "latex-math");
+    if (typeof box.setAttribute === "function") { box.setAttribute("role", "img"); box.setAttribute("aria-label", t("公式")); }
     try {
-      const html = window.katex.renderToString(forKatex(src), { displayMode: display, throwOnError: true, trust: false, strict: "ignore", errorColor: KATEX_ERROR });
+      const html = window.katex.renderToString(forKatex(src), { displayMode: display, throwOnError: true, trust: false, strict: "ignore", errorColor: KATEX_ERROR, output: "html" });
       if (html.includes(KATEX_ERROR)) throw new Error("refused");
       box.innerHTML = html;
     } catch (err) {
-      box.className = "latex-math-raw";
-      box.textContent = whole;
+      // never the code (22.1, B1): a quiet word where KaTeX cannot typeset it -- the PDF is the judge
+      box.className = "latex-math-tag";
+      box.textContent = t("公式");
     }
     return box;
+  }
+
+  // -- the page's look (22.12 B) -------------------------------------------------------------------------------------
+  //
+  // The page's blocks, drawn by the edit view (below): \maketitle as the title block read from the preamble, a table (a
+  // tabular, or a table float holding one) as a read-only grid with its caption, a figure as its files and caption.
+  // A table the grid reader doubts (unbalanced braces, a nested environment, more cells than columns, a partial rule)
+  // is a quiet chip with its caption's words instead -- never its code.
+
+  const TABLE_FLOATS = new Set(["table", "table*"]), FIGURE_FLOATS = new Set(["figure", "figure*"]);
+  const TABULARS = new Map([["tabular", 0], ["tabular*", 1], ["tabularx", 1]]);   // arguments before the column spec
+  const FLOAT_EXTRAS = /\\(?:centering|small|footnotesize|scriptsize|normalsize)(?![A-Za-z])/g;
+  const RASTER = /\.(?:png|jpe?g|gif|webp)$/i;
+  const TABLE_RULE = /^\s*\\(toprule|midrule|bottomrule|hline|addlinespace)(?![A-Za-z])\s*(?:\[[^\]]*\])?/;
+  const TABLE_LIMIT = { columns: 20, rows: 200 };
+
+  function linesOf(doc, from, to) { return [doc.lineAt(from).from, doc.lineAt(to).to]; }
+  // Whether [from, to] stands alone on its lines: nothing but spaces before it on its first line or after it on its last.
+  function aloneOn(doc, from, to) {
+    const a = doc.lineAt(from), b = doc.lineAt(to);
+    return !/\S/.test(doc.sliceString(a.from, from)) && !/\S/.test(doc.sliceString(to, b.to));
+  }
+  // Environments whose whole range is drawn as one (a table, a figure, a tabular, an abstract's indented lines).
+  function wholeEnv(e) { return e.endFrom < e.to && (TABLE_FLOATS.has(e.name) || FIGURE_FLOATS.has(e.name) || TABULARS.has(e.name) || e.name === "abstract"); }
+
+  // The columns of a tabular's spec, as alignments ("l", "c", "r"): null when it holds what is not read here.
+  function columnsOf(spec) {
+    const cols = [];
+    let i = 0;
+    const group = () => {
+      while (spec[i] === " " || spec[i] === "\n" || spec[i] === "\t") i += 1;
+      if (spec[i] !== "{") return null;
+      const g = skipGroup(spec, i, false);
+      if (g < 0) return null;
+      const s = spec.slice(i + 1, g - 1);
+      i = g;
+      return s;
+    };
+    while (i < spec.length) {
+      const c = spec[i++];
+      if (c === " " || c === "\n" || c === "\t" || c === "|") continue;
+      if (c === "l" || c === "c" || c === "r") cols.push(c);
+      else if (c === "X") cols.push("l");
+      else if (c === "p" || c === "m" || c === "b") { if (group() == null) return null; cols.push("l"); }
+      else if (c === "@" || c === "!" || c === ">" || c === "<") { if (group() == null) return null; }
+      else if (c === "*") {
+        const k = group(), sub = k == null ? null : group(), inner = sub == null ? null : columnsOf(sub);
+        if (!inner || !/^\s*\d{1,2}\s*$/.test(k)) return null;
+        for (let r = Number(k); r > 0 && cols.length <= TABLE_LIMIT.columns; r--) cols.push(...inner);
+      } else return null;
+      if (cols.length > TABLE_LIMIT.columns) return null;
+    }
+    return cols.length ? cols : null;
+  }
+
+  // A tabular's grid from what follows \begin{tabular} up to its \end: {cols, rows: [{cells, above, below}]}, a rule
+  // "heavy" (\toprule, \bottomrule) or "light" (\midrule, \hline). Null on any doubt.
+  function tabularGrid(src, before) {
+    const text = src.split("\n").map(codePart).join("\n");
+    let i = 0;
+    const ws = () => { while (i < text.length && /\s/.test(text[i])) i += 1; };
+    for (let k = 0; k < before; k++) {
+      ws();
+      const g = text[i] === "{" ? skipGroup(text, i, false) : -1;
+      if (g < 0) return null;
+      i = g;
+    }
+    ws();
+    if (text[i] === "[") { const g = skipGroup(text, i, false); if (g < 0) return null; i = g; ws(); }
+    const g = text[i] === "{" ? skipGroup(text, i, false) : -1;
+    const cols = g > 0 ? columnsOf(text.slice(i + 1, g - 1)) : null;
+    if (!cols) return null;
+    const body = text.slice(g);
+    if (/\\(?:begin|end|cline|cmidrule)(?![A-Za-z])/.test(body)) return null;   // a nested environment, a partial rule
+    const chunks = [];
+    let cells = [], cell = "", depth = 0;
+    for (let j = 0; j < body.length; j++) {
+      const c = body[j];
+      if (c === "\\") {
+        if (body[j + 1] === "\\" && depth === 0) {   // \\ ends a row; \\* and \\[2pt] too
+          cells.push(cell); chunks.push(cells); cells = []; cell = "";
+          let k = j + 2;
+          if (body[k] === "*") k += 1;
+          let s = k;
+          while (body[s] === " " || body[s] === "\t") s += 1;
+          if (body[s] === "[") { const close = body.indexOf("]", s); if (close < 0) return null; k = close + 1; }
+          j = k - 1;
+          continue;
+        }
+        cell += c + (body[j + 1] || "");
+        j += 1;
+        continue;
+      }
+      if (c === "{") depth += 1;
+      else if (c === "}" && --depth < 0) return null;
+      if (c === "&" && depth === 0) { cells.push(cell); cell = ""; continue; }
+      cell += c;
+    }
+    if (depth !== 0) return null;
+    cells.push(cell); chunks.push(cells);
+    const rows = [], weigh = (was, rule) => (rule === "addlinespace" ? was : was === "heavy" || rule === "toprule" || rule === "bottomrule" ? "heavy" : "light");
+    let above = null;
+    for (let r = 0; r < chunks.length; r++) {
+      const cs = chunks[r];
+      let m;
+      while ((m = TABLE_RULE.exec(cs[0]))) { above = weigh(above, m[1]); cs[0] = cs[0].slice(m[0].length); }
+      if (r === chunks.length - 1 && cs.length === 1 && !/\S/.test(cs[0])) {   // after the last \\: rules only
+        if (above && rows.length) rows[rows.length - 1].below = above;
+        break;
+      }
+      if (cs.length > cols.length || rows.length >= TABLE_LIMIT.rows) return null;
+      rows.push({ cells: cs.map((x) => x.trim()), above: above, below: null });
+      above = null;
+    }
+    return rows.length ? { cols: cols, rows: rows } : null;
+  }
+
+  // What a float holds besides `skip` (its tabular or its graphics): only \centering, size switches, comments, one
+  // \caption and \label. {caption} (the caption's source, or null), or null when it holds anything else.
+  function floatRest(doc, read, e, skip) {
+    let caption = null, captions = 0;
+    const cut = skip.map((r) => [r.from, r.to]), inside = [];
+    eachMeeting(read.cmds, e.beginTo, e.endFrom, (c) => inside.push(c));   // only the float's own (a key looks near itself)
+    for (const c of inside) {
+      if (c.from <= e.beginTo || c.from >= e.endFrom || cut.some((r) => c.from >= r[0] && c.from < r[1])) continue;
+      if (c.name === "caption") {
+        const a = c.args.filter((x) => !x.opt).pop();
+        if (!a || ++captions > 1) return null;
+        caption = doc.sliceString(a.from + 1, a.to - 1);
+        cut.push([c.from, c.to]);
+      } else if (c.name === "label") cut.push([c.from, c.to]);
+    }
+    cut.sort((a, b) => a[0] - b[0]);
+    let rest = "", at = e.beginTo;
+    for (const [a, b] of cut) { if (a > at) rest += doc.sliceString(at, a); at = Math.max(at, b); }
+    rest += doc.sliceString(at, e.endFrom);
+    rest = rest.split("\n").map(codePart).join("\n").replace(/^\s*\[[^\]\n]*\]/, "").replace(FLOAT_EXTRAS, "");
+    return /\S/.test(rest) ? null : { caption: caption };
+  }
+  function tableModel(doc, read, e) {
+    const inner = read.envs.filter((x) => x !== e && x.from > e.from && x.to <= e.endFrom);
+    let tab = e, caption = null;
+    if (TABLE_FLOATS.has(e.name)) {
+      if (inner.length !== 1 || !TABULARS.has(inner[0].name) || !(inner[0].endFrom < inner[0].to)) return null;
+      tab = inner[0];
+      const rest = floatRest(doc, read, e, [tab]);
+      if (!rest) return null;
+      caption = rest.caption;
+    } else if (inner.length) return null;
+    const grid = tabularGrid(doc.sliceString(tab.beginTo, tab.endFrom), TABULARS.get(tab.name));
+    return grid ? { caption: caption, grid: grid } : null;
+  }
+  function figureModel(doc, read, e) {
+    if (read.envs.some((x) => x !== e && x.from > e.from && x.to <= e.endFrom)) return null;   // subfigures, minipages
+    const pics = read.cmds.filter((c) => c.name === "includegraphics" && c.from > e.beginTo && c.to <= e.endFrom);
+    if (!pics.length || pics.length > 4) return null;
+    const paths = pics.map((c) => { const a = c.args.filter((x) => !x.opt); return a.length === 1 ? doc.sliceString(a[0].from + 1, a[0].to - 1).trim() : ""; });
+    if (paths.some((p) => !p)) return null;
+    const rest = floatRest(doc, read, e, pics);
+    return rest ? { caption: rest.caption, paths: paths } : null;
+  }
+
+  // -- tables filled in like Word (22.12 T; acceptance, 2026-11-14) ------------------------------------------------
+  //
+  // A table the grid reader is sure of is drawn as a grid whose cells are the text itself: its markup (the \begin and
+  // \end lines, the column spec, \centering, \label, the & between cells, the \\ that ends a row, the rules) is hidden,
+  // each cell's words are typed in place, the caption's too. `readGrid` is sure of a table float holding one tabular
+  // (tabular, tabular* or tabularx), or such a tabular alone, standing alone on its lines, whose rows each stand on a
+  // line of their own, ended by \\ (the last may end without), with as many cells as the spec has columns; between the
+  // rows only rules and comments; the caption on lines of its own, above or below the tabular. Anything else --
+  // \multicolumn, \multirow, a partial rule, a nested environment, a blank line, two rows on one line, a row over two
+  // lines, a column spec it does not read -- leaves the table one unit, changed in 显示代码, as before.
+  const GRID_RULE = /^[ \t]*\\(toprule|midrule|bottomrule|hline|addlinespace)(?![A-Za-z])[ \t]*(?:\[[^\]\n]*\][ \t]*)?/;
+  const GRID_UNSURE = /\\(?:multicolumn|multirow|cline|cmidrule|cr|crcr|tabularnewline|hhline|noalign|omit|span|newline|par)(?![A-Za-z])/;
+  const GRID_LIMIT = { columns: 20, rows: 200 };
+  const lineStartAt = (text, i) => text.lastIndexOf("\n", i - 1) + 1;
+  const lineEndAt = (text, i) => { const k = text.indexOf("\n", i); return k < 0 ? text.length : k; };
+  // The rules at the start of `code` from `j`: the index after them, each weighed into `acc.rule` as the PDF draws it.
+  function eatRules(code, j, acc) {
+    for (let m = GRID_RULE.exec(code.slice(j)); m; m = GRID_RULE.exec(code.slice(j))) {
+      const was = acc.rule, rule = m[1];
+      acc.rule = rule === "addlinespace" ? was : was === "heavy" || rule === "toprule" || rule === "bottomrule" ? "heavy" : "light";
+      j += m[0].length;
+    }
+    return j;
+  }
+  // A column spec's own items, positions counted in the spec: each column {col: true, from, to} (its >{…} and <{…} with
+  // it), each rule "|" {bar: true}, each @{…} and !{…} {from, to}. Null for a spec holding *{n}{…}, which is read for the
+  // grid but whose columns are added and taken away in 显示代码.
+  function specItems(spec) {
+    const out = [];
+    let i = 0;
+    const group = (k) => { while (spec[k] === " " || spec[k] === "\t") k += 1; return spec[k] === "{" ? skipGroup(spec, k, false) : -1; };
+    while (i < spec.length) {
+      const c = spec[i];
+      if (c === " " || c === "\t") { i += 1; continue; }
+      if (c === "|") { out.push({ bar: true, from: i, to: i + 1 }); i += 1; continue; }
+      if (c === "@" || c === "!") { const g = group(i + 1); if (g < 0) return null; out.push({ from: i, to: g }); i = g; continue; }
+      let from = i;
+      if (c === ">") { const g = group(i + 1); if (g < 0) return null; i = g; while (spec[i] === " " || spec[i] === "\t") i += 1; }
+      const l = spec[i];
+      if (l === "l" || l === "c" || l === "r" || l === "X") i += 1;
+      else if (l === "p" || l === "m" || l === "b") { const g = group(i + 1); if (g < 0) return null; i = g; }
+      else return null;
+      let k = i;
+      while (spec[k] === " " || spec[k] === "\t") k += 1;
+      if (spec[k] === "<") { const g = group(k + 1); if (g < 0) return null; i = g; }
+      out.push({ col: true, from: from, to: i });
+    }
+    return out;
+  }
+  // Where the spec draws a vertical rule: [before column 0, …, after the last], from its items.
+  function barsOf(items, n) {
+    const bars = new Array(n + 1).fill(false);
+    let k = 0;
+    for (const x of items) { if (x.col) k += 1; else if (x.bar) bars[k] = true; }
+    return bars;
+  }
+  // How wide a cell's words are, roughly, in widths of a digit: commands and markup left out, a CJK character two.
+  function shownWidth(src) {
+    const s = src.replace(/\\[A-Za-z]+\*?/g, "").replace(/\\./g, "x").replace(/[{}$]/g, "").trim();
+    let n = 0;
+    for (const ch of s) n += CJK_ONE.test(ch) ? 2 : 1;
+    return n;
+  }
+  const gridCache = new WeakMap();
+  // The grid of the table environment `e` (a float or a tabular) as `read` reads `text`, or null; kept once a reading.
+  function gridOf(text, read, e) {
+    let m = gridCache.get(read);
+    if (!m) { m = new Map(); gridCache.set(read, m); }
+    if (!m.has(e.from)) m.set(e.from, readGrid(text, read, e));
+    return m.get(e.from);
+  }
+  // {env, tab, from, to (the lines it stands on), cols (alignments), spec {from, to}, items, bars, rows, caption, widths,
+  // booktabs}. A row {from, to (its line), lead (where its first cell starts), cells [[from, to]], seps (each &), end
+  // (where its last cell ends: its \\ or its line's code), slashTo (after the \\ and its option), slash, above, below
+  // (the rules drawn there: heavy or light)}. A cell's range holds its spaces, so all a row shows is in a cell.
+  function readGrid(text, read, e) {
+    if (!(e.endFrom < e.to)) return null;
+    const from = lineStartAt(text, e.from), to = lineEndAt(text, e.to);
+    if (text.slice(from, e.from).trim() || codePart(text.slice(e.to, to)).trim()) return null;
+    const near = [];
+    eachMeeting(read.envs, e.from, e.to, (x) => { if (x !== e && x.from < e.to && e.from < x.to) near.push(x); });
+    const inner = near.filter((x) => x.from > e.from && x.to <= e.endFrom);
+    if (near.some((x) => x.from < e.from && x.to >= e.to && (TABLE_FLOATS.has(x.name) || FIGURE_FLOATS.has(x.name)))) return null;   // drawn as its float
+    let tab = e, caption = null;
+    if (TABLE_FLOATS.has(e.name)) {
+      if (inner.length !== 1 || !TABULARS.has(inner[0].name) || !(inner[0].endFrom < inner[0].to)) return null;
+      tab = inner[0];
+      const rest = floatRest({ sliceString: (a, b) => text.slice(a, b) }, read, e, [tab]);
+      if (!rest) return null;
+      if (rest.caption != null) {
+        let c = null;
+        eachMeeting(read.cmds, e.beginTo, e.endFrom, (x) => { if (x.name === "caption" && x.from > e.beginTo && x.to <= e.endFrom && (x.to <= tab.from || x.from >= tab.to)) c = x; });
+        const a = c && c.nameTo === c.from + 8 ? c.args.filter((x) => !x.opt) : [];
+        if (a.length !== 1 || text.slice(c.from, c.to).indexOf("\n") >= 0) return null;
+        const below = c.from >= tab.to;
+        if (below ? lineStartAt(text, c.from) <= lineEndAt(text, tab.to) : lineEndAt(text, c.to) >= lineStartAt(text, tab.from)) return null;
+        caption = { from: c.from, to: c.to, open: a[0].from + 1, close: a[0].to - 1, line: lineStartAt(text, c.from), below: below };
+      }
+    } else if (!TABULARS.has(e.name) || inner.length) return null;
+    // \begin{tabular}[pos]{spec} on one line, with only rules after it there
+    let i = tab.beginTo;
+    const ws = () => { while (text[i] === " " || text[i] === "\t") i += 1; };
+    for (let k = TABULARS.get(tab.name); k > 0; k--) { ws(); const g = text[i] === "{" ? skipGroup(text, i, false) : -1; if (g < 0) return null; i = g; }
+    ws();
+    if (text[i] === "[") { const g = skipGroup(text, i, false); if (g < 0) return null; i = g; ws(); }
+    const sg = text[i] === "{" ? skipGroup(text, i, false) : -1;
+    if (sg < 0) return null;
+    const spec = { from: i + 1, to: sg - 1 }, specText = text.slice(spec.from, spec.to), cols = columnsOf(specText);
+    if (!cols || specText.indexOf("\n") >= 0 || cols.length > GRID_LIMIT.columns) return null;
+    const bodyCode = text.slice(sg, tab.endFrom).split("\n").map(codePart).join("\n");
+    if (GRID_UNSURE.test(bodyCode)) return null;
+    const acc = { rule: null }, headEnd = lineEndAt(text, sg), endLine = lineStartAt(text, tab.endFrom);
+    const head = codePart(text.slice(sg, headEnd));
+    if (headEnd >= endLine || head.slice(eatRules(head, 0, acc)).trim()) return null;
+    // formulas and raw text in the cells are jumped over: their & and braces are their own
+    const skips = [];
+    eachMeeting(read.maths, sg, tab.endFrom, (f) => { if (f.from >= sg && f.from < tab.endFrom) skips.push(f); });
+    eachMeeting(read.raws, sg, tab.endFrom, (r) => { if (r.kind !== "comment" && r.from >= sg && r.from < tab.endFrom) skips.push(r); });
+    skips.sort((a, b) => a.from - b.from);
+    const rows = [];
+    let at = headEnd + 1, open = false, sk = 0;
+    while (at < endLine) {
+      const lineEnd = lineEndAt(text, at), line = text.slice(at, lineEnd), code = codePart(line);
+      if (!code.trim()) { if (!line.trim()) return null; at = lineEnd + 1; continue; }   // a blank line is a paragraph: not here
+      let j = eatRules(code, 0, acc);
+      if (!code.slice(j).trim()) { at = lineEnd + 1; continue; }
+      if (open) return null;   // a row after one with no \\
+      while (code[j] === " " || code[j] === "\t") j += 1;
+      const row = { from: at, to: lineEnd, lead: at + j, cells: [], seps: [], end: -1, slashTo: -1, slash: false, above: acc.rule, below: null };
+      acc.rule = null;
+      let cell = at + j, depth = 0, k = j;
+      for (; k < code.length; k++) {
+        const p = at + k;
+        while (sk < skips.length && skips[sk].to <= p) sk += 1;
+        if (sk < skips.length && skips[sk].from === p) { if (skips[sk].to > at + code.length) return null; k = skips[sk].to - at - 1; continue; }
+        if (sk < skips.length && skips[sk].from < p) return null;   // a formula begun before the row
+        const c = code[k];
+        if (c === "\\") { if (code[k + 1] === "\\" && depth === 0) break; k += 1; continue; }
+        if (c === "{") depth += 1;
+        else if (c === "}") { if (--depth < 0) return null; }
+        else if (c === "&" && depth === 0) { row.cells.push([cell, p]); row.seps.push(p); cell = p + 1; }
+      }
+      if (depth !== 0) return null;
+      if (k < code.length) {   // \\ (\\*, \\[2pt]) ends the row; after it only rules
+        row.end = at + k;
+        let q = k + 2;
+        if (code[q] === "*") q += 1;
+        let s = q;
+        while (code[s] === " " || code[s] === "\t") s += 1;
+        if (code[s] === "[") { const close = code.indexOf("]", s); if (close < 0) return null; q = close + 1; }
+        row.slashTo = at + q;
+        row.slash = true;
+        if (code.slice(eatRules(code, q, acc)).trim()) return null;
+      } else { row.end = row.slashTo = at + code.length; open = true; }
+      row.cells.push([cell, row.end]);
+      if (row.cells.length !== cols.length || rows.length >= GRID_LIMIT.rows) return null;
+      rows.push(row);
+      at = lineEnd + 1;
+    }
+    const tail = codePart(text.slice(endLine, tab.endFrom));
+    if (!rows.length || tail.slice(eatRules(tail, 0, acc)).trim()) return null;
+    rows[rows.length - 1].below = acc.rule;
+    const widths = cols.map(() => 5), words = cols.map(() => 2);   // an empty column still a cell's width
+    rows.forEach((r) => r.cells.forEach((c, k) => {
+      const src = text.slice(c[0], c[1]);
+      widths[k] = Math.min(30, Math.max(widths[k], shownWidth(src)));
+      // its longest word (a number, a Latin word; CJK breaks anywhere): a column is never drawn narrower than it if it can be
+      src.split(/\s+|~/).forEach((w) => { if (!CJK_ONE.test(w)) words[k] = Math.min(20, Math.max(words[k], shownWidth(w))); });
+    }));
+    const items = specItems(specText);
+    return { env: e, tab: tab, from: from, to: to, cols: cols, spec: spec, items: items, bars: items ? barsOf(items, cols.length) : null, rows: rows,
+      caption: caption, widths: widths, words: words, booktabs: /\\(?:toprule|midrule|bottomrule)(?![A-Za-z])/.test(bodyCode) };
+  }
+  // The grid `pos` is in (a table float's, or a tabular's alone), or null.
+  function gridAt(text, read, pos) {
+    let outer = null;
+    eachMeeting(read.envs, pos, pos, (e) => {
+      if (e.from <= pos && pos <= e.to && (TABLE_FLOATS.has(e.name) || FIGURE_FLOATS.has(e.name) || TABULARS.has(e.name)) && (!outer || e.from < outer.from)) outer = e;
+    });
+    return outer && !FIGURE_FLOATS.has(outer.name) ? gridOf(text, read, outer) : null;
+  }
+  // The grids whose lines meet [lo, hi].
+  function gridsNear(text, read, lo, hi) {
+    const out = [];
+    eachMeeting(read.envs, lo - 400, hi + 400, (e) => {
+      if (!(TABLE_FLOATS.has(e.name) || TABULARS.has(e.name))) return;
+      const g = gridOf(text, read, e);
+      if (g && g.from <= hi && g.to >= lo && !out.includes(g)) out.push(g);
+    });
+    return out;
+  }
+  // The cell `pos` is in: {g, r, c, cell: [from, to]}, or null.
+  function cellAt(text, read, pos) {
+    const g = gridAt(text, read, pos);
+    if (!g) return null;
+    for (let r = 0; r < g.rows.length; r++) {
+      const row = g.rows[r];
+      if (pos < row.from || pos > row.to) continue;
+      for (let c = 0; c < row.cells.length; c++) if (row.cells[c][0] <= pos && pos <= row.cells[c][1]) return { g: g, r: r, c: c, cell: row.cells[c] };
+      // the hidden indent and rules before a row's first cell are that cell's (a first cell emptied leaves its space
+      // there: the cursor is never left outside every cell)
+      if (pos < row.lead) return { g: g, r: r, c: 0, cell: row.cells[0] };
+    }
+    return null;
+  }
+  // `pos` where it is drawn in a grid's cell: one in the hidden part before a row's first cell at that cell's place.
+  function snapCell(text, read, pos) {
+    const c = cellAt(text, read, pos);
+    return c && (pos < c.cell[0] || pos > c.cell[1]) ? cellCaret(text, c.cell) : pos;
+  }
+  // The cell the cursor at `pos` is in, or at the table's last place (the end of its last row's line: words typed there
+  // go to its last cell) that last cell.
+  function cellNear(text, read, pos) {
+    const c = cellAt(text, read, pos);
+    if (c) return c;
+    const g = gridsNear(text, read, pos, pos).find((x) => x.to === pos && !(x.caption && x.caption.below));
+    if (!g) return null;
+    const r = g.rows.length - 1, k = g.cols.length - 1;
+    return { g: g, r: r, c: k, cell: g.rows[r].cells[k] };
+  }
+  // Where the cursor goes in a cell: at its words' start; an empty cell after its first space, where words typed are set
+  // apart from the & before them.
+  function cellCaret(text, cell) {
+    const s = text.slice(cell[0], cell[1]), lead = s.length - s.trimStart().length;
+    return cell[0] + (s.trim() ? lead : Math.min(1, s.length));
+  }
+  // Tab's selection in a cell, as Word: its words selected, or the cursor in it when it is empty.
+  // The markup the edit view hides at the words' edges (a style's \textbf{ and }, \cellcolor{red}) is left out of it, as
+  // Word keeps a cell's formatting when its words are typed over (`value`: the edit view's, when there is one).
+  function cellSelection(text, cell, value) {
+    const s = text.slice(cell[0], cell[1]);
+    let a = cell[0] + (s.length - s.trimStart().length), b = cell[1] - (s.length - s.trimEnd().length);
+    for (let n = 0; value && n < 20 && b > a; n++) {
+      let moved = false;
+      value.atoms.between(a, b, (f, t2, v) => {
+        if (!v.spec.atom || v.spec.widget || moved) return;
+        if (f === a && t2 < b) { a = t2; moved = true; } else if (t2 === b && f > a) { b = f; moved = true; }
+      });
+      while (b > a && (text[a] === " " || text[a] === "\t")) a += 1;
+      while (b > a && (text[b - 1] === " " || text[b - 1] === "\t")) b -= 1;
+      if (!moved) break;
+    }
+    return b > a ? { anchor: a, head: b } : { anchor: cellCaret(text, cell) };
+  }
+  // The words before a figure's or a table's caption, one helper for both: as the PDF prints them (22.12 M, F4) --
+  // "Figure 1: ", 「图 1: 」, the document's own name (`words`, numbersOf's) and the number where it is known; with no
+  // document to read them from (a file with no main file), 「图 N：」 and 「表 N：」 in the interface's words (22.1).
+  // A document whose word or separator is not known here (a babel language, the caption package's own name or label):
+  // "" -- no word and no number, the caption's words alone (22.12 R), never the interface's.
+  function floatWord(kind, n, words) {
+    const k = kind === "table" ? "table" : "figure", name = words ? words[k] : null, sep = words ? words[k === "table" ? "sepTab" : "sepFig"] : null;
+    if (name && sep) return name + (n ? " " + n : "") + sep;
+    if (words) return "";
+    if (kind === "table") return n ? t("表 {n}：", { n: n }) : t("表：");
+    return n ? t("图 {n}：", { n: n }) : t("图：");
+  }
+
+  // A piece of LaTeX (a title, a caption, a cell) drawn into `host`: the styles, fonts, sizes, formulas and chips the
+  // editor knows drawn as in the text; \\ a new line; \and a gap; escapes and accents as their characters; every other
+  // command a quiet chip with its arguments' plain words, or 「LaTeX 内容」 -- never its code (22.1, B1), never guessed.
+  function inlineInto(host, src, depth) {
+    let i = 0, text = "";
+    const n = src.length;
+    const flush = () => { if (text) { host.appendChild(mk("span", null, text)); text = ""; } };
+    const put = (el) => { flush(); host.appendChild(el); };
+    if (depth > 8) { host.appendChild(mk("span", "latex-chip latex-chip-unit", t("LaTeX 内容"))); return; }
+    while (i < n) {
+      const c = src[i];
+      if (c === "%") { const e = src.indexOf("\n", i); i = e < 0 ? n : e + 1; continue; }
+      if (c === "~") { text += " "; i += 1; continue; }
+      if (c === "$") {
+        const display = src[i + 1] === "$", open = display ? 2 : 1, e = mathEnd(src, i + open, display ? "$$" : "$");
+        if (e < 0) { text += c; i += 1; continue; }
+        put(window.katex ? mathDOM(src.slice(i + open, e - open), false, src.slice(i, e)) : mk("span", "latex-math-tag", t("公式")));
+        i = e;
+        continue;
+      }
+      if (c === "{") {
+        const g = skipGroup(src, i, false);
+        if (g < 0) { text += c; i += 1; continue; }
+        const m = /^\{[ \t]*\\([A-Za-z]+)(?![A-Za-z])[ \t]?/.exec(src.slice(i, i + 40));
+        flush();
+        if (m && GROUP_CLASSES.has(m[1])) { const span = mk("span", GROUP_CLASSES.get(m[1])); inlineInto(span, src.slice(i + m[0].length, g - 1), depth + 1); host.appendChild(span); }
+        else inlineInto(host, src.slice(i + 1, g - 1), depth + 1);
+        i = g;
+        continue;
+      }
+      if (c !== "\\") { text += c; i += 1; continue; }
+      const d = src[i + 1];
+      if (d === "\\") { put(mk("br")); i += 2; continue; }
+      if (d && /[%&$#_{} ]/.test(d)) { text += d; i += 2; continue; }
+      let e = i + 1;
+      while (e < n && /[A-Za-z]/.test(src[e])) e += 1;
+      if (e === i + 1) {   // a one-character command: an accent, a space, or nothing to see
+        const m = d && ACCENTS[d] ? /^(?:\{\s*([A-Za-z])\s*\}|([A-Za-z]))/.exec(src.slice(i + 2, i + 6)) : null;
+        if (m) { text += accented(ACCENTS[d], m[1] || m[2]); i += 2 + m[0].length; continue; }
+        if (d && Object.prototype.hasOwnProperty.call(SYMBOL_TEXT, d)) text += SYMBOL_TEXT[d];
+        else if (d && !SYMBOL_SILENT.has(d)) put(mk("span", "latex-chip latex-chip-unit", t("LaTeX 内容")));
+        i += 2;
+        continue;
+      }
+      const name = src.slice(i + 1, e);
+      let at = e;
+      while (src[at] === " ") at += 1;
+      if (STYLES.has(name) && src[at] === "{" && skipGroup(src, at, false) > 0) {
+        const g = skipGroup(src, at, false), span = mk("span", STYLES.get(name));
+        inlineInto(span, src.slice(at + 1, g - 1), depth + 1);
+        put(span);
+        i = g;
+        continue;
+      }
+      if (CITE_RE.test(name) || REFS.has(name)) {
+        let k = at;
+        for (let opts = 0; opts < 2 && src[k] === "["; opts++) { const g = skipGroup(src, k, false); if (g < 0) break; k = g; }
+        const g = src[k] === "{" ? skipGroup(src, k, false) : -1;
+        if (g > 0) {
+          const keys = src.slice(k + 1, g - 1).split(",").map((x) => x.trim()).filter(Boolean).join(", ");
+          put(mk("span", "latex-chip latex-chip-" + (CITE_RE.test(name) ? "cite" : "ref"), keys));
+          i = g;
+          continue;
+        }
+      }
+      if (name === "and") { put(mk("span", "latex-title-and")); i = at; continue; }   // TeX drops the spaces after it
+      if (GROUP_CLASSES.has(name)) {   // a switch in the middle: the rest of its group
+        const span = mk("span", GROUP_CLASSES.get(name));
+        inlineInto(span, src.slice(src[e] === " " ? e + 1 : e), depth + 1);
+        put(span);
+        i = n;
+        continue;
+      }
+      let to = e;
+      const args = [];
+      while (to < n && (src[to] === "{" || src[to] === "[")) { const g = skipGroup(src, to, false); if (g < 0) break; args.push(src.slice(to + 1, g - 1)); to = g; }
+      if (TEXT_MACROS.has(name) && args.every((a) => !a)) text += TEXT_MACROS.get(name);
+      else if (SILENT.has(name) || SILENT_ARGS.has(name) || HIDDEN_CMDS.has(name)) { /* nothing to see */ }
+      else if ((name === "multicolumn" || name === "multirow" || WRAPPERS.has(name)) && args.length) { flush(); inlineInto(host, args[args.length - 1], depth + 1); }
+      else {
+        const words = args.map((a) => plainWords(a)), said = words.length && words.every((w) => w != null) ? words.filter(Boolean).join(" ") : "";
+        put(mk("span", "latex-chip latex-chip-unit", said || t("LaTeX 内容")));
+      }
+      i = to;
+    }
+    flush();
+  }
+
+  // The project path of an image \includegraphics names, as the export finds it from the main file's folder (22.4), for
+  // a thumbnail: a png, jpeg, gif or webp through the asset route, a PDF or EPS figure's first page through the
+  // engine's (22.12 M, F9); null for another kind or a path that leaves the project. A picture that does not come is
+  // taken out, the file's name stays.
+  const DRAWN = /\.(?:pdf|eps)$/i;
+  function assetOf(path) {
+    if (!(RASTER.test(path) || DRAWN.test(path)) || typeof ed === "undefined" || !ed || !ed.path) return null;
+    const f = ed.format || {}, folder = typeof f.folder === "string" ? f.folder : ed.path.slice(0, Math.max(ed.path.lastIndexOf("/"), 0));
+    const p = normPath((folder ? folder + "/" : "") + path);
+    if (!p || p.startsWith("..")) return null;
+    return (DRAWN.test(p) ? "/api/latex/thumb?path=" : "/api/workspace/asset?path=") + encodeURIComponent(p);
+  }
+  function graphicDOM(path, tag) {
+    const line = mk(tag, "latex-graphic"), src = assetOf(path);
+    if (src) {
+      // unseen until it has loaded (22.12 R: a framed 2-pixel dot while the engine drew a PDF's page)
+      const img = mk("img", "latex-graphic-thumb latex-thumb-loading");
+      img.alt = ""; img.loading = "lazy"; img.src = src;
+      img.addEventListener("load", () => { if (img.classList) img.classList.remove("latex-thumb-loading"); });
+      img.addEventListener("error", () => { if (img.remove) img.remove(); });
+      line.appendChild(img);
+    }
+    line.appendChild(mk("span", "latex-graphic-name", path));
+    return line;
+  }
+  function captionDOM(word, src) {
+    const p = mk("p", "latex-caption");
+    p.appendChild(mk("span", "latex-caption-word", word));
+    inlineInto(p, src, 0);
+    return p;
+  }
+  // `word`: what stands before the caption, 「表 N：」 where the number is known (22.1), else 「表：」.
+  function tableDOM(model, word) {
+    const box = mk("div", "latex-table-preview"), table = mk("table", "latex-table"), body = mk("tbody");
+    if (model.caption != null) box.appendChild(captionDOM(word != null ? word : t("表："), model.caption));
+    const cols = model.grid.cols;
+    model.grid.rows.forEach((r) => {
+      const tr = mk("tr", [r.above ? "latex-rule-" + r.above : "", r.below ? "latex-rule-below-" + r.below : ""].filter(Boolean).join(" ") || null);
+      cols.forEach((align, k) => {
+        const td = mk("td", align === "l" ? null : "latex-col-" + align);
+        if (k < r.cells.length) inlineInto(td, r.cells[k], 0);
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+    table.appendChild(body);
+    box.appendChild(table);
+    return box;
+  }
+  function figureDOM(model, word) {
+    const box = mk("div", "latex-figure-preview");
+    model.paths.forEach((p) => box.appendChild(graphicDOM(p, "div")));
+    if (model.caption != null) box.appendChild(captionDOM(word != null ? word : t("图："), model.caption));
+    return box;
+  }
+  // \maketitle: the title large in the serif face, the author and the date under it. An empty \author{} is left out; a
+  // \date{\today}, or no \date (LaTeX prints today's then too), is 「日期：导出当天」; an empty \date{} is left out.
+  function titleDOM(meta) {
+    const box = mk("div", "latex-titleblock");
+    const part = (cls, src) => { const el = mk("div", cls); inlineInto(el, src, 0); box.appendChild(el); };
+    if (meta.title != null && /\S/.test(meta.title)) part("latex-title", meta.title.trim());
+    else box.appendChild(mk("div", "latex-title-none", t("（没有设置标题）")));
+    if (meta.author != null && /\S/.test(meta.author)) part("latex-title-author", meta.author.trim());
+    const date = meta.date == null ? (meta.own ? "\\today" : "") : meta.date.trim();   // a chapter has no preamble: no date guessed
+    if (date === "\\today") box.appendChild(mk("div", "latex-title-date", t("日期：导出当天")));
+    else if (date) part("latex-title-date", date);
+    return box;
+  }
+  // 导言区's one quiet line in the edit view: the class and how many packages, in words (22.12 B), never opened there
+  // (版式 edits it; 显示代码 shows it).
+  function preambleWords(meta) {
+    if (!meta || !meta.cls) return t("导言区");
+    return t("导言区：文档类 {cls}，{n} 个宏包", { cls: meta.cls, n: meta.packages || 0 });
+  }
+
+  // The body's words for the status line: each CJK character one, each run of Latin letters or digits one; commands'
+  // names, comments, formulas, verbatim text, the preamble and what is not prose (keys, labels, paths, environment
+  // names, options, a tabular's columns) left out.
+  const CJK = /[぀-ヿ㐀-䶿一-鿿豈-﫿]|[\ud840-\ud87f][\udc00-\udfff]/g;
+  const LATIN_WORD = /[A-Za-z0-9À-ɏ]+(?:['’.-][A-Za-z0-9À-ɏ]+)*/g;
+  function bodyWords(text, read) {
+    const docEnv = read.envs.find((e) => e.name === "document");
+    const start = docEnv ? docEnv.beginTo : 0, stop = docEnv && docEnv.endFrom < docEnv.to ? docEnv.endFrom : text.length;
+    const cut = [];
+    read.maths.forEach((f) => cut.push([f.from, f.to]));
+    read.raws.forEach((r) => cut.push([r.from, r.to]));
+    for (const c of read.cmds) {
+      cut.push([c.from, c.nameTo]);
+      if (c.role === "cite" || c.role === "ref" || NAME_ARGS.has(c.name) || c.name === "documentclass" || c.name === "usepackage") cut.push([c.from, c.to]);
+      else c.args.forEach((a) => { if (a.opt) cut.push([a.from, a.to]); });
+    }
+    for (const e of read.envs) {
+      cut.push([e.from, e.beginTo]);
+      if (e.endFrom < e.to) cut.push([e.endFrom, e.to]);
+      if (e.role === "raw") {   // a tabular's {ll}, a figure's [htbp]
+        let at = e.beginTo;
+        while (text[at] === "[" || text[at] === "{") { const g = skipGroup(text, at, false); if (g < 0) break; cut.push([at, g]); at = g; if (text[at - 1] === "}") break; }
+      }
+    }
+    cut.sort((a, b) => a[0] - b[0]);
+    let n = 0, at = start;
+    const count = (s) => {
+      const cjk = s.match(CJK);
+      n += (cjk ? cjk.length : 0);
+      const latin = s.replace(CJK, " ").match(LATIN_WORD);
+      n += latin ? latin.length : 0;
+    };
+    for (const [a, b] of cut) {
+      if (b <= at) continue;
+      if (a >= stop) break;
+      if (a > at) count(text.slice(at, a));
+      at = Math.max(at, b);
+    }
+    if (at < stop) count(text.slice(at, stop));
+    return n;
   }
 
   // The preamble is folded from the file's start to the end of the line before \begin{document}: 0 when nothing is.
@@ -386,67 +1135,621 @@
     const line = doc.lineAt(read.preamble.to);
     return line.number < doc.lines ? doc.line(line.number + 1).from : line.to;
   }
-  // The selection is in the preamble when a cursor is in it, its start included, or a selection covers any of it: then
-  // the preamble is open, so nothing typed or deleted lands on lines that cannot be seen (22.1).
-  function inPreamble(ranges, pre) { return pre > 0 && ranges.some((r) => r.from <= pre); }
+  // -- the edit view (22.1; the researcher, 2026-11-14: "我的想法是，编辑的时候是看不到latex代码的，右侧的选项打开才能看到代码") --
+  //
+  // In the edit view no LaTeX is ever visible, wherever the cursor or the selection is; 「显示代码」 in the right column
+  // shows the whole file as code. `viewPieces` turns what `readLatex` read into pieces: atoms (a formula, a table, a
+  // chip, a comment, the preamble …: one replace decoration each, never entered), the hidden markup of what keeps its
+  // words editable (a heading's or a style's command and braces, an environment's \begin and \end, a list's \item, a
+  // caption's figure around it), marks (the words' style) and line classes. Every replace is an atomic range, so the
+  // cursor never stops inside one; `userEdit` keeps what is typed, pasted and deleted literal and the source balanced;
+  // Return, ⇧Return and Backspace follow Word (`enterSpec`, `backSpec`).
+
+  const TEXT_MACROS = new Map([["LaTeX", "LaTeX"], ["TeX", "TeX"], ["LaTeXe", "LaTeX2e"], ["ldots", "…"], ["dots", "…"], ["textellipsis", "…"],
+    ["textendash", "–"], ["textemdash", "—"], ["S", "§"], ["P", "¶"], ["copyright", "©"], ["textcopyright", "©"], ["textregistered", "®"],
+    ["texttrademark", "™"], ["textdegree", "°"], ["textbackslash", "\\"], ["textasciitilde", "~"], ["textasciicircum", "^"],
+    ["textunderscore", "_"], ["textless", "<"], ["textgreater", ">"], ["textbar", "|"], ["slash", "/"], ["quad", " "],
+    ["qquad", "  "], ["ss", "ß"], ["o", "ø"], ["O", "Ø"], ["ae", "æ"], ["AE", "Æ"], ["oe", "œ"], ["OE", "Œ"], ["aa", "å"], ["AA", "Å"],
+    ["l", "ł"], ["L", "Ł"], ["i", "ı"], ["textquotedblleft", "“"], ["textquotedblright", "”"], ["textquoteleft", "‘"], ["textquoteright", "’"],
+    ["euro", "€"], ["pounds", "£"], ["textyen", "¥"], ["textperthousand", "‰"]]);
+  // accents, as combining marks: \'e, \'{e}, \c{c}
+  const ACCENTS = { "'": "́", "`": "̀", "^": "̂", "\"": "̈", "~": "̃", "=": "̄", ".": "̇",
+    c: "̧", v: "̌", u: "̆", H: "̋", r: "̊", k: "̨", d: "̣", b: "̱" };
+  const SYMBOL_TEXT = { "%": "%", "$": "$", "&": "&", "#": "#", "_": "_", "{": "{", "}": "}", " ": " ", ",": " ", ";": " ", ":": " ", ">": " " };
+  const SYMBOL_SILENT = new Set(["!", "-", "/", "@", "*"]);
+  // commands with nothing to read: hidden (their groups, if any, are plain groups)
+  const SILENT = new Set(["noindent", "indent", "centering", "raggedright", "raggedleft", "par", "smallskip", "medskip", "bigskip", "vfill",
+    "hfill", "null", "relax", "protect", "normalsize", "footnotesize", "scriptsize", "tiny", "small", "large", "Large", "LARGE", "huge", "Huge",
+    "bf", "it", "em", "sc", "sf", "tt", "rm", "sl", "bfseries", "itshape", "scshape", "mdseries", "upshape", "slshape", "normalfont",
+    "rmfamily", "sffamily", "ttfamily", "songti", "heiti", "kaishu", "fangsong", "nobreak", "nolinebreak", "allowbreak", "frenchspacing",
+    "sloppy", "fussy", "xspace", "unskip", "leavevmode", "hline", "toprule", "midrule", "bottomrule", "maketitle"]);
+  // commands whose arguments are lengths, colours or styles, never words: hidden with them
+  const SILENT_ARGS = new Set(["vspace", "hspace", "addvspace", "vskip", "hskip", "color", "pagecolor", "rowcolor", "cellcolor", "columncolor", "arrayrulecolor", "thispagestyle", "pagenumbering",
+    "linespread", "fontsize", "selectfont", "phantom", "hphantom", "vphantom", "enlargethispage", "setstretch"]);
+  const BREAKS = new Set(["newline", "linebreak"]);
+  // TeX's own spacing, with the length it reads after it (22.12 R: "\vskip 1em" showed "1em"): \vskip 1em plus 2pt,
+  // \hskip, \kern1pt, \penalty10000, \hrule height 1pt, a register set by hand (\parindent=0pt) -- hidden whole, never
+  // words. Those that are vertical (\par, \vskip, \vfill, \hrule) end the paragraph, as TeX does in running text.
+  const DIMEN = String.raw`(?:[-+]\s*)*(?:(?:\d+(?:[.,]\d*)?|[.,]\d+)\s*(?:true\s*)?(?:pt|pc|in|bp|cm|mm|dd|cc|sp|em|ex|px|mu|fil{1,3})(?![A-Za-z])|(?:(?:\d+(?:[.,]\d*)?|[.,]\d+)\s*)?\\[A-Za-z@]+)`;
+  const GLUE = String.raw`\s*=?\s*` + DIMEN + String.raw`(?:\s*plus\s*` + DIMEN + String.raw`)?(?:\s*minus\s*` + DIMEN + ")?";
+  const RULE_SPEC = String.raw`(?:\s*(?:height|width|depth)\s*` + DIMEN + ")*";
+  const TEX_SKIPS = { par: "", vskip: GLUE, hskip: GLUE, kern: String.raw`\s*=?\s*` + DIMEN, penalty: String.raw`\s*=?\s*-?\s*\d+`, hrule: RULE_SPEC,
+    vrule: RULE_SPEC, vfill: "", vfil: "", vfilneg: "", vss: "", hfil: "", hfilneg: "", hss: "" };
+  const REGISTERS = new Set(["parindent", "parskip", "baselineskip", "lineskip", "lineskiplimit", "leftskip", "rightskip", "parfillskip",
+    "emergencystretch", "tolerance", "pretolerance", "hfuzz", "vfuzz", "hbadness", "vbadness", "clubpenalty", "widowpenalty"]);
+  const VERTICAL = new Set(["par", "vskip", "vfill", "vfil", "vfilneg", "vss", "hrule"]);
+  const skipRes = new Map();
+  // How much after a spacing command's name is its length (0: none), or -1 when `name` is none or reads none here.
+  function skipLen(name, rest) {
+    const own = Object.prototype.hasOwnProperty.call(TEX_SKIPS, name) ? TEX_SKIPS[name] : REGISTERS.has(name) ? String.raw`\s*=?\s*(?:` + DIMEN + String.raw`|-?\d+)` : null;
+    if (own == null) return -1;
+    if (!own) return /^[A-Za-z@]/.test(rest) ? -1 : 0;
+    if (!skipRes.has(name)) skipRes.set(name, new RegExp("^(?![A-Za-z@])(?:" + own + ")"));
+    const m = skipRes.get(name).exec(rest.slice(0, 200));
+    return m && m[0].length ? m[0].length : REGISTERS.has(name) || /^[A-Za-z@]/.test(rest) ? -1 : 0;
+  }
+  // definitions in the body: one chip, their whole extent read by shape (n: \cs or {…}; c: \cs; o: an optional […]; b:
+  // {…}; p: a parameter text up to "{"; e: an optional "=" and a \cs or a character)
+  const DEFINITIONS = new Map([["newcommand", "noob"], ["renewcommand", "noob"], ["providecommand", "noob"], ["DeclareRobustCommand", "noob"],
+    ["def", "cpb"], ["gdef", "cpb"], ["edef", "cpb"], ["xdef", "cpb"], ["let", "ce"], ["newenvironment", "boobb"], ["renewenvironment", "boobb"],
+    ["DeclareMathOperator", "nb"], ["newtheorem", "bobo"], ["setlength", "nb"], ["addtolength", "nb"], ["setcounter", "bb"],
+    ["addtocounter", "bb"], ["newlength", "n"], ["newcounter", "bo"], ["newif", "c"], ["usepackage", "ob"], ["hypersetup", "b"],
+    ["captionsetup", "ob"], ["ctexset", "b"], ["geometry", "b"], ["graphicspath", "b"]]);
+  // commands whose last argument is words, kept editable (the others hidden): [class, mandatory arguments]
+  const WRAPPERS = new Map([["textsc", ["latex-sc", 1]], ["textsuperscript", ["latex-sup", 1]], ["textsubscript", ["latex-sub", 1]],
+    ["textsl", ["latex-i", 1]], ["textup", ["", 1]], ["textmd", ["", 1]], ["textnormal", ["", 1]], ["mbox", ["", 1]], ["hbox", ["", 1]],
+    ["text", ["", 1]], ["makebox", ["", 1]], ["fbox", ["latex-boxed", 1]], ["framebox", ["latex-boxed", 1]], ["textcolor", ["", 2]], ["parbox", ["", 2]], ["raisebox", ["", 2]], ["hyperref", ["", 1]],
+    ["colorbox", ["", 2]], ["uline", ["latex-u", 1]], ["CJKunderline", ["latex-u", 1]], ["sout", ["latex-strike", 1]], ["hl", ["", 1]], ["enquote", ["", 1]],
+    ["foreignlanguage", ["", 2]]]);
+  // a line of its own in the edit view, said in words (looked up when said, 13.6)
+  const LINE_COMMANDS = new Set(["tableofcontents", "listoffigures", "listoftables", "newpage", "clearpage", "cleardoublepage", "pagebreak",
+    "printbibliography", "bibliography", "appendix"]);
+  // (22.12 M, F4: the heading such a list prints is the document's own word -- "Contents", 「目录」 -- when it is known)
+  function lineWords(n, words) {
+    const own = (k) => (words && words[k] ? t("{name}（导出时生成）", { name: words[k] }) : null);
+    if (n === "tableofcontents") return own("contents") || t("目录（导出时生成）");
+    if (n === "listoffigures") return own("lof") || t("图目录（导出时生成）");
+    if (n === "listoftables") return own("lot") || t("表目录（导出时生成）");
+    if (n === "printbibliography" || n === "bibliography") return own("refs") || t("参考文献（导出时生成）");
+    return n === "appendix" ? t("附录") : t("分页");
+  }
+  const HIDDEN_CMDS = new Set(["label", "bibliographystyle", "nocite", "addbibresource"]);
+  const REF_LIKE = /^(?:ref|eqref|autoref|Autoref|cref|Cref|pageref|nameref|vref)$/;
+  const INCLUDE_CMDS = new Set(["input", "include", "subfile", "import", "subimport"]);
+  // the arguments an environment takes after \begin{…}, hidden with it (a theorem's [title] is shown)
+  const ENV_ARGS = { minipage: "ooom", multicols: "mo", "multicols*": "mo", spacing: "m", itemize: "o", enumerate: "o", description: "o" };
+  const ENV_LINES = { center: "latex-align-c", flushright: "latex-align-r", flushleft: "latex-align-l", quote: "latex-quote-line",
+    quotation: "latex-quote-line", verse: "latex-quote-line", abstract: "latex-abstract-line" };
+  // conditionals and catcode tricks in the body: the reader cannot say what is text, so the file opens as code
+  const UNSURE_CMDS = /^(?:if(?!thenelse$|def$|undef$|strequal$|boolexpr$|toggle$)[A-Za-z@]*|fi|else|or|makeatletter|makeatother|catcode|csname|endcsname|expandafter|begingroup|endgroup|loop|repeat)$/;
+  const TYPE_ESCAPES = { "%": "\\%", "$": "\\$", "&": "\\&", "#": "\\#", "_": "\\_", "{": "\\{", "}": "\\}",
+    "~": "\\textasciitilde{}", "^": "\\textasciicircum{}", "\\": "\\textbackslash{}", "<": "\\textless{}", ">": "\\textgreater{}", "|": "\\textbar{}" };
+
+  // Pieces of the edit view that draw something in the line (an escape's character, a formula, a chip, a footnote's
+  // number): between two of them, or between one and a style's edge, is a place where words go, as between two
+  // characters -- typed there, they stay there (never past the next piece, never into the style). Only pieces that draw
+  // nothing are one with what they touch.
+  const DRAWN_KINDS = new Set(["text", "math", "cite", "ref", "url", "footnote", "unit", "graphic", "verb", "space"]);
+  function drawnPiece(p) { return !!p.widget && !p.block && DRAWN_KINDS.has(p.kind); }
+  function slotBetween(a, b) {
+    const da = a.drawn != null ? a.drawn : drawnPiece(a), db = b.drawn != null ? b.drawn : drawnPiece(b);
+    return (da && (db || b.kind === "open")) || (db && a.kind === "close");
+  }
+  // Where an environment's \begin ends with the options it takes ([…], {…}): ENV_ARGS, or a theorem's [title].
+  function envArgsEnd(text, e) {
+    let end = e.beginTo;
+    for (const s of ENV_ARGS[e.name] || (e.role === "text" && e.name !== "abstract" ? "o" : "")) {
+      if ((s === "o" && text[end] === "[") || (s === "m" && text[end] === "{")) { const g = skipGroup(text, end, true); if (g > 0) end = g; }
+    }
+    return end;
+  }
+  // Why the edit view cannot show `text` safely (a reason, said above the code), or null: what TeX would stop at
+  // (unbalanced braces, an environment or a formula not closed), a list with no \item, a conditional in the body.
+  function unsureWhy(text, read) {
+    // an unpaired brace is said first: it is what makes an environment after it cross it
+    if (read.bad.length) return read.bad.some((b) => b.why === "brace") ? t("这个文件里有没配对的括号，只能显示代码。") : t("这个文件里有没结束的环境或公式，只能显示代码。");
+    const body = read.preamble ? read.preamble.to : 0;
+    const odd = read.cmds.find((c) => c.from >= body && UNSURE_CMDS.test(c.name));
+    if (odd) return t("这个文件的正文里有条件命令（{command}），只能显示代码。", { command: "\\" + odd.name });
+    if (read.envs.some((e) => e.role === "list" && e.from >= body && !e.items && e.name !== "description")) return t("这个文件里有一个列表还没有条目，只能显示代码。");
+    return null;
+  }
+
+  // The words of a piece of LaTeX that is only words (escapes allowed, braces dropped), or null when it holds markup.
+  const WORD_ESCAPES = { textless: "<", textgreater: ">", textbar: "|", textasciitilde: "~", textasciicircum: "^", textbackslash: "\\" };
+  function plainWords(src) {
+    const kept = [];
+    let s = String(src).replace(/\\(textless|textgreater|textbar|textasciitilde|textasciicircum|textbackslash)\{\}|\\([%$&#_{} ])/g,
+      (m, k, c) => { kept.push(k ? WORD_ESCAPES[k] : c); return "\u0000"; }).replace(/~/g, " ");
+    if (/[\\$&#^_%]/.test(s)) return null;
+    s = s.replace(/[{}]/g, "").replace(/\s+/g, " ").trim();
+    let k = 0;
+    return s.replace(/\u0000/g, () => kept[k++]);
+  }
+  // The end of a definition in the body (DEFINITIONS' shapes), from its name on.
+  function definitionEnd(text, c) {
+    let at = c.nameTo;
+    const ws = () => { while (text[at] === " " || text[at] === "\t" || text[at] === "\n" || text[at] === "\r") at += 1; };
+    const cs = () => {
+      if (text[at] !== "\\") return false;
+      let e = at + 1;
+      while (/[A-Za-z@]/.test(text[e] || "")) e += 1;
+      at = e === at + 1 ? at + 2 : e;
+      return true;
+    };
+    const group = (o) => { if (text[at] !== o) return false; const g = skipGroup(text, at, false); if (g < 0) return false; at = g; return true; };
+    for (const s of DEFINITIONS.get(c.name) || "") {
+      const keep = at;
+      ws();
+      if (s === "o") { if (!group("[")) at = keep; continue; }
+      if (s === "p") { while (at < text.length && text[at] !== "{" && text[at] !== "\n") at += 1; continue; }
+      if (s === "e") { if (text[at] === "=") { at += 1; ws(); } if (!cs()) at += 1; continue; }
+      const ok = s === "c" ? cs() : s === "n" ? cs() || group("{") : group("{");
+      if (!ok) { at = keep; break; }
+    }
+    return Math.max(at, c.to);
+  }
+
+  // -- what the PDF prints (22.12 M, F4 and F6; browser acceptance 2026-11-14: an English paper's table read 「表 1：」
+  // and its abstract 「摘要」 while the PDF printed "Table 1:" and "Abstract", and "Introduction" had no "1") --------
+  //
+  // The words a document prints for its own parts are the document's, never the interface's: a ctex class's (or the ctex
+  // package's) Chinese, every other class's English, a name the preamble sets (\renewcommand{\figurename}{…}, ctex's
+  // figurename=…) as it sets it, a babel or polyglossia language other than English unknown. Measured on TeX Live 2023
+  // (tests/test_v17_acceptance.py): article and report print Figure 1:, Abstract, Contents, List of Figures, References
+  // or Bibliography, Proof, Chapter 1, Appendix A; ctexart and ctexrep 图 1:, 摘要, 目录, 插图, 表格, 参考文献, 证明,
+  // 第一章, 附录 A.
+  // (the ctex words, LaTeX's own printed text, never interface words: 图 表 摘要 目录 插图 表格 参考文献 证明 附录, 第 … 章, and
+  // the 十 、 （ ） of its numbers)
+  const DOC_ZH = "图|表|摘要|目录|插图|表格|参考文献|证明|附录|第|章|十|、|（|）".split("|");
+  const DOC_ZH_DIGITS = "〇一二三四五六七八九";
+  const DOC_EN = { figure: "Figure", table: "Table", abstract: "Abstract", contents: "Contents", lof: "List of Figures", lot: "List of Tables",
+    ref: "References", bib: "Bibliography", proof: "Proof", chapter: "Chapter", appendix: "Appendix" };
+  const DOC_ZH_WORDS = { figure: DOC_ZH[0], table: DOC_ZH[1], abstract: DOC_ZH[2], contents: DOC_ZH[3], lof: DOC_ZH[4], lot: DOC_ZH[5],
+    ref: DOC_ZH[6], bib: DOC_ZH[6], proof: DOC_ZH[7], appendix: DOC_ZH[8], chapter: null };
+  // the commands that hold each name (ctex's key of the same name too)
+  const DOC_NAMES = { figure: "figurename", table: "tablename", abstract: "abstractname", contents: "contentsname", lof: "listfigurename",
+    lot: "listtablename", ref: "refname", bib: "bibname", proof: "proofname", chapter: "chaptername", appendix: "appendixname" };
+  const ENGLISH = /^(?:english|american|british|USenglish|UKenglish|canadian|australian|newzealand)$/;
+  // heading numbers are known in these classes (the others number their own way: none is shown, never a wrong one)
+  const NUMBER_CLASSES = new Set(["article", "report", "book", "ctexart", "ctexrep", "ctexbook"]);
+  // a chapter's number or words set by hand: the chapter classes' heading numbers are then unknown
+  const CHAPTER_OWN = /\\(?:(?:(?:re)?new|provide)command|[gex]?def|let)\s*\*?\s*\{?\s*\\(?:thechapter|chaptername|appendixname|@chapapp|@makechapterhead|CTEXthechapter)\b|\bchapter\s*\/\s*(?:name|number|format|aftername|numbering)\b|\\titleformat\b|\btitlesec\b/;
+  function chineseNumber(n) {
+    if (!(n > 0 && n < 100)) return null;
+    const tens = Math.floor(n / 10), ones = n % 10, d = DOC_ZH_DIGITS;
+    if (!tens) return d[ones];
+    return (tens > 1 ? d[tens] : "") + DOC_ZH[11] + (ones ? d[ones] : "");
+  }
+  function letterOf(n) { return n > 0 && n <= 26 ? String.fromCharCode(64 + n) : null; }
+
+  // What the document's preamble says of what it prints: its class, chapters, ctex, the heading numbers 版式 reads
+  // (22.12 A3: "" the class's own, "zh" 一、（一）1., "none"; null when unknown -- the person's own, a class not read
+  // here, a chapter set by hand), the names of its parts and the separator after a caption's number. Kept for the
+  // last preamble asked about (a key in the body asks again with the same one).
+  let factsKept = null;
+  function docFacts(pre, local) {
+    if (factsKept && factsKept.pre === pre && factsKept.local === local) return factsKept.facts;
+    const code = masked(pre), f = preambleFacts(pre), L = layoutOf(pre, local || []);
+    const S = L.settings || {};
+    // ctex's words and heading style: a ctex class, or the ctex package (its words; its headings only with heading=true);
+    // none with scheme=plain (measured: ctexart with scheme=plain prints Figure 1 and Abstract, report with the ctex
+    // package Chapter 1 and 图 1.1)
+    const ctexClass = !!f.cls && /^ctex/.test(f.cls), clsOpts = (/\\documentclass\s*\[([^\]]*)\]/.exec(code) || [])[1] || "";
+    const pkgOpts = (/\\usepackage\s*\[([^\]]*)\]\s*\{[^}]*\bctex\b[^}]*\}/.exec(code) || [])[1] || "";
+    const ctex = f.ctex && !/(?:^|,)\s*scheme\s*=\s*plain\s*(?:,|$)/.test(ctexClass ? clsOpts : pkgOpts);
+    const ctexHeads = ctex && (ctexClass || /(?:^|,)\s*heading\s*(?:=\s*true\s*)?(?:,|$)/.test(pkgOpts));
+    // the language: babel's last option or polyglossia's main language
+    let lang = ctex ? "zh" : "en";
+    const babel = /\\usepackage\s*(?:\[([^\]]*)\])?\s*\{[^}]*\b(babel|polyglossia)\b[^}]*\}/.exec(code);
+    if (babel) {
+      const main = babel[2] === "babel" ? (babel[1] || "").split(",").map((x) => x.trim()).filter((x) => x && !/=/.test(x)).pop()
+        : (/\\set(?:main|default)language\s*(?:\[[^\]]*\])?\s*\{\s*([A-Za-z]+)\s*\}/.exec(code) || [])[1];
+      lang = main && ENGLISH.test(main) ? "en" : null;
+    }
+    const words = {};
+    Object.keys(DOC_NAMES).forEach((k) => { words[k] = lang === "zh" ? DOC_ZH_WORDS[k] : lang === "en" ? DOC_EN[k] : null; });
+    if (lang === "zh" && !ctexHeads) words.chapter = DOC_EN.chapter;   // the ctex package leaves the class's chapter heading
+    // babel and polyglossia set the names again at \begin{document}: a name set in the preamble counts only inside
+    // \addto\captions…{…} or \AtBeginDocument{…}
+    const kept = [];
+    if (babel) for (const m of code.matchAll(/\\(?:addto|appto|gappto)\s*\\captions[A-Za-z]+\s*\{|\\AtBeginDocument\s*\{/g)) {
+      const g = skipGroup(code, m.index + m[0].length - 1, false);
+      if (g > 0) kept.push([m.index, g]);
+    }
+    // a name the preamble sets, as it sets it (only plain words; anything else unknown)
+    Object.keys(DOC_NAMES).forEach((k) => {
+      const name = DOC_NAMES[k];
+      const re = new RegExp("\\\\(?:renewcommand|def)\\s*\\*?\\s*\\{?\\s*\\\\" + name + "(?![A-Za-z@])\\s*\\}?\\s*\\{([^{}]*)\\}|\\b" + name + "\\s*=\\s*(?:\\{([^{}]*)\\}|([^,{}\\]]*))", "g");
+      let m = null;
+      for (let x = re.exec(code); x; x = re.exec(code)) if (!babel || x[1] == null || kept.some((r) => r[0] < x.index && x.index < r[1])) m = x;
+      if (m) { const v = m[1] != null ? m[1] : m[2] != null ? m[2] : m[3]; words[k] = plainWords(v) || null; }
+    });
+    // the caption package (its options and \captionsetup, for both kinds or one): a name= as it is set, the separator
+    // after the number by labelsep, no label at all with labelformat=empty; anything else it changes unknown
+    const base = /^ams/.test(f.cls || "") ? ". " : ": ";
+    words.sepFig = base; words.sepTab = base;
+    const setups = [];
+    const capPkg = /\\usepackage\s*\[([^\]]*)\]\s*\{[^}]*\bcaption\b[^}]*\}/.exec(code);
+    if (capPkg) setups.push([null, capPkg[1]]);
+    for (const m of code.matchAll(/\\captionsetup\s*(?:\[([^\]]*)\])?\s*\{/g)) {
+      const open = m.index + m[0].length - 1, g = skipGroup(code, open, false);
+      setups.push([m[1] ? m[1].trim() : null, g > 0 ? code.slice(open + 1, g - 1) : "\u0000"]);
+    }
+    const SEPS = { colon: ": ", period: ". ", space: " ", quad: " ", endash: " – " };
+    for (const [type, opts] of setups) {
+      const kinds = type === "figure" ? ["figure"] : type === "table" ? ["table"] : type ? [] : ["figure", "table"];
+      for (const raw of opts.split(",")) {
+        const o = /^\s*([A-Za-z]+)\s*(?:=\s*\{?([^{}]*?)\}?\s*)?$/.exec(raw);
+        if (!o || !raw.trim()) { if (raw.trim()) kinds.forEach((k) => { words[k] = null; }); continue; }
+        const key = o[1], v = o[2] == null ? "" : o[2].trim();
+        if (key === "name") kinds.forEach((k) => { words[k] = type ? plainWords(v) || null : null; });
+        else if (key === "labelsep") kinds.forEach((k) => { words[k === "figure" ? "sepFig" : "sepTab"] = SEPS[v] || null; });
+        else if (key === "labelformat" && v !== "simple" && v !== "default") kinds.forEach((k) => { words[k] = v === "empty" ? "" : null; });
+      }
+    }
+    words.refs = f.chapters ? words.bib : words.ref;
+    words.sep = words.sepFig;
+    // what \autoref prints (hyperref's own English names; unknown with babel or polyglossia) and \cref (cleveref's)
+    words.auto = !babel || lang === "en";
+    const cref = /\\usepackage\s*(?:\[([^\]]*)\])?\s*\{[^}]*\bcleveref\b[^}]*\}/.exec(code);
+    words.cref = words.auto && cref ? { cap: /\bcapitali[sz]e\b/.test(cref[1] || ""), full: /\bnoabbrev\b/.test(cref[1] || "") } : null;
+    const numbered = !!f.cls && NUMBER_CLASSES.has(f.cls) && !L.why && S.secnum && !S.secnum.mine && !(f.chapters && CHAPTER_OWN.test(code));
+    // the appendix package: its appendices environment numbers as \appendix does, unless its titles add a word
+    const appx = /\\usepackage\s*(?:\[([^\]]*)\])?\s*\{[^}]*\bappendix\b[^}]*\}/.exec(code);
+    const facts = { cls: f.cls, chapters: !!f.cls && CHAPTER_CLASSES.has(f.cls), ctex: ctexHeads, heads: numbered ? S.secnum.value : null, words: words,
+      appxTitles: !!appx && (/\btitle\b|\btitletoc\b/.test(appx[1] || "") || /\\appendixtitle(?:toc)?on\b/.test(code)) };
+    factsKept = { pre: pre, local: local, facts: facts };
+    return facts;
+  }
+
+  // The numbers the PDF will print, where they can be known cheaply: figures and tables (continuous, by chapter or as 版式
+  // writes them by section), headings as 版式's 章节编号 has them (22.12 M, F6), footnotes, and what each \label names --
+  // in a main file from its own text, in a chapter file from its main file's preamble and what the main file reads
+  // before it (`doc`: {pre, local, before}, from the engine). A form not read here, anything after an \input: unknown
+  // (null), said in words instead; after \appendix the headings go on (A, A.1, 附录 A), the figures, tables and
+  // footnotes are unknown. `words`: the document's own names (docFacts).
+  const beforeKept = new Map();
+  const FIGURE_COUNTED = /^(?:figure|sidewaysfigure|wrapfigure)\*?$/, TABLE_COUNTED = /^(?:table|sidewaystable|wraptable)\*?$/;
+  const COUNTED = new Set(["chapter", "section", "subsection", "subsubsection", "figure", "table", "footnote"]);
+  function numbersOf(text, read, doc) {
+    const out = { fig: new Map(), tab: new Map(), notes: new Map(), labels: new Map(), heads: new Map(), words: null, sig: "" };
+    const pre = read.preamble ? text.slice(0, read.preamble.to) : doc && typeof doc.pre === "string" ? doc.pre : null;
+    const F = pre != null ? docFacts(pre, doc ? doc.local : null) : null;
+    out.words = F ? F.words : null;
+    const sign = () => { out.sig = JSON.stringify([Array.from(out.fig.values()), Array.from(out.tab.values()), Array.from(out.notes.values()), Array.from(out.labels),
+      Array.from(out.heads.values()), F && [F.words, F.heads]]); return out; };
+    if (!F || (!read.preamble && !(doc && typeof doc.before === "string"))) return sign();
+    const P = masked(pre), chapters = F.chapters;
+    const mode = (w) => {
+      if (new RegExp("\\\\(?:numberwithin|@addtoreset)\\s*(?:\\[[^\\]]*\\])?\\s*\\{" + w + "\\}").test(P)) return null;
+      const within = new RegExp("\\\\counterwithin\\s*\\{" + w + "\\}\\s*\\{(\\w+)\\}").exec(P), without = new RegExp("\\\\counterwithout\\s*\\{" + w + "\\}").test(P);
+      const the = new RegExp("\\\\renewcommand\\s*\\{?\\\\the" + w + "\\}?\\s*\\{(.*)\\}\\s*$", "m").exec(P);
+      if (the) {
+        if (within && within[1] === "section" && the[1].replace(/\s/g, "") === "\\arabic{section}-\\arabic{" + w + "}") return "section-";
+        if (chapters && the[1].replace(/\s/g, "") === "\\thechapter-\\arabic{" + w + "}") return "chapter-";
+        return null;
+      }
+      if (within) return null;
+      return chapters && !without ? "chapter." : "";
+    };
+    const modes = { figure: mode("figure"), table: mode("table") };
+    const levels = chapters ? ["chapter", "section", "subsection"] : ["section", "subsection", "subsubsection"];
+    const W = F.words, zh = F.heads === "zh", steps = F.heads !== "none";
+    // the number a heading prints and the one a \ref to it prints (measured, 22.12 M): {text, ref, tight}
+    const headLabel = (C, lvl) => {
+      const k = levels.indexOf(lvl);
+      if (k < 0 || F.heads == null || F.heads === "none" || C.headsLost) return null;
+      const ch = C.appx && chapters ? letterOf(C.chapter) : String(C.chapter), sec = C.appx && !chapters ? letterOf(C.section) : String(C.section);
+      if (ch == null || sec == null) return null;
+      if (lvl === "chapter") {
+        if (C.appx) return W.appendix ? { text: W.appendix + " " + ch, ref: ch } : null;
+        if (F.ctex) { const cn = chineseNumber(C.chapter); return cn ? { text: DOC_ZH[9] + cn + DOC_ZH[10], ref: cn } : null; }
+        return W.chapter ? { text: W.chapter + " " + ch, ref: ch } : null;
+      }
+      if (zh) {
+        if (lvl === "section") {
+          if (C.appx && !chapters) return { text: sec, ref: sec, tight: true };
+          const cn = chineseNumber(C.section); return cn ? { text: cn + DOC_ZH[12], ref: cn, tight: true } : null;
+        }
+        if (lvl === "subsection") { const cn = chineseNumber(C.subsection), w = cn ? DOC_ZH[13] + cn + DOC_ZH[14] : null; return w ? { text: w, ref: w, tight: true } : null; }
+        return { text: C.subsubsection + ".", ref: String(C.subsubsection) };
+      }
+      const parts = chapters ? [ch, C.section, C.subsection] : [sec, C.subsection, C.subsubsection];
+      const n = parts.slice(0, k + 1).join(".");
+      return { text: n, ref: n };
+    };
+    // one text's commands counted, from `from`; `rec`: whether what it finds is recorded (the main file's text before a
+    // chapter file is counted, not recorded). As TeX steps them (22.12 R, measured): a \caption steps the counter of the
+    // float it is in -- figure, table and their sideways and wrapped forms --, never a subfigure's; a longtable steps the
+    // table counter at its start, \captionof the one it names; a \caption in a float not read here leaves the later
+    // numbers of both unknown. \frontmatter and \backmatter take the chapters' numbers away; \setcounter and \addtocounter
+    // of a heading's, a float's or the footnote counter set it (a value that is not a number: all unknown after it);
+    // \footnote[7] prints 7 and steps nothing, \footnotemark steps it, a minipage's footnote is its own (a, b: unknown);
+    // the appendix package's appendices environment is \appendix (its titles' word unknown), and after it all is unknown.
+    const count = (C, r, t2, from, rec) => {
+      const floats = r.envs.filter((e) => e.endFrom < e.to && (FIGURE_COUNTED.test(e.name) || TABLE_COUNTED.test(e.name)));
+      const inside = (list, c) => list.filter((e) => e.from < c.from && c.to <= e.to).pop();
+      const subs = r.envs.filter((e) => SUB_FLOATS.test(e.name)), minis = r.envs.filter((e) => e.name === "minipage");
+      const longs = r.envs.filter((e) => e.name === "longtable");
+      const theorems = r.envs.filter((e) => e.role === "text" && !PLAIN_TEXT_ENVS.has(e.name.replace(/\*$/, "")));
+      const evs = [];
+      for (const e of r.envs) {
+        if (e.from < from) continue;
+        if (e.name === "appendices") { evs.push({ at: e.from, what: "appendix" }); if (e.endFrom < e.to) evs.push({ at: e.to, what: "lost" }); }
+        else if (e.name === "subappendices") evs.push({ at: e.from, what: "lost" });
+        else if (e.name === "longtable") evs.push({ at: e.from, what: "longtable", e: e });
+      }
+      evs.sort((a, b) => a.at - b.at);
+      const appendix = () => {   // the headings start again at A, the floats and notes are not counted after it
+        C.appx = true; C.target = null;
+        if (chapters) C.chapter = 0; else C.section = 0;
+        C.subsection = C.subsubsection = 0;
+      };
+      const step = (kind, key) => {
+        C[kind] += 1;
+        const m = modes[kind], n = C.lost || C.appx || C[kind + "Lost"] || m == null ? null : m === "" ? String(C[kind]) : m === "chapter." ? (C.chapter > 0 ? C.chapter + "." : "") + C[kind]
+          : m === "chapter-" ? C.chapter + "-" + C[kind] : C.section + "-" + C[kind];
+        if (rec) { const map = kind === "figure" ? out.fig : out.tab; if (!map.has(key)) map.set(key, n); }
+        C.target = n == null ? null : { kind: kind, n: n };
+      };
+      let ev = 0;
+      const upTo = (at) => {
+        for (; ev < evs.length && evs[ev].at <= at; ev++) {
+          const x = evs[ev];
+          if (x.what === "appendix") { appendix(); if (F.appxTitles) C.headsLost = true; }
+          else if (x.what === "lost") { C.lost = true; C.target = null; }
+          else step("table", x.e.from);
+        }
+      };
+      for (const c of r.cmds) {
+        if (c.name === "setcounter" || c.name === "addtocounter") {
+          const a = c.args.filter((x) => !x.opt);
+          if (a.length === 2) {
+            const name = t2.slice(a[0].from + 1, a[0].to - 1).trim(), v = t2.slice(a[1].from + 1, a[1].to - 1).trim();
+            const key = name === "footnote" ? "note" : name;
+            if (name === "secnumdepth" && c.from >= from) C.lost = true;
+            else if (COUNTED.has(name)) {
+              if (/^-?\d+$/.test(v)) C[key] = (c.name === "setcounter" ? 0 : C[key]) + Number(v);
+              else C.lost = true;
+            }
+          }
+          continue;
+        }
+        if (c.from < from) continue;
+        upTo(c.from);
+        if (INCLUDE_CMDS.has(c.name)) { C.lost = true; C.target = null; continue; }
+        if (c.name === "appendix" || c.name === "appendices") { appendix(); continue; }
+        if (c.name === "frontmatter" || c.name === "backmatter") { C.outside = true; continue; }
+        if (c.name === "mainmatter") { C.outside = false; continue; }
+        if (c.role === "heading") {
+          const star = c.nameTo > c.from + 1 + c.name.length;
+          // a chapter outside the main matter (\frontmatter, \backmatter) is not numbered and steps nothing
+          if (star || (c.name === "chapter" && C.outside)) { C.target = null; if (rec) out.heads.set(c.from, null); continue; }
+          // TeX steps a heading's counter only where it numbers it (secnumdepth: none at all with 不编号)
+          if (steps) {
+            if (c.name === "chapter") { C.chapter += 1; C.section = C.subsection = C.subsubsection = 0; if (chapters) { if (modes.figure === "chapter." || modes.figure === "chapter-") C.figure = 0; if (modes.table === "chapter." || modes.table === "chapter-") C.table = 0; C.note = 0; } }
+            else if (c.name === "section") { C.section += 1; C.subsection = C.subsubsection = 0; if (modes.figure === "section-") C.figure = 0; if (modes.table === "section-") C.table = 0; }
+            else if (c.name === "subsection") { C.subsection += 1; C.subsubsection = 0; }
+            else if (c.name === "subsubsection" && !chapters) C.subsubsection += 1;
+          }
+          const label = C.lost ? null : headLabel(C, c.name);
+          if (rec) out.heads.set(c.from, label);
+          C.target = label ? { kind: c.name === "chapter" ? "chapter" : "section", n: label.ref, lvl: c.name, appx: C.appx, top: c.name === levels[0] } : null;
+          continue;
+        }
+        if (c.name === "caption" && c.args.some((a) => !a.opt) && c.nameTo === c.from + 8) {
+          if (inside(subs, c) || inside(longs, c)) continue;   // a subfigure's own counter; a longtable counted at its start
+          const f = inside(floats, c);
+          if (!f) { C.figureLost = C.tableLost = true; C.target = null; continue; }
+          step(FIGURE_COUNTED.test(f.name) ? "figure" : "table", f.from);
+          continue;
+        }
+        if (c.name === "captionof") {
+          const a = c.args.filter((x) => !x.opt), kind = a.length ? t2.slice(a[0].from + 1, a[0].to - 1).trim() : "";
+          if (kind === "figure" || kind === "table") step(kind, c.from); else { C.figureLost = C.tableLost = true; C.target = null; }
+          continue;
+        }
+        if (c.name === "footnote" && c.args.some((a) => !a.opt)) {
+          const opt = c.args.find((a) => a.opt), v = opt ? t2.slice(opt.from + 1, opt.to - 1).trim() : null;
+          if (opt) { if (rec) out.notes.set(c.from, /^\d+$/.test(v) && !C.lost && !C.appx ? v : null); continue; }
+          if (inside(minis, c)) { if (rec) out.notes.set(c.from, null); continue; }
+          C.note += 1; if (rec) out.notes.set(c.from, C.lost || C.appx ? null : String(C.note)); continue;
+        }
+        if (c.name === "footnotemark") { if (!c.args.some((a) => a.opt) && !inside(minis, c)) C.note += 1; continue; }
+        if (c.role === "item" && c.list && c.list.name === "enumerate") { C.target = null; continue; }
+        if (rec && c.name === "label" && c.args.length) {
+          const key = t2.slice(c.args[0].from + 1, c.args[0].to - 1).trim();
+          // in a theorem (and its like) a label names the theorem, whose number is not counted here: unknown
+          const own = theorems.some((e) => e.beginTo <= c.from && c.from < e.endFrom);
+          if (key && !out.labels.has(key)) out.labels.set(key, own ? null : C.target);
+        }
+      }
+      upTo(Infinity);
+      return C;
+    };
+    let C = { chapter: 0, section: 0, subsection: 0, subsubsection: 0, figure: 0, table: 0, note: 0, lost: false, appx: false, target: null,
+      outside: false, figureLost: false, tableLost: false, headsLost: false };
+    if (!read.preamble) {
+      // a chapter file: counted on from what its main file reads before it (kept while that text is the same)
+      const key = JSON.stringify([out.sig, F.heads, F.chapters, modes, F.words.appendix, F.words.chapter]) + doc.before;
+      if (!beforeKept.has(key)) {
+        if (beforeKept.size > 4) beforeKept.clear();
+        const b = readLatex(doc.before), at = b.preamble ? b.preamble.to : 0;
+        beforeKept.set(key, count(Object.assign({}, C), b, doc.before, at, false));
+      }
+      C = Object.assign({}, beforeKept.get(key), { target: null });
+      if (C.lost) return sign();
+    }
+    count(C, read, text, read.preamble ? read.preamble.to : 0, true);
+    return sign();
+  }
+  // The numbers before a change, still true after it, or null: when no command and no environment's \begin or \end is
+  // touched, the preamble is not, and every command and environment reads as before (`cmp`, from `compared`), what
+  // numbersOf counts is the same -- only where each figure, table, footnote and heading starts has moved.
+  function numbersKept(old, num, read, ch, cmp) {
+    if (!old.preamble !== !read.preamble || (old.preamble && old.preamble.to !== read.preamble.to)) return null;
+    if (old.cmds.length !== read.cmds.length || cmp.cmds[0] + cmp.cmds[1] !== read.cmds.length) return null;
+    if (old.envs.length !== read.envs.length || cmp.envs[0] + cmp.envs[1] !== read.envs.length) return null;
+    let near = false;
+    ch.iterChangedRanges((fa, ta, fb, tb) => {
+      if (old.preamble && fa <= old.preamble.to) near = true;
+      eachMeeting(read.cmds, fb, tb, (c) => { if (c.from <= tb && c.to >= fb) near = true; });
+      eachMeeting(read.envs, fb, tb, (e) => { if ((e.from <= tb && e.beginTo >= fb) || (e.endFrom <= tb && e.to >= fb)) near = true; });
+    });
+    if (near) return null;
+    const moved = (m) => { const out = new Map(); m.forEach((v, k) => out.set(cmp.map(k), v)); return out; };
+    return { fig: moved(num.fig), tab: moved(num.tab), notes: moved(num.notes), heads: moved(num.heads), labels: num.labels, words: num.words, sig: num.sig };
+  }
+
+  const PLAIN_TEXT_ENVS = new Set(["document", "abstract", "quote", "quotation", "verse", "center", "flushleft", "flushright", "doublespace",
+    "onehalfspace", "singlespace", "spacing", "minipage", "multicols", "appendices", "landscape", "titlepage", "frame"]);
+  // What a \cite chip says: author and year from the project's .bib (`cites`, from each key to its words), else the key.
+  function citeWords(keys, cites) { return keys.map((k) => (cites && cites.get(k)) || k).join(t("；")); }
+  // \ref prints the number alone, as the PDF does ("Table~\ref{t}" reads "Table 1", 22.12 M, F4); the commands that print
+  // a name with it (\autoref, \cref …) say the kind in the interface's words.
+  // \autoref prints hyperref's English names, \cref and \Cref cleveref's (measured, 22.12 R: "Figure 1", "section 1",
+  // "subsection 1.1", "Appendix A"); where the document's are not known (babel, polyglossia) the interface's words.
+  const AUTO_NAMES = { figure: "Figure", table: "Table", chapter: "chapter", section: "section", subsection: "subsection", subsubsection: "subsubsection" };
+  const CREF_NAMES = { figure: ["fig.", "figure", "Figure"], table: ["tab.", "table", "Table"], chapter: ["chapter", "chapter", "Chapter"],
+    section: ["section", "section", "Section"], appendix: ["appendix", "appendix", "Appendix"] };
+  function docRef(name, x, words) {
+    if (name === "autoref" && words && words.auto) {
+      const w = x.appx && x.top ? "Appendix" : AUTO_NAMES[x.lvl || x.kind];
+      return w ? w + " " + x.n : null;
+    }
+    if ((name === "cref" || name === "Cref") && words && words.cref) {
+      const k = x.appx && x.top ? "appendix" : x.kind === "section" ? "section" : x.kind, w = CREF_NAMES[k];
+      return w ? w[name === "Cref" || words.cref.cap ? 2 : words.cref.full ? 1 : 0] + " " + x.n : null;
+    }
+    return null;
+  }
+  function refWords(name, keys, num) {
+    return keys.map((k) => {
+      const x = name === "pageref" || name === "nameref" ? null : num.labels.get(k);   // \nameref prints a title, not a number
+      if (!x) return t("引用：{key}", { key: k });
+      if (name === "ref") return x.n;
+      const own = docRef(name, x, num.words);
+      if (own) return own;
+      return x.kind === "figure" ? t("图 {n}", { n: x.n }) : x.kind === "table" ? t("表 {n}", { n: x.n }) : x.kind === "chapter" ? t("第 {n} 章", { n: x.n }) : t("第 {n} 节", { n: x.n });
+    }).join(name === "ref" ? ", " : t("、"));
+  }
+  // The visible character of an accent: the letter with its combining mark, composed.
+  function accented(mark, letter) { return (letter.replace(/^\\i$/, "ı") + mark).normalize("NFC"); }
+  const CJK_ONE = /[぀-ヿ㐀-䶿一-鿿豈-﫿　-〿＀-￯]/;
 
   // Constructs read before (mapped through the change) and now, compared from both ends: the ranges of those between,
   // which differ, are pushed to `spans`.
-  function differ(was, now, same, parts, map, spans) {
+  function sameEnds(was, now, same) {
     const n = Math.min(was.length, now.length);
     let a = 0, b = 0;
     while (a < n && same(was[a], now[a])) a += 1;
     while (b < n - a && same(was[was.length - 1 - b], now[now.length - 1 - b])) b += 1;
+    return [a, b];
+  }
+  // sameEnds for a list of {from, to} (and a formula's `display`), the change's mapping written out: what lies wholly
+  // before it or after it is compared as it is, or shifted
+  function pairEnds(was, now, cmp) {
+    const n = Math.min(was.length, now.length), first = cmp.first, last = cmp.last, shift = cmp.shift, map = cmp.map;
+    let a = 0, b = 0;
+    for (; a < n; a++) {
+      const x = was[a], y = now[a];
+      if (x.display !== y.display) break;
+      if (x.to < first ? x.from !== y.from || x.to !== y.to : map(x.from) !== y.from || map(x.to) !== y.to) break;
+    }
+    for (; b < n - a; b++) {
+      const x = was[was.length - 1 - b], y = now[now.length - 1 - b];
+      if (x.display !== y.display) break;
+      if (x.from > last ? x.from + shift !== y.from || x.to + shift !== y.to : map(x.from) !== y.from || map(x.to) !== y.to) break;
+    }
+    return [a, b];
+  }
+  function differ(was, now, same, parts, map, spans, ends) {
+    const [a, b] = ends || sameEnds(was, now, same);
     for (let k = a; k < was.length - b; k++) parts(was[k], map).forEach((p) => spans.push([Math.min(p[0], p[1]), Math.max(p[0], p[1])]));
     for (let k = a; k < now.length - b; k++) parts(now[k], (x) => x).forEach((p) => spans.push(p));
   }
   function sameCmd(a, b, map) {
     if (a.role !== b.role || a.name !== b.name || a.n !== b.n || a.depth !== b.depth || (a.list && a.list.name) !== (b.list && b.list.name) ||
       map(a.from) !== b.from || map(a.to) !== b.to || map(a.nameTo) !== b.nameTo || a.args.length !== b.args.length) return false;
-    return a.args.every((x, k) => map(x.from) === b.args[k].from && map(x.to) === b.args[k].to);
+    for (let k = 0; k < a.args.length; k++) if (map(a.args[k].from) !== b.args[k].from || map(a.args[k].to) !== b.args[k].to) return false;
+    return true;
   }
   const envParts = (e, map) => [[map(e.from), map(e.beginTo)], [map(e.endFrom), map(e.to)]];
   const wholeParts = (x, map) => [[map(x.from), map(x.to)]];
+  const sameEnv = (map) => (a, b) => map(a.from) === b.from && map(a.beginTo) === b.beginTo && map(a.endFrom) === b.endFrom && map(a.to) === b.to;
+  // A change's ch.mapPos, without its walk over the changes where the answer is plain (before every change, or after all
+  // of them); and how the commands and environments read before and now compare from both ends (`sameEnds`): what
+  // `redraw` and `numbersKept` both ask, looked at once a key.
+  function compared(old, read, ch) {
+    let first = Infinity, last = -Infinity;
+    ch.iterChangedRanges((fa, ta) => { if (fa < first) first = fa; if (ta > last) last = ta; });
+    const shift = ch.newLength - ch.length, map = (x) => (x < first ? x : x > last ? x + shift : ch.mapPos(x));
+    return { map: map, first: first, last: last, shift: shift, cmds: sameEnds(old.cmds, read.cmds, (a, b) => sameCmd(a, b, map)), envs: sameEnds(old.envs, read.envs, sameEnv(map)) };
+  }
 
-  // Where the decorations must be drawn again after `tr` (22.1): around each change, every construct read differently
-  // from before, and every one the selection now touches or leaves (none while `live` is off); widened to whole lines
-  // and to every construct it reaches until none crosses an edge. Null when nothing is to be drawn again.
-  function redraw(old, read, math, tr, live) {
-    const doc = tr.state.doc, ch = tr.changes, map = (x) => ch.mapPos(x), sel = tr.state.selection.ranges, spans = [];
-    const was = tr.docChanged ? tr.startState.selection.map(ch).ranges : tr.startState.selection.ranges;
-    const pre = preambleEnd(doc, read);
-    if (tr.docChanged) {
-      ch.iterChangedRanges((fa, ta, fb, tb) => spans.push([fb, tb]));
-      differ(old.cmds, read.cmds, (a, b) => sameCmd(a, b, map), wholeParts, map, spans);
-      differ(old.envs, read.envs, (a, b) => map(a.from) === b.from && map(a.beginTo) === b.beginTo && map(a.endFrom) === b.endFrom && map(a.to) === b.to, envParts, map, spans);
-      differ(old.maths, read.maths, (a, b) => map(a.from) === b.from && map(a.to) === b.to && a.display === b.display, wholeParts, map, spans);
-      const preWas = map(preambleEnd(tr.startState.doc, old));
-      if (preWas !== pre) spans.push([0, Math.max(pre, preWas)]);
-    }
-    if (inPreamble(was, pre) !== inPreamble(sel, pre)) spans.push([0, pre]);
-    const touch = (s, from, to) => s.some((r) => r.from <= to && r.to >= from);
-    const flip = (from, to) => { if (live && touch(was, from, to) !== touch(sel, from, to)) spans.push([from, to]); };
-    for (const c of read.cmds) if (c.role !== "other" && c.from >= pre) flip(c.from, c.to);
-    if (math) for (const f of read.maths) if (f.from >= pre) flip(f.from, f.to);
-    if (!spans.length) return null;
+  // Where the edit view must be drawn again after `tr`: around each change and every construct read differently from
+  // before, widened to whole lines and to every construct they reach, so none crosses an edge. Null when nothing is.
+  function redraw(old, read, tr, extents, cmp) {
+    if (!tr.docChanged) return null;
+    const doc = tr.state.doc, ch = tr.changes, spans = [];
+    ch.iterChangedRanges((fa, ta, fb, tb) => spans.push([fb, tb]));
+    cmp = cmp || compared(old, read, ch);
+    const map = cmp.map;
+    differ(old.cmds, read.cmds, null, wholeParts, map, spans, cmp.cmds);
+    differ(old.envs, read.envs, null,
+      // an environment whose lines take a class (a list, a quote …) is drawn again whole when it changes
+      (e, m) => (wholeEnv(e) || ((e.role === "list" || e.role === "text") && e.name !== "document") ? wholeParts(e, m) : envParts(e, m)), map, spans, cmp.envs);
+    differ(old.maths, read.maths, null, wholeParts, map, spans, pairEnds(old.maths, read.maths, cmp));
+    differ(old.groups, read.groups, (a, b) => a.name === b.name && map(a.from) === b.from && map(a.nameTo) === b.nameTo && map(a.to) === b.to, wholeParts, map, spans);
+    differ(old.raws, read.raws, null, wholeParts, map, spans, pairEnds(old.raws, read.raws, cmp));
+    differ(old.braces, read.braces, null, (x, m) => [[m(x.from), m(x.from + 1)], [m(x.to - 1), m(x.to)]], map, spans, pairEnds(old.braces, read.braces, cmp));
+    differ(old.symbols, read.symbols, null, wholeParts, map, spans, pairEnds(old.symbols, read.symbols, cmp));
+    if (JSON.stringify(old.meta) !== JSON.stringify(read.meta)) for (const c of read.cmds) if (c.name === "maketitle") spans.push([c.from, c.nameTo]);
+    const preWas = old.preamble ? map(old.preamble.to) : -1, preNow = read.preamble ? read.preamble.to : -1;
+    if (preWas !== preNow) spans.push([0, Math.max(preWas, preNow, 0)]);
     const lines = (list) => {
       const out = [];
-      list.map((s) => [doc.lineAt(s[0]).from, doc.lineAt(s[1]).to]).sort((x, y) => x[0] - y[0]).forEach((s) => {
+      list.map((s) => [doc.lineAt(Math.min(s[0], doc.length)).from, doc.lineAt(Math.min(s[1], doc.length)).to]).sort((x, y) => x[0] - y[0]).forEach((s) => {
         const last = out[out.length - 1];
         if (last && s[0] <= last[1] + 1) last[1] = Math.max(last[1], s[1]); else out.push(s);
       });
       return out;
     };
     let w = lines(spans);
-    for (let pass = 0; pass < 8; pass++) {
-      let grew = false;
+    for (let pass = 0; pass < 12; pass++) {
+      let grew = false, lo = Infinity, hi = -Infinity;
+      for (const s of w) { if (s[0] < lo) lo = s[0]; if (s[1] > hi) hi = s[1]; }
       const reach = (from, to) => {
-        for (const s of w) if (from <= s[1] && to >= s[0] && (from < s[0] || to > s[1])) { s[0] = Math.min(s[0], from); s[1] = Math.max(s[1], to); grew = true; }
+        for (const s of w) {
+          if (from <= s[1] && to >= s[0] && (from < s[0] || to > s[1])) {
+            s[0] = Math.min(s[0], from); s[1] = Math.max(s[1], to); grew = true;
+            if (s[0] < lo) lo = s[0];
+            if (s[1] > hi) hi = s[1];
+          }
+        }
       };
-      if (pre > 0) reach(0, pre);
-      for (const c of read.cmds) reach(c.from, c.to);
-      for (const e of read.envs) { reach(e.from, e.beginTo); reach(e.endFrom, e.to); }
-      for (const f of read.maths) reach(f.from, f.to);
+      // each list in its order, from the first item that can meet a place to the last that starts before the places'
+      // end as they grow: those skipped would change nothing (a key looks near itself, not at the whole file)
+      const over = (list, fn) => {
+        const a = meetRange(list, lo, hi)[0];
+        if (meetsCache.get(list) === null) { list.forEach(fn); return; }
+        for (let k = a; k < list.length && list[k].from <= hi; k++) fn(list[k]);
+      };
+      if (read.preamble) reach(0, read.preamble.to);
+      over(read.cmds, (c) => reach(c.from, c.to));
+      over(read.envs, (e) => { if (wholeEnv(e)) reach(e.from, e.to); else { reach(e.from, e.beginTo); reach(e.endFrom, e.to); } });
+      over(read.maths, (f) => reach(f.from, f.to));
+      over(read.groups, (g) => reach(g.from, g.to));
+      over(read.raws, (r) => reach(r.from, r.to));
+      for (const x of extents) reach(x[0], x[1]);
+      // a pair of braces drawn again at one end is drawn again at the other: what it is (an argument, a group) is one
+      const ends = [];
+      over(read.braces, (b) => {
+        const a = w.some((s) => b.from <= s[1] && b.from + 1 >= s[0]), z = w.some((s) => b.to - 1 <= s[1] && b.to >= s[0]);
+        if (a !== z) ends.push(a ? [b.to - 1, b.to] : [b.from, b.from + 1]);
+      });
+      if (ends.length) { w = lines(w.concat(ends)); continue; }
       if (!grew) return w;
       w = lines(w);
     }
@@ -456,132 +1759,1486 @@
   let wx = null;
   function wordField(CM) {
     if (wx && wx.CM === CM) return wx;
-    // `live` (on unless the editor turns it off): whether the selection shows the source of what it touches. The editor
-    // loads a file with it off and turns it on at the first focus, so the cursor CodeMirror puts at 0 (or the body's
-    // start) before anyone has clicked never shows a file's first heading as source.
-    const mathOn = CM.StateEffect.define(), preamble = CM.StateEffect.define(), live = CM.StateEffect.define(), D = CM.Decoration;
-    class MathWidget extends CM.WidgetType {
-      constructor(src, display, whole) { super(); this.src = src; this.display = display; this.whole = whole; }
-      eq(other) { return other.whole === this.whole; }
-      toDOM() { return mathDOM(this.src, this.display, this.whole); }
-      ignoreEvent() { return false; }   // a click places the cursor there, which shows the source
+    // `mathOn`: KaTeX has arrived (formulas are typeset); `refresh`: what a chip says changed (the .bib was read).
+    // `preamble` and `live` are kept for callers of the earlier rule and change nothing.
+    const mathOn = CM.StateEffect.define(), refresh = CM.StateEffect.define(), preamble = CM.StateEffect.define(), live = CM.StateEffect.define();
+    const D = CM.Decoration;
+    // A click on an atom selects it whole (the right column then says where it is changed).
+    const selectOnClick = (el, view, block) => {
+      if (!el || typeof el.addEventListener !== "function") return el;
+      el.addEventListener("mousedown", (event) => {
+        if (event.button || !view || typeof view.posAtDOM !== "function") return;
+        event.preventDefault();
+        const at = view.posAtDOM(el), value = view.state.field(field, false);
+        let range = null;
+        if (value) value.deco.between(at, at + 1, (from, to, v) => { if (!range && from === at && v.spec.atom) range = [from, to]; });
+        if (range) view.dispatch({ selection: block ? { anchor: range[0], head: range[1] } : { anchor: range[0], head: range[1] }, userEvent: "select.atom" });
+        if (typeof view.focus === "function") view.focus();
+      });
+      return el;
+    };
+    class TextW extends CM.WidgetType {
+      constructor(text, cls, plain) { super(); this.text = text; this.cls = cls || ""; this.plain = plain == null ? text : plain; }
+      eq(o) { return o.text === this.text && o.cls === this.cls; }
+      toDOM() { return mk("span", this.cls || "latex-text", this.text); }
     }
-    class Chip extends CM.WidgetType {
-      constructor(text, kind) { super(); this.text = text; this.kind = kind; }
-      eq(other) { return other.text === this.text && other.kind === this.kind; }
-      toDOM() { return mk("span", "latex-chip latex-chip-" + this.kind, this.text); }
-      ignoreEvent() { return false; }
+    class ChipW extends CM.WidgetType {
+      constructor(text, kind, block) { super(); this.text = text; this.kind = kind; this.block = !!block; this.plain = text; }
+      eq(o) { return o.text === this.text && o.kind === this.kind && o.block === this.block; }
+      toDOM(view) { return selectOnClick(mk(this.block ? "div" : "span", "latex-chip latex-chip-" + this.kind + (this.block ? " latex-chip-block" : ""), this.text), view); }
+      ignoreEvent() { return true; }
     }
-    class Item extends CM.WidgetType {
-      constructor(n) { super(); this.n = n; }
-      eq(other) { return other.n === this.n; }
-      toDOM() { return mk("span", this.n ? "latex-item" : "latex-item latex-bullet", this.n ? this.n + "." : ""); }
-    }
-    // 导言区 is a button (12.11): Tab reaches it, Return and Space press it. Folding it moves a cursor that was in the
-    // preamble to the body, so the fold always closes when asked. Its state is said in words, with no chevron (22.6).
-    class Preamble extends CM.WidgetType {
-      constructor(open) { super(); this.open = open; }
-      eq(other) { return other.open === this.open; }
+    class MathW extends CM.WidgetType {
+      constructor(src, display, whole, k) { super(); this.src = src; this.display = display; this.whole = whole; this.k = k; this.plain = src; }
+      eq(o) { return o.whole === this.whole && o.k === this.k; }
       toDOM(view) {
-        const b = mk("button", "latex-preamble", this.open ? t("收起导言区") : t("导言区（已折叠，点开）"));
-        b.setAttribute("type", "button");
-        b.setAttribute("aria-expanded", String(this.open));
-        b.addEventListener("mousedown", (event) => event.preventDefault());
-        b.addEventListener("click", () => {
-          const value = view.state.field(field, false);
-          if (!value) return;
-          const spec = { effects: preamble.of(!this.open) };
-          if (this.open && inPreamble(view.state.selection.ranges, preambleEnd(view.state.doc, value.read))) spec.selection = { anchor: bodyStart(view.state.doc, value.read) };
-          view.dispatch(spec);
-          view.focus();
-        });
-        return b;
+        // never the code: until KaTeX is in, and for a formula it cannot typeset (mathDOM's own), a quiet word
+        const el = this.k ? mathDOM(this.src, this.display, this.whole) : mk(this.display ? "div" : "span", "latex-math-tag", t("公式"));
+        return selectOnClick(el, view);
       }
       ignoreEvent() { return true; }
     }
-    const command = D.mark({ class: "latex-cmd" }), hide = D.replace({});
+    class NoteW extends CM.WidgetType {
+      constructor(n) { super(); this.n = n; this.plain = ""; }
+      eq(o) { return o.n === this.n; }
+      toDOM(view) { return selectOnClick(mk("sup", "latex-note-mark", this.n || t("注")), view); }
+      ignoreEvent() { return true; }
+    }
+    class BulletW extends CM.WidgetType {
+      constructor(n, term) { super(); this.n = n; this.term = term; this.plain = term ? term + " " : ""; }
+      eq(o) { return o.n === this.n && o.term === this.term; }
+      toDOM() {
+        if (this.term != null) return mk("span", "latex-item latex-term", this.term);
+        return mk("span", this.n ? "latex-item" : "latex-item latex-bullet", this.n ? this.n + "." : "");
+      }
+    }
+    class VerbW extends CM.WidgetType {
+      constructor(text, block) { super(); this.text = text; this.block = block; this.plain = text; }
+      eq(o) { return o.text === this.text && o.block === this.block; }
+      toDOM(view) { return selectOnClick(mk(this.block ? "pre" : "span", "latex-verbatim", this.text), view); }
+      ignoreEvent() { return true; }
+    }
+    class GraphicW extends CM.WidgetType {
+      constructor(path) { super(); this.path = path; this.plain = ""; }
+      eq(o) { return o.path === this.path; }
+      toDOM(view) { return selectOnClick(graphicDOM(this.path, "span"), view); }
+      ignoreEvent() { return true; }
+    }
+    // a figure's images and the word before its caption (「图 N：」), the caption itself editable after it
+    class FigW extends CM.WidgetType {
+      constructor(paths, word) { super(); this.paths = paths; this.word = word; this.plain = ""; }
+      eq(o) { return o.word === this.word && o.paths.join("\n") === this.paths.join("\n"); }
+      toDOM(view) {
+        const box = mk("span", "latex-figure-part");
+        this.paths.forEach((p) => box.appendChild(graphicDOM(p, "span")));
+        if (this.word) box.appendChild(mk("span", "latex-caption-word", this.word));
+        return selectOnClick(box, view);
+      }
+      ignoreEvent() { return true; }
+    }
+    // a block of the page drawn from `make`, compared by `key`; `onClick` (the title block: 文档信息) or selected whole
+    class BlockW extends CM.WidgetType {
+      constructor(key, make, plain, onClick) { super(); this.key = key; this.make = make; this.plain = plain || ""; this.onClick = onClick || null; }
+      eq(o) { return o.key === this.key; }
+      toDOM(view) {
+        const el = this.make();
+        if (this.onClick && typeof el.addEventListener === "function") {
+          el.addEventListener("mousedown", (event) => { if (!event.button) { event.preventDefault(); this.onClick(view); } });
+          return el;
+        }
+        return selectOnClick(el, view, true);
+      }
+      ignoreEvent() { return true; }
+    }
+    // a paragraph break between words on one line (\par, 22.12 M F7): a new line, its first line indented as 首行缩进 says
+    // (`first`: after a heading, indented as a heading's first paragraph is; `before`: quiet words before the break)
+    class ParW extends CM.WidgetType {
+      constructor(first, before) { super(); this.first = !!first; this.before = before || null; this.plain = "\n"; }
+      eq(o) { return o.first === this.first && o.before === this.before; }
+      toDOM() {
+        const el = mk("span", "latex-parbreak" + (this.first ? " latex-parbreak-first" : ""));
+        if (this.before) el.append(mk("span", "latex-short", this.before));
+        el.append(mk("span", "latex-parbreak-line"), mk("span", "latex-parbreak-indent"));
+        return el;
+      }
+    }
+    // an empty cell of a grid (22.12 T): a box of the cell's width where the cursor stands, drawn inside its padding
+    class CellW extends CM.WidgetType {
+      constructor(cls, style) { super(); this.cls = cls; this.style = style; this.plain = ""; }
+      eq(o) { return o.cls === this.cls && o.style === this.style; }
+      toDOM() { const el = mk("span", this.cls); if (this.style && typeof el.setAttribute === "function") el.setAttribute("style", this.style); return el; }
+      ignoreEvent() { return false; }   // a click in it puts the cursor there
+      coordsAt(dom) {
+        if (!dom || typeof dom.getBoundingClientRect !== "function" || typeof getComputedStyle !== "function") return null;
+        const r = dom.getBoundingClientRect(), cs = getComputedStyle(dom), x = r.left + (parseFloat(cs.paddingLeft) || 0);
+        return { left: x, right: x, top: r.top + (parseFloat(cs.paddingTop) || 0), bottom: r.bottom - (parseFloat(cs.paddingBottom) || 0) };
+      }
+    }
+    // set by the editor: what a click on the title block and the 导言区 line does; `doc`, a chapter file's main file
+    // ({pre, local, before}: numbersOf), or a main file's own .sty and .cls ({local})
+    const hooks = { title: null, preamble: null, doc: null };
+    // (a grid's cells and rows carry their widths: `style`)
     const marks = new Map();
-    const mark = (cls) => { if (!marks.has(cls)) marks.set(cls, D.mark({ class: cls })); return marks.get(cls); };
-    const lineMarks = [1, 2, 3, 4].map((k) => D.line({ class: "latex-li latex-li-" + k }));
+    const mark = (cls, style) => {
+      const k = style ? cls + "\u0000" + style : cls;
+      if (!marks.has(k)) marks.set(k, D.mark(style ? { class: cls, attributes: { style: style } } : { class: cls }));
+      return marks.get(k);
+    };
+    const lines = new Map();
+    const lineDeco = (cls, style) => {
+      const k = style ? cls + "\u0000" + style : cls;
+      if (!lines.has(k)) lines.set(k, D.line(style ? { class: cls, attributes: { style: style } } : { class: cls }));
+      return lines.get(k);
+    };
 
-    // The decorations of the constructs that meet `within` ([from, to], closed: none crosses its edges), or of all.
-    function decorate(read, math, open, state, within, on) {
-      const doc = state.doc, sel = state.selection.ranges, out = [];
-      const touch = (from, to) => on !== false && sel.some((r) => r.from <= to && r.to >= from);
+    // The pieces of the edit view that meet `within` ([from, to], whole lines; all when null).
+    function viewPieces(doc, read, info, within) {
+      const text = info.text, len = text.length, num = info.num;
+      const W0 = within ? Math.max(0, within[0] - 1) : 0, W1 = within ? Math.min(len, within[1] + 1) : len;
+      const near = (from, to) => from <= W1 && to >= W0;
+      // a list's items that may be near (all when drawn whole), in order: those left out would be skipped by `near`
+      const nearOf = (list) => { if (!within) return list; const r = meetRange(list, W0 - 2, W1 + 2); return r[0] === 0 && r[1] === list.length ? list : list.slice(r[0], r[1]); };
+      const cand = [], grids = [];
+      const atom = (from, to, widget, extra) => {
+        if (!(to > from)) return null;
+        const p = Object.assign({ from: from, to: to, widget: widget || null, atom: true }, extra || {});
+        cand.push(p);
+        return p;
+      };
+      const lineOf = (pos) => doc.lineAt(Math.min(Math.max(pos, 0), len));
+      const blank = (l) => !l.text.trim();
+      const commentOnly = (l) => { const at = codePart(l.text); return at.length < l.text.length && !at.trim(); };
+      const alone = (from, to) => aloneOn(doc, from, to) && !codePart(text.slice(to, lineOf(to).to)).trim();
+      const word = (s) => (s == null ? null : plainWords(s));
+
+      // the preamble and \begin{document}: one quiet line (版式 edits it; 显示代码 shows it); \end{document} and after
+      const docEnv = read.preamble ? read.envs.find((e) => e.name === "document" && e.from === read.preamble.to) : null;
+      const bodyFrom = docEnv ? docEnv.beginTo : read.preamble ? read.preamble.to : 0, bodyTo = docEnv && docEnv.endFrom < docEnv.to ? docEnv.endFrom : len;
+      if (docEnv) {
+        const bl = lineOf(docEnv.beginTo), whole = !codePart(text.slice(docEnv.beginTo, bl.to)).trim();
+        const words = preambleWords(read.meta);
+        atom(0, whole ? bl.to : docEnv.beginTo, new BlockW("pre" + words, () => {
+          const box = mk("div", "latex-preamble-block"), b = mk("button", "latex-preamble", words);
+          b.setAttribute("type", "button");
+          box.append(b, mk("div", "latex-doc-mark", t("正文开始")));
+          return box;
+        }, "", () => { if (hooks.preamble) hooks.preamble(); }), { block: whole, lead: true, kind: "preamble" });
+        if (docEnv.endFrom < docEnv.to) {
+          const el = lineOf(docEnv.endFrom), own = !text.slice(el.from, docEnv.endFrom).trim();
+          atom(own ? el.from : docEnv.endFrom, len, new BlockW("de", () => mk("div", "latex-doc-mark", t("正文结束"))), { block: own, trail: true, kind: "end" });
+        }
+      }
+      // comments: hidden; a line that is only a comment leaves no trace (nor does a paragraph of them)
+      const claimed = new Set();
+      const runs = new Set();
+      const rawsNear = nearOf(read.raws);
+      for (const r of rawsNear) {
+        if (r.kind !== "comment" || !near(r.from - 1, r.to + 1)) continue;
+        const l = lineOf(r.from);
+        // a comment after words: what is typed at its end goes before it, never into it
+        if (!commentOnly(l)) { atom(r.from, r.to, null, { kind: "comment", trail: true }); continue; }
+        let a = l.number, b = l.number;
+        while (a > 1 && commentOnly(doc.line(a - 1))) a -= 1;
+        while (b < doc.lines && commentOnly(doc.line(b + 1))) b += 1;
+        if (runs.has(a)) continue;
+        runs.add(a);
+        const first = doc.line(a), last = doc.line(b), next = b < doc.lines;
+        const before = a > 1 && blank(doc.line(a - 1)) && next;
+        const from = before ? first.from - 1 : first.from, to = next ? last.to + 1 : last.to;
+        if (before) claimed.add(first.from - 1);
+        if (next) claimed.add(last.to);
+        atom(from, to, null, { kind: "comment" });
+      }
+      // verbatim text, shown as it is (it is the researcher's, not code); the comment environment hidden
+      for (const r of rawsNear) {
+        if (r.kind === "comment" || !near(r.from, r.to)) continue;
+        if (r.kind === "verb") {
+          const star = text[r.from + 5] === "*" ? 1 : 0;
+          atom(r.from, r.to, new VerbW(r.inner ? text.slice(r.inner[0], r.inner[1]) : text.slice(r.from + 6 + star, r.to - 1), false), { kind: "verb" });
+          continue;
+        }
+        const first = lineOf(r.from), last = lineOf(r.to), own = alone(r.from, r.to);
+        if (/^\\begin\s*\{comment\}/.test(text.slice(r.from, r.from + 20))) { atom(own ? first.from : r.from, own && last.number < doc.lines ? last.to + 1 : r.to, null, { kind: "comment" }); continue; }
+        const inner = first.number < last.number ? doc.sliceString(doc.line(first.number + 1).from, Math.max(doc.line(first.number + 1).from, last.from - 1)) : "";
+        atom(own ? first.from : r.from, own ? last.to : r.to, new VerbW(inner, own), { block: own, kind: "verbatim" });
+      }
+      // formulas, typeset (or a quiet 公式 until KaTeX is in or where it cannot typeset): changed only in 显示代码
+      for (const f of nearOf(read.maths)) if (near(f.from, f.to)) atom(f.from, f.to, new MathW(f.src, f.display, text.slice(f.from, f.to), info.math), { kind: "math" });
+      // floats and other environments the edit view does not open
+      const floatEnds = [];   // the floats open before an environment, by their end (environments come in order)
+      for (const e of read.envs) {
+        while (floatEnds.length && floatEnds[floatEnds.length - 1] <= e.from) floatEnds.pop();
+        const inFloat = floatEnds.length > 0;
+        if (e.endFrom < e.to && (TABLE_FLOATS.has(e.name) || FIGURE_FLOATS.has(e.name))) floatEnds.push(e.to);
+        if (!(e.endFrom < e.to) || !near(e.from, e.to) || e.role === "text" || e.role === "list") continue;
+        const own = alone(e.from, e.to), from = own ? lineOf(e.from).from : e.from, to = own ? lineOf(e.to).to : e.to;
+        if (TABLE_FLOATS.has(e.name) || (TABULARS.has(e.name) && !inFloat)) {
+          const n = num.tab.get(e.from), wordOf = floatWord("table", n, num.words), g = gridOf(text, read, e);
+          if (g) { gridPieces(g, TABLE_FLOATS.has(e.name) ? wordOf : null); continue; }   // its cells typed in place (22.12 T)
+          const model = tableModel(doc, read, e);
+          const widget = model ? new BlockW(info.typeset + "t" + wordOf + text.slice(e.from, e.to), () => tableDOM(model, wordOf), "")
+            : new ChipW(TABLE_FLOATS.has(e.name) ? floatWords(read, e, t("表格"), text, num.words, "table", n) : t("表格"), "unit", own);
+          atom(from, to, widget, { block: own, kind: "table" });
+          continue;
+        }
+        if (FIGURE_FLOATS.has(e.name)) {
+          const model = figureModel(doc, read, e);
+          const caps = read.cmds.filter((c) => c.name === "caption" && c.from > e.beginTo && c.to <= e.endFrom);
+          const cap = caps.length === 1 && caps[0].nameTo === caps[0].from + 8 ? caps[0].args.filter((a) => !a.opt) : [];
+          const wordOf = floatWord("figure", num.fig.get(e.from), num.words);
+          if (model && cap.length === 1) {
+            const a = cap[0], pics = read.cmds.filter((c) => c.name === "includegraphics" && c.from > e.beginTo && c.to <= e.endFrom);
+            const pathOf = (c) => { const x = c.args.filter((y) => !y.opt); return text.slice(x[0].from + 1, x[0].to - 1).trim(); };
+            const before = pics.filter((c) => c.from < a.from).map(pathOf), after = pics.filter((c) => c.from > a.to).map(pathOf);
+            atom(from, a.from + 1, new FigW(before, wordOf), { kind: "figure", slotTo: true, frame: { from: from, to: to, openTo: a.from + 1, closeFrom: a.to - 1, kind: "figure" } });
+            atom(a.to - 1, to, after.length ? new FigW(after, null) : null, { kind: "figure", slotFrom: true });
+            continue;
+          }
+          atom(from, to, model ? new BlockW(info.typeset + "f" + wordOf + text.slice(e.from, e.to), () => figureDOM(model, wordOf), "")
+            : new ChipW(floatWords(read, e, t("图"), text, num.words, "figure", num.fig.get(e.from)), "unit", own), { block: own, kind: "figure" });
+          continue;
+        }
+        // a longtable: its caption as the PDF prints it (it steps the table counter itself), else its cells' words
+        if (e.name === "longtable") { atom(from, to, new ChipW(floatWords(read, e, t("表格"), text, num.words, "table", num.tab.get(e.from), true), "unit", own), { block: own, kind: "table" }); continue; }
+        if (e.role === "raw" && !TABULARS.has(e.name)) atom(from, to, new ChipW(t("LaTeX 内容"), "unit", own), { block: own, kind: "unit" });
+      }
+      // commands
+      const bareArgs = new Set();
+      const cmdsNear = nearOf(read.cmds);
+      // definitions are drawn to their end (definitionEnd), which may be past their command's: each is looked at, in order
+      const defsFar = cmdsNear === read.cmds ? [] : read.defs.filter((c) => !cmdsNear.length || c.from < cmdsNear[0].from || c.from > cmdsNear[cmdsNear.length - 1].from);
+      for (const c of defsFar.length ? defsFar.concat(cmdsNear).sort((a, b) => a.from - b.from) : cmdsNear) {
+        if (!near(c.from, Math.max(c.to, c.nameTo + 1)) && !DEFINITIONS.has(c.name)) continue;
+        const n = c.name, args = c.args.filter((a) => !a.opt), arg = (k) => text.slice(args[k].from + 1, args[k].to - 1);
+        if (c.role === "heading" || c.role === "style") continue;   // frames, below
+        if (c.group) continue;
+        if (DEFINITIONS.has(n)) { const end = definitionEnd(text, c); if (near(c.from, end)) atom(c.from, end, new ChipW(t("LaTeX 内容"), "unit", false), { kind: "unit" }); continue; }
+        if (c.role === "cite") {
+          const keys = arg(0).split(",").map((k) => k.trim()).filter(Boolean);
+          // its notes ([see][p.~3]) said with it, as the PDF prints them
+          const notes = c.args.filter((a) => a.opt).map((a) => word(text.slice(a.from + 1, a.to - 1))).filter(Boolean);
+          atom(c.from, c.to, new ChipW([citeWords(keys, info.cites)].concat(notes).join(t("，")), "cite"), { kind: "cite" });
+          continue;
+        }
+        if (HIDDEN_CMDS.has(n) && args.length) { hideLine(c.from, c.to); continue; }
+        if ((c.role === "ref" || REF_LIKE.test(n)) && args.length) { atom(c.from, c.to, new ChipW(refWords(n, arg(0).split(",").map((k) => k.trim()).filter(Boolean), num), "ref"), { kind: "ref" }); continue; }
+        if (c.role === "item") {
+          if (!c.list) atom(c.from, c.nameTo, new ChipW(t("LaTeX 内容"), "unit"), { kind: "unit" });
+          continue;   // list items: below
+        }
+        if (n === "footnote" && args.length === 1) { atom(c.from, c.to, new NoteW(num.notes.get(c.from) || null), { kind: "footnote" }); continue; }
+        if (n === "url" && args.length === 1) { atom(c.from, c.to, new ChipW(arg(0).trim(), "url"), { kind: "url" }); continue; }
+        if (n === "href" && args.length === 2) { atom(c.from, c.to, new ChipW(word(arg(1)) || t("链接"), "url"), { kind: "url" }); continue; }
+        if (n === "includegraphics" && args.length === 1) { atom(c.from, c.to, new GraphicW(arg(0).trim()), { kind: "graphic" }); continue; }
+        if (n === "input" && !args.length) {   // \input chap2, with no braces: the file named, as with them
+          const m = /^[ \t]+([^\s{}\\%]+)/.exec(text.slice(c.nameTo, c.nameTo + 200));
+          if (m) { atom(c.from, c.nameTo + m[0].length, new ChipW(t("引入 {file}", { file: m[1] }), "unit"), { kind: "unit" }); continue; }
+        }
+        if (INCLUDE_CMDS.has(n) && args.length) { atom(c.from, c.to, new ChipW(t("引入 {file}", { file: args.map((a, k) => arg(k).trim()).join("/") }), "unit"), { kind: "unit" }); continue; }
+        if (n === "maketitle" && !c.args.length) {
+          const meta = { title: read.meta.title, author: read.meta.author, date: read.meta.date, own: !!read.preamble };
+          if (alone(c.from, c.nameTo)) {
+            const l = lineOf(c.from);
+            atom(l.from, l.to, new BlockW(info.typeset + "t" + JSON.stringify(meta), () => titleDOM(meta), "", (view) => { if (hooks.title) hooks.title(view); }), { block: true, kind: "title" });
+          } else atom(c.from, c.nameTo, new ChipW(t("标题"), "unit"), { kind: "unit" });
+          continue;
+        }
+        if (LINE_COMMANDS.has(n)) {
+          const words = lineWords(n, num.words);
+          if (alone(c.from, c.to)) { const l = lineOf(c.from); atom(l.from, l.to, new BlockW("l" + words, () => mk("div", "latex-line-mark", words)), { block: true, kind: "line" }); }
+          else atom(c.from, c.to, new ChipW(words, "unit"), { kind: "unit" });
+          continue;
+        }
+        if (n === "today") { atom(c.from, c.to, new ChipW(t("导出当天的日期"), "unit"), { kind: "unit" }); continue; }
+        if (TEXT_MACROS.has(n)) {   // \LaTeX{}: its "{}" with it; any group after that is a group of its own, not an argument
+          const empty = !!c.args[0] && !c.args[0].opt && c.args[0].to - c.args[0].from === 2;
+          atom(c.from, empty ? c.args[0].to : c.nameTo, new TextW(TEXT_MACROS.get(n)), { kind: "text" });
+          c.args.forEach((a, k) => { if (!(empty && k === 0)) bareArgs.add(a.from); });
+          continue;
+        }
+        if (ACCENTS[n] && args.length === 1 && /^\s*(?:\\i|[A-Za-z])\s*$/.test(arg(0))) { atom(c.from, c.to, new TextW(accented(ACCENTS[n], arg(0).trim())), { kind: "text" }); continue; }
+        if (BREAKS.has(n)) { atom(c.from, c.to, new TextW("", "latex-br", "\n"), { kind: "break" }); continue; }
+        const skipTo = c.args.length ? -1 : skipLen(n, text.slice(c.nameTo, c.nameTo + 200));
+        if (skipTo >= 0 && VERTICAL.has(n)) {
+          // \par (and \vskip, \vfill, \hrule) alone on its line: hidden, the line read as a blank one (F5); between words
+          // on a line: a new paragraph drawn there, its first line indented (F7)
+          const end = c.nameTo + skipTo, l = lineOf(c.from), before = codePart(text.slice(l.from, c.from)).trim(), after = codePart(text.slice(end, l.to)).trim();
+          if (before && after) { atom(c.from, end + (text[end] === " " ? 1 : 0), new ParW(), { kind: "parbreak" }); continue; }
+          atom(c.from, end + (before && !after ? 0 : text[end] === " " && after ? 1 : 0), null, { kind: "hidden" });
+          continue;
+        }
+        if (skipTo > 0 || (skipTo === 0 && !SILENT.has(n))) {
+          const end = c.nameTo + skipTo + (text[c.nameTo + skipTo] === " " ? 1 : 0);
+          if (alone(c.from, c.nameTo + skipTo)) hideLine(c.from, c.nameTo + skipTo); else atom(c.from, end, null, { kind: "hidden" });
+          continue;
+        }
+        if (SILENT.has(n) || GROUP_CLASSES.has(n)) {
+          c.args.forEach((a) => bareArgs.add(a.from));
+          if (alone(c.from, c.nameTo) && !c.args.length) hideLine(c.from, c.nameTo);
+          else atom(c.from, c.nameTo + (text[c.nameTo] === " " && !c.args.length ? 1 : 0), null, { kind: "hidden" });
+          continue;
+        }
+        // (\rowcolor must start its row: words typed at its start go after it)
+        if (SILENT_ARGS.has(n)) { if (alone(c.from, c.to)) hideLine(c.from, c.to); else atom(c.from, c.to, null, { kind: "hidden", lead: n === "rowcolor" }); continue; }
+        const wrap = WRAPPERS.get(n);
+        if (wrap && args.length === wrap[1] && c.args[c.args.length - 1] === args[args.length - 1]) continue;   // frames, below
+        if (n === "caption" && args.length === 1) { atom(c.from, c.to, new ChipW(word(arg(0)) || t("LaTeX 内容"), "unit"), { kind: "unit" }); continue; }
+        // anything else: one quiet chip, its plain words (never the command's name), or 「LaTeX 内容」
+        const words = c.args.length ? c.args.map((a) => word(text.slice(a.from + 1, a.to - 1))) : [];
+        const said = words.length && words.every((w) => w != null) ? words.filter(Boolean).join(" ") : "";
+        atom(c.from, c.to, new ChipW(said || t("LaTeX 内容"), "unit"), { kind: "unit" });
+      }
+      // A table drawn as a grid (22.12 T): its markup hidden in atoms -- the lines before its first row (or its caption)
+      // with it, the lines between rows with the row before -- so each row is one line of the page, drawn as a row of
+      // cells (a line class); each cell's text marked as a cell, an empty cell a box of its own where the cursor stands;
+      // the caption's words editable after 「表 N：」. Bridges keep the cursor from stopping between a row's last cell and
+      // the next row's first. `lead` and `trail`: words typed at the table's first edge go to its first cell or caption,
+      // those typed at a row's end to its last cell.
+      function gridPieces(g, word) {
+        const rows = g.rows, last = rows.length - 1, cap = g.caption, x = { g: g, marks: [], lines: [], points: [], bridges: [] };
+        const opt = (more) => Object.assign({ kind: "grid" }, more);
+        // each column its words' width, the spaces round them and the cell's padding (about two digits a side); a table
+        // whose longest words do not fit the page's measure that way is drawn compact (smaller, less padding), each column
+        // as wide as its longest word's share, so a number or a word is never broken letter by letter (22.12 R)
+        const compact = g.words.reduce((sum, w) => sum + w + 6, 0) > 46;
+        const share = g.widths.map((w, k) => (compact ? g.words[k] + 2 : w + 6));
+        const total = share.reduce((sum, w) => sum + w, 0), rowStyle = "width:min(100%," + total + "ch)";
+        const cls = g.cols.map((al, k) => "latex-cell" + (al === "l" ? "" : " latex-col-" + al) + (g.bars && g.bars[k] ? " latex-cell-bl" : "") +
+          (g.bars && k === g.cols.length - 1 && g.bars[k + 1] ? " latex-cell-br" : ""));
+        const style = share.map((w) => "width:" + Math.round(w / total * 1000) / 10 + "%");
+        const capWord = word ? new TextW(word, "latex-caption-word", "") : null;
+        if (cap && !cap.below) {
+          x.first = atom(g.from, cap.open, capWord, opt({ lead: true, slotTo: true }));
+          atom(cap.close, rows[0].from - 1, null, opt({ slotFrom: true }));
+          x.lines.push([g.from, "latex-tcap-line"]);
+          x.bridges.push([cap.close, rows[0].lead]);
+        }
+        rows.forEach((r, k) => {
+          const top = k === 0 && !(cap && !cap.below), lead = atom(top ? g.from : r.from, r.lead, null, opt({ lead: true, slotTo: true }));
+          if (top) x.first = lead;
+          r.seps.forEach((p) => atom(p, p + 1, null, opt({ slotFrom: true, slotTo: true, plain: "\t" })));
+          const endTo = k < last ? rows[k + 1].from - 1 : cap && cap.below ? cap.line - 1 : g.to;
+          atom(r.end, endTo, null, opt({ trail: true, slotFrom: true }));
+          if (k < last) x.bridges.push([r.end, rows[k + 1].lead]);
+          r.cells.forEach((c, j) => {
+            if (c[1] > c[0]) x.marks.push([c[0], c[1], cls[j] + (text.slice(c[0], c[1]).trim() ? "" : " latex-cell-empty"), style[j]]);
+            else x.points.push({ at: c[0], widget: new CellW(cls[j] + " latex-cell-empty", style[j]) });
+          });
+          x.lines.push([top ? g.from : r.from, "latex-trow" + (compact ? " latex-trow-compact" : "") + (r.above ? " latex-trule-" + r.above : "") + (r.below ? " latex-trule-below-" + r.below : ""), rowStyle]);
+        });
+        if (cap && cap.below) {
+          atom(cap.line, cap.open, capWord, opt({ slotTo: true }));
+          atom(cap.close, g.to, null, opt({ trail: true, slotFrom: true }));
+          x.lines.push([cap.line, "latex-tcap-line latex-tcap-below"]);
+          x.bridges.push([rows[last].end, cap.open]);
+        }
+        // the table's last place is drawn where its last words end: the arrow keys pass from there to the next line
+        if (text[g.to] === "\n") x.bridges.push([cap && cap.below ? cap.close : rows[last].end, g.to + 1]);
+        grids.push(x);
+      }
+      // a line that only holds what is hidden (a \label, \noindent …) leaves no trace, its line break with it
+      function hideLine(from, to) {
+        const l = lineOf(from);
+        if (alone(from, to) && !text.slice(to, l.to).trim() && l.number < doc.lines && !claimed.has(l.to)) { claimed.add(l.to); atom(l.from, l.to + 1, null, { kind: "hidden" }); }
+        else atom(from, to, null, { kind: "hidden" });
+      }
+      // one-character commands and ties
+      for (const s of nearOf(read.symbols)) {
+        if (!near(s.from, s.to + 2)) continue;
+        const ch = s.ch;
+        if (ch === "\\") {
+          let to = s.to;
+          if (text[to] === "*") to += 1;
+          const sp = skipSpaces(text, to);
+          if (text[sp] === "[") { const g = skipGroup(text, sp, true); if (g > 0) to = g; }
+          const eol = !text.slice(to, lineOf(to).to).trim();
+          atom(s.from, eol ? lineOf(to).to : to, eol ? null : new TextW("", "latex-br", "\n"), { kind: "break" });
+          continue;
+        }
+        if (Object.prototype.hasOwnProperty.call(SYMBOL_TEXT, ch)) { atom(s.from, s.to, new TextW(SYMBOL_TEXT[ch]), { kind: "text" }); continue; }
+        if (SYMBOL_SILENT.has(ch)) { atom(s.from, s.to, null, { kind: "hidden" }); continue; }
+        if (ACCENTS[ch]) {
+          const m = /^(?:\{\s*(\\i|[A-Za-z])\s*\}|(\\i(?![A-Za-z])|[A-Za-z]))/.exec(text.slice(s.to, s.to + 8));
+          if (m) { atom(s.from, s.to + m[0].length, new TextW(accented(ACCENTS[ch], m[1] || m[2])), { kind: "text" }); continue; }
+        }
+        atom(s.from, s.to, new ChipW(t("LaTeX 内容"), "unit"), { kind: "unit" });
+      }
+      for (const p of nearOf(read.tildes)) if (near(p, p + 1)) atom(p, p + 1, new TextW(" "), { kind: "text" });
+
+      // an environment's options (\begin{minipage}{0.5\textwidth}, [label=(\alph*)]) are hidden with its \begin: nothing
+      // drawn inside them
+      const optSpans = [];
+      for (const e of read.envs) {
+        if ((e.role !== "list" && e.role !== "text") || e.name === "document" || !(e.endFrom < e.to) || !near(e.from, e.to)) continue;
+        const end = envArgsEnd(text, e);
+        if (end > e.beginTo) optSpans.push([e.beginTo, end]);
+      }
+      if (optSpans.length) for (let k = cand.length - 1; k >= 0; k--) if (optSpans.some((x) => x[0] <= cand[k].from && cand[k].to <= x[1])) cand.splice(k, 1);
+      // the atoms kept: outermost first, none inside another
+      cand.sort((a, b) => a.from - b.from || (b.kind === "grid") - (a.kind === "grid") || b.to - a.to);   // a grid's own markup first (a caption below)
+      const kept = [];
+      let reach = -1;
+      for (const p of cand) { if (p.from < reach) continue; kept.push(p); reach = p.to; }
+      const inside = (pos) => {
+        let lo = 0, hi = kept.length - 1;
+        while (lo <= hi) { const mid = (lo + hi) >> 1; if (kept[mid].to <= pos) lo = mid + 1; else if (kept[mid].from > pos) hi = mid - 1; else return kept[mid]; }
+        return null;
+      };
+      const blockLine = (l) => { const k = inside(l.from); return !!k && k.block && k.from <= l.from && k.to >= l.to; };
+      // the grids drawn (none inside an atom of something else): their spans, where the lines are theirs alone
+      const shownGrids = grids.filter((x) => x.first && kept.includes(x.first)), inGrid = (pos) => shownGrids.some((x) => x.g.from <= pos && pos <= x.g.to);
+      // [from, to) cut short at the first atom kept in it (a comment after a \begin on its line)
+      const upTo = (from, to) => {
+        let lo = 0, hi = kept.length;
+        while (lo < hi) { const mid = (lo + hi) >> 1; if (kept[mid].from < from) lo = mid + 1; else hi = mid; }
+        return lo < kept.length && kept[lo].from < to ? kept[lo].from : to;
+      };
+
+      // frames: what keeps its words editable, its markup hidden
+      const out = kept.slice(), marksOut = [], linesOut = [];
+      const hide = (from, to, extra) => { if (to > from) out.push(Object.assign({ from: from, to: to, widget: null, atom: true }, extra || {})); };
+      const markupRanges = [];
+      for (const c of cmdsNear) {
+        if (!near(c.from, c.to) || inside(c.from)) continue;
+        const wrap = WRAPPERS.get(c.name), args = c.args.filter((a) => !a.opt);
+        let cls = null;
+        if ((c.role === "heading" || c.role === "style") && args.length && c.args[c.args.length - 1] === args[args.length - 1]) cls = c.role === "heading" ? "latex-h latex-h" + HEADINGS.get(c.name) : STYLES.get(c.name);
+        else if (wrap && !c.group && args.length === wrap[1] && c.args[c.args.length - 1] === args[args.length - 1] && !SILENT.has(c.name)) cls = wrap[0];
+        else continue;
+        const a = c.args[c.args.length - 1], l = lineOf(c.from), lead = c.role === "heading" && !text.slice(l.from, c.from).trim();
+        const rest = text.slice(c.to, lineOf(c.to).to).replace(/\\label\s*\{[^{}]*\}/g, "");
+        const short = c.role === "heading" && c.args.length > 1 && c.args[0].opt ? word(text.slice(c.args[0].from + 1, c.args[0].to - 1)) : null;
+        // words after a heading on its line are its first paragraph: on a line of their own (\paragraph's run in)
+        const tail = c.role === "heading" ? headingTail(text, c) : "";
+        // a heading's number as the PDF prints it (22.12 M, F6): shown, never text -- the cursor passes it with the markup
+        const hn = c.role === "heading" ? num.heads.get(c.from) : null;
+        hide(lead ? l.from : c.from, a.from + 1, { kind: "open", lead: lead, slotTo: true,
+          widget: hn ? new TextW(hn.text, "latex-hnum latex-h latex-h" + HEADINGS.get(c.name) + (hn.tight ? " latex-hnum-tight" : ""), "") : null });
+        // (with words after it on its line, the spaces before them go with it: the words start their own line)
+        const sp = tail ? /^[ \t]*/.exec(text.slice(c.to, c.to + 40))[0].length : 0;
+        hide(a.to - 1, c.to + sp, { kind: "close", slotFrom: true, trail: c.role === "heading" && !codePart(rest).trim(),
+          widget: tail ? new ParW(true, short ? t("（目录中：{words}）", { words: short }) : null) : short ? new TextW(t("（目录中：{words}）", { words: short }), "latex-short", "") : null });
+        if (a.to - 1 > a.from + 1 && cls) marksOut.push([a.from + 1, a.to - 1, cls]);
+        if (c.role === "heading") linesOut.push([l.from, "latex-hline"]);
+        markupRanges.push([c.from, a.from + 1], [a.to - 1, c.to]);
+      }
+      for (const g of nearOf(read.groups)) {
+        if (!near(g.from, g.to) || inside(g.from)) continue;
+        if (groupShown(read, g)) {
+          hide(g.from, g.nameTo, { kind: "open", slotTo: true });
+          hide(g.to - 1, g.to, { kind: "close", slotFrom: true });
+          if (g.to - 1 > g.nameTo) marksOut.push([g.nameTo, g.to - 1, GROUP_CLASSES.get(g.name)]);
+        } else { hide(g.from, g.nameTo); hide(g.to - 1, g.to); }
+        markupRanges.push([g.from, g.nameTo], [g.to - 1, g.to]);
+      }
+      // lists and environments of running text: \begin and \end hidden (a line of its own hides its line break before
+      // it, so the lines around keep their places); items a bullet, a number or a description's term
+      const swallow = (l) => l.number > 1 && !claimed.has(l.from - 1) && !blockLine(doc.line(l.number - 1)) && !inside(l.from - 1);
+      for (const e of read.envs) {
+        if ((e.role !== "list" && e.role !== "text") || e.name === "document" || !(e.endFrom < e.to) || !near(e.from, e.to) || inside(e.from)) continue;
+        const argsEnd = envArgsEnd(text, e);
+        const items = e.role === "list" ? e.itemCmds : [];
+        const bl = lineOf(e.from), bOwn = alone(e.from, argsEnd), el = lineOf(e.endFrom), eOwn = alone(e.endFrom, e.to);
+        const titleOf = e.role === "text" && text[e.beginTo] === "[" ? word(text.slice(e.beginTo + 1, argsEnd - 1)) : null;
+        const dw = num.words || {};   // the document's own words (22.12 M, F4)
+        // a document whose word is not known here (a babel language): no word, never the interface's (22.12 R)
+        const label = e.name === "abstract" ? (num.words ? dw.abstract : t("摘要")) : e.name === "proof" ? (num.words ? dw.proof : t("证明")) : titleOf ? titleOf : null;
+        const head = label ? new TextW(label, e.name === "abstract" ? "latex-abstract-head" : "latex-env-head", label + "\n") : null;
+        // typed at the end of \begin, words go to the first item, or the first line inside
+        const fwd = items.length ? itemEnd(items[0]) : bOwn && bl.to + 1 < e.endFrom ? bl.to + 1 : null;
+        if (bOwn) {
+          const sw = swallow(bl);
+          if (sw) claimed.add(bl.from - 1);
+          hide(sw ? bl.from - 1 : bl.from, upTo(bl.from, bl.to), { kind: "begin", widget: head, fwd: fwd });
+        } else hide(e.from, argsEnd, { kind: "begin", widget: head, fwd: fwd, lead: !text.slice(bl.from, e.from).trim() });
+        if (eOwn) {
+          const sw = swallow(el) && el.from - 1 > (bOwn ? bl.to : argsEnd);
+          if (sw) claimed.add(el.from - 1);
+          hide(sw ? el.from - 1 : el.from, upTo(el.from, el.to), { kind: "end", trail: true, slotFrom: true });
+        } else hide(e.endFrom, e.to, { kind: "end", trail: true, slotFrom: true });
+        markupRanges.push([e.from, argsEnd], [e.endFrom, e.to]);
+        for (const m of items) {
+          if (inside(m.from)) continue;
+          const ml = lineOf(m.from), lead = !text.slice(ml.from, m.from).trim();
+          const opt = m.args.find((a) => a.opt), term = opt ? word(text.slice(opt.from + 1, opt.to - 1)) : null;
+          hide(lead ? ml.from : m.from, itemEnd(m), { kind: "item", lead: lead, slotTo: true,
+            widget: new BulletW(e.name === "enumerate" ? m.n : 0, opt ? (term == null ? t("LaTeX 内容") : term) : null) });
+        }
+      }
+      function itemEnd(m) { const opt = m.args.find((a) => a.opt), at = opt ? opt.to : m.nameTo; return text[at] === " " ? at + 1 : at; }
+      // a group of braces that is no command's argument: its braces hidden, its words kept
+      const markIn = (pos) => markupRanges.some((r) => pos >= r[0] && pos < r[1]);
+      for (const b of nearOf(read.braces)) {
+        if (!near(b.from, b.to) || inside(b.from) || (read.argStarts.has(b.from) && !bareArgs.has(b.from)) || markIn(b.from)) continue;
+        if (read.groups.some((g) => g.from === b.from)) continue;
+        hide(b.from, b.from + 1, { kind: "brace" });
+        hide(b.to - 1, b.to, { kind: "brace" });
+      }
+      // a paragraph's single line breaks are spaces (none between two CJK characters, as ctex sets them)
+      out.sort((a, b) => a.from - b.from || a.to - b.to);
+      const covered = (pos) => {
+        let lo = 0, hi = out.length - 1;
+        while (lo <= hi) { const mid = (lo + hi) >> 1; if (out[mid].to <= pos) lo = mid + 1; else if (out[mid].from > pos) hi = mid - 1; else return true; }
+        // `out` may overlap after the frames: look at the neighbours too
+        for (let k = Math.max(0, lo - 3); k < Math.min(out.length, lo + 3); k++) if (out[k].from <= pos && pos < out[k].to) return true;
+        return false;
+      };
+      const kindOf = (l) => {
+        if (blank(l)) return "blank";
+        if (commentOnly(l)) return "comment";
+        if (PAR_ONLY.test(codePart(l.text))) return "par";
+        if (/^\s*\\item(?![A-Za-z])/.test(l.text)) return "item";
+        return STRUCTURAL.test(l.text) ? "hard" : "text";
+      };
+      const first = lineOf(W0).number, last = lineOf(W1).number, spaces = [];
+      for (let k = first; k <= last && k < doc.lines; k++) {
+        const L = doc.line(k);
+        if (covered(L.to) || inGrid(L.from)) continue;
+        const kl = kindOf(L);
+        if (kl !== "text" && kl !== "item") continue;
+        if (/(?:^|[^\\])(?:\\\\)*\\\\\s*(?:\[[^\]]*\])?\s*$/.test(codePart(L.text)) || PAR_END.test(codePart(L.text))) continue;
+        let j = k + 1;
+        while (j <= doc.lines && commentOnly(doc.line(j))) j += 1;
+        if (j > doc.lines || kindOf(doc.line(j)) !== "text" || PAR_START.test(doc.line(j).text)) continue;
+        const next = doc.line(j).text.trim()[0] || "", prev = codePart(L.text).trimEnd().slice(-1);
+        spaces.push({ from: L.to, to: L.to + 1, widget: new TextW(CJK_ONE.test(prev) && CJK_ONE.test(next) ? "" : " ", "latex-text", " "), atom: true, kind: "space" });
+      }
+      out.push(...spaces);
+      out.sort((a, b) => a.from - b.from || a.to - b.to);
+      // Blank lines take no room (22.12 M, F5 -- browser acceptance 2026-11-14: each blank line between paragraphs was a
+      // full empty line, three with 行距 双倍, where the PDF has none): TeX reads any run of them as one paragraph break,
+      // which the page shows as a new line, and 段间距 as a gap above the paragraph's first line. Of a run of blank lines
+      // (or lines of \par alone) between two lines, the last is joined to the line of words after it and the first to the
+      // line of words before it; a third and more, between, are the empty paragraphs Return makes, a line each where the
+      // cursor stands. Between two lines that are not words -- a float's \end and \end{document}, two floats -- the run
+      // stays, a place to type after the float (typed there, a blank line is written before the words: F7).
+      const gaps = [];
+      const fill = (a, b, extra) => {   // the parts of [a, b) no piece covers, hidden (a \par alone has its own piece)
+        let at = a;
+        for (let p = a; p <= b; p++) {
+          if (p < b && !covered(p)) continue;
+          if (p > at) gaps.push(Object.assign({ from: at, to: p, widget: null, atom: true, kind: "gap" }, extra));
+          at = p + 1;
+        }
+      };
+      const reachOf = (pos) => {   // where the pieces covering `pos` end (`out` is in order; it may overlap: neighbours too)
+        let lo = 0, hi = out.length;
+        while (lo < hi) { const mid = (lo + hi) >> 1; if (out[mid].from <= pos) lo = mid + 1; else hi = mid; }
+        let r = -1;
+        for (let k = lo - 1; k >= 0 && k >= lo - 8; k--) if (out[k].from <= pos && pos < out[k].to && out[k].to > r) r = out[k].to;
+        return r;
+      };
+      // the line before `n` that the page shows (hidden lines of comments, their line breaks with them, passed over)
+      const prevShown = (n) => { let m = n - 1; while (m >= 1 && commentOnly(doc.line(m)) && covered(doc.line(m).to)) m -= 1; return m; };
+      const emptyLine = (l) => (blank(l) || PAR_ONLY.test(codePart(l.text))) && l.from > bodyFrom && l.to < bodyTo && !inGrid(l.from) &&
+        (!covered(l.from - 1) || (prevShown(l.number) >= 1 && prevShown(l.number) < l.number - 1 && !covered(doc.line(prevShown(l.number)).to)));
+      const floatEnd = (l) => FLOAT_END.test(codePart(l.text).trim()) || (inGrid(l.from) && inGrid(l.to));
+      const wordsLine = (l, below) => !!l && !blank(l) && l.from >= bodyFrom && l.from < bodyTo && !blockLine(l) && !(below ? FLOAT_BEGIN.test(l.text) || inGrid(l.from) : floatEnd(l));
+      for (let k = first; k <= last && k <= doc.lines; k++) {
+        if (!emptyLine(doc.line(k))) continue;
+        let j = k;
+        while (j < doc.lines && !covered(doc.line(j).to) && emptyLine(doc.line(j + 1))) j += 1;
+        const A = prevShown(k) >= 1 ? doc.line(prevShown(k)) : null, Lj = doc.line(j), B = j < doc.lines ? doc.line(j + 1) : null;
+        // the last line's break may be hidden already: by a paragraph of comments, which joins it to the words after them
+        // (as joined forward), or by a \begin alone on the line after, which leaves nothing on it (joined backward then)
+        const swallowed = covered(Lj.to) ? reachOf(Lj.to) : -1;
+        const onWords = swallowed > 0 && text[swallowed - 1] === "\n" && wordsLine(lineOf(swallowed), true);
+        const wa = wordsLine(A, false), wb = swallowed < 0 ? wordsLine(B, true) : onWords, n = j - k + 1;
+        const back = (L) => fill(L.number === k && A ? A.to : doc.line(L.number - 1).to, L.to, { trail: true });
+        const fwd = (L) => fill(L.from, Math.min(L.to + 1, len), { lead: true });
+        if (wa || wb) {
+          if (!onWords) { if (wb) fwd(Lj); else back(Lj); }
+          if (n > 1) { const L1 = doc.line(k); if (wa) back(L1); else fwd(L1); }
+        }
+        k = j;
+      }
+      if (gaps.length) { out.push(...gaps); out.sort((a, b) => a.from - b.from || a.to - b.to); }
+      // the line classes: where a visual line starts (its line break before is not hidden), by what it is in
+      const lineEnvs = read.envs.filter((e) => e.endFrom < e.to && (e.role === "list" || ENV_LINES[e.name] || (e.role === "text" && e.name !== "document")) && near(e.from, e.to));
+      const lf = within ? lineOf(within[0]).number : 1, ll = within ? lineOf(within[1]).number : doc.lines;
+      for (let k = lf; k <= ll; k++) {
+        const L = doc.line(k);
+        if ((k > 1 && covered(L.from - 1)) || inGrid(L.from)) continue;
+        if (inside(L.from) && inside(L.from).from < L.from) continue;
+        let depth = 0, cls = null;
+        for (const e of lineEnvs) {
+          if (!(e.beginTo <= L.from && L.from < e.endFrom)) continue;
+          if (e.role === "list") depth += 1; else if (ENV_LINES[e.name]) cls = ENV_LINES[e.name]; else cls = cls || "latex-env-line";
+        }
+        if (depth) linesOut.push([L.from, "latex-li latex-li-" + Math.min(depth, 4)]);
+        if (cls) linesOut.push([L.from, cls]);
+        else if (!depth) { const p = paraStart(L); if (p) linesOut.push([L.from, p]); }
+      }
+      // where a paragraph of running text starts, for 首行缩进 (22.12 B2): its first words' line, and the line before
+      // the quiet lines above it
+      function paraStart(L) {
+        if (L.from < bodyFrom || L.from >= bodyTo) return null;
+        let C = L, gap = false, noind = false;
+        const breaks = (l) => blank(l) || PAR_LINE.test(codePart(l.text));
+        // (a \noindent on a quiet line of its own is the paragraph's after it, unless a paragraph break comes between)
+        while (C.number < doc.lines && (quietLine(C.text) || blank(C)) && covered(C.to)) {
+          if (breaks(C)) { gap = true; noind = false; }
+          if (/\\noindent(?![A-Za-z])/.test(codePart(C.text))) noind = true;
+          C = doc.line(C.number + 1);
+        }
+        // an empty paragraph the page shows (F5: Return's, the place after a float): its cursor at the indent
+        if ((blank(C) || kindOf(C) === "par") && !covered(C.to)) return "latex-para";
+        if (C.from >= bodyTo || kindOf(C) !== "text" || noind || /^\s*\\noindent(?![A-Za-z])/.test(C.text.replace(PARS_LEAD, ""))) return null;
+        if (PAR_START.test(C.text)) return "latex-para";   // \par ends the paragraph before the words after it
+        return startAfter(L.number - 1, gap);
+      }
+      // What the lines up to `k` (the quiet and blank ones above it passed over) say of the words after them: a paragraph
+      // starts after a blank line or \par, the body's start, \maketitle, a contents line or a page break, and -- the
+      // first after a heading -- a heading, as TeX's \@afterheading does; after anything else the paragraph goes on
+      // (what follows a list, a quote or a displayed formula). A float on lines of its own is passed over as TeX passes
+      // it (22.12 M, F7): in a paragraph (words before it on the line above) the paragraph goes on round it, so the words
+      // after it are the same paragraph -- "Second paragraph here. Var" --; between paragraphs the words after it start one.
+      function startAfter(k, gap) {
+        for (let n = 0; n < 50; n++) {
+          while (k >= 1 && (quietLine(doc.line(k).text) || blank(doc.line(k)))) { if (blank(doc.line(k)) || PAR_LINE.test(codePart(doc.line(k).text))) gap = true; k -= 1; }
+          if (k < 1 || doc.line(k).to <= bodyFrom) return "latex-para";
+          const P = doc.line(k), code = codePart(P.text);
+          // (across a blank line too; after the words a heading has on its line, they are the paragraph going on)
+          if (HEADING_LINE.test(P.text)) return !wordsAfterHeading(P) ? "latex-para-first" : gap ? "latex-para" : null;
+          if (gap || PARA_AFTER.test(P.text) || PAR_END.test(code)) return "latex-para";
+          const e = FLOAT_END.test(code.trim()) ? floatOn(P) : null;
+          if (!e) return null;
+          k = lineOf(e.from).number - 1;
+        }
+        return null;
+      }
+      // The heading on line P has words after it on its line (22.12 R: "\section{Head} Words."): TeX sets them as the
+      // heading's first paragraph, drawn on a line of their own; the paragraph after them is an ordinary one.
+      function wordsAfterHeading(P) {
+        const r = meetRange(read.cmds, P.from, P.to);
+        for (let i = r[0]; i < r[1]; i++) {
+          const c = read.cmds[i];
+          if (c.role === "heading" && c.from >= P.from && c.to <= P.to && HEADING_LINE.test(text.slice(c.from, P.to))) return !!headingTail(text, c);
+        }
+        return false;
+      }
+      // the float that ends on line P, on lines of its own (nothing before its \begin on that line)
+      function floatOn(P) {
+        const r = meetRange(read.envs, P.from, P.to);
+        for (let i = r[0]; i < r[1]; i++) {
+          const e = read.envs[i];
+          if ((TABLE_FLOATS.has(e.name) || FIGURE_FLOATS.has(e.name)) && e.endFrom < e.to && e.to >= P.from && e.to <= P.to && !text.slice(lineOf(e.from).from, e.from).trim()) return e;
+        }
+        return null;
+      }
+      // a line class goes where the page's line starts: a heading's line joined to the blank line before it (F5) is that
+      // line's start
+      function visualStart(x) {
+        let p = x[0];
+        for (let n = 0; n < 50 && p > 0 && text[p - 1] === "\n" && covered(p - 1); n++) p = lineOf(p - 1).from;
+        return p === x[0] ? x : [p].concat(x.slice(1));
+      }
+      // a figure's caption sits under its images, centred
+      for (const p of out) if (p.frame && p.frame.kind === "figure") linesOut.push([lineOf(p.from).from, "latex-figure-line"]);
+      // words after a float's \end on its line (22.12 R): never in its line (a figure's centred caption line, or after its
+      // chip) -- a line of their own, in the paragraph TeX puts them in (F7: going on round a float in a paragraph,
+      // starting one after a float between them)
+      for (const e of read.envs) {
+        if (!(e.endFrom < e.to) || !(TABLE_FLOATS.has(e.name) || FIGURE_FLOATS.has(e.name)) || !near(e.from, e.to) || e.from < bodyFrom || e.to > bodyTo) continue;
+        const el = lineOf(e.to), rest = codePart(text.slice(e.to, el.to));
+        const k = inside(e.from);
+        if (!rest.trim() || (k && k.from < e.from)) continue;   // (a float inside something drawn whole: that one's)
+        const fl = lineOf(e.from), inPara = text.slice(fl.from, e.from).trim();
+        const cls = inPara ? null : startAfter(fl.number - 1, false);
+        marksOut.push([e.to + (rest.length - rest.trimStart().length), el.to, "latex-after-float" + (cls === "latex-para" ? " latex-after-float-para" : cls === "latex-para-first" ? " latex-after-float-first" : "")]);
+      }
+      // where two atoms touch and nothing may be typed between, a bridge over the place keeps the cursor from stopping
+      const bridges = [];
+      for (let k = 1; k < out.length; k++) {
+        const a = out[k - 1], b = out[k];
+        if (a.to === b.from && !a.slotTo && !b.slotFrom && !slotBetween(a, b)) bridges.push([a.to - 1, a.to + 1]);
+      }
+      const points = [];
+      for (const x of shownGrids) { bridges.push(...x.bridges); marksOut.push(...x.marks); linesOut.push(...x.lines); points.push(...x.points); }
       const meets = within ? (from, to) => from <= within[1] && to >= within[0] : () => true;
-      const pre = preambleEnd(doc, read);
-      if (pre > 0 && meets(0, pre)) {
-        out.push(open || inPreamble(sel, pre) ? D.widget({ widget: new Preamble(true), block: true, side: -1 }).range(0)
-          : D.replace({ widget: new Preamble(false), block: true }).range(0, pre));
+      return {
+        bridges: bridges.filter((x) => meets(x[0], x[1])),
+        pieces: out.filter((p) => meets(p.from, p.to)),
+        marks: marksOut.filter((m) => meets(m[0], m[1])),
+        lines: linesOut.map(visualStart).filter((x) => !within || (x[0] >= within[0] && x[0] <= within[1])),
+        points: points.filter((p) => meets(p.at, p.at)),
+      };
+    }
+    const bridge = D.mark({ bridge: true });
+    // The decorations and the atomic ranges (each replace, and the bridges) of the pieces that meet `within`.
+    function decorations(doc, read, info, within) {
+      const got = viewPieces(doc, read, info, within), deco = [], atoms = [];
+      const seenLines = new Set();
+      for (const p of got.pieces) {
+        // `fwd`: words typed at its end go further on (worked out when typed, from what is read then)
+        const spec = { atom: true, kind: p.kind, lead: !!p.lead, trail: !!p.trail, fwd: p.fwd != null, slotFrom: !!p.slotFrom, slotTo: !!p.slotTo, drawn: drawnPiece(p) };
+        if (p.widget) spec.widget = p.widget;
+        if (p.plain != null) spec.plain = p.plain;   // what copying gives for it (the tab between a grid's cells)
+        if (p.block) spec.block = true;
+        const r = D.replace(spec).range(p.from, p.to);
+        deco.push(r);
+        atoms.push(r);
       }
-      const lines = new Set();
-      for (const c of read.cmds) {
-        if (c.from < pre || !meets(c.from, c.to)) continue;   // the preamble is source, folded or open
-        const arg = c.args.length ? c.args[c.args.length - 1] : null;
-        if (c.role === "item" && c.list) {
-          const line = doc.lineAt(c.from);
-          if (!lines.has(line.from)) { lines.add(line.from); out.push(lineMarks[Math.min(c.depth, 4) - 1].range(line.from)); }
-        }
-        if (c.role === "other" || touch(c.from, c.to)) { out.push(command.range(c.from, c.nameTo)); continue; }
-        if (c.role === "heading" || c.role === "style") {
-          if (arg.to - arg.from < 3) { out.push(command.range(c.from, c.nameTo)); continue; }
-          out.push(hide.range(c.from, arg.from + 1),
-            mark(c.role === "heading" ? "latex-h latex-h" + HEADINGS.get(c.name) : STYLES.get(c.name)).range(arg.from + 1, arg.to - 1),
-            hide.range(arg.to - 1, arg.to));
-        } else if (c.role === "cite" || c.role === "ref") {
-          const keys = doc.sliceString(arg.from + 1, arg.to - 1).split(",").map((k) => k.trim()).filter(Boolean).join(", ");
-          out.push(D.replace({ widget: new Chip(keys, c.role) }).range(c.from, c.to));
-        } else if (c.list && c.args.length === 0) {
-          out.push(D.replace({ widget: new Item(c.list.name === "enumerate" ? c.n : 0) }).range(c.from, c.nameTo + (doc.sliceString(c.nameTo, c.nameTo + 1) === " " ? 1 : 0)));
-        } else out.push(command.range(c.from, c.nameTo));
-      }
-      for (const env of read.envs) {
-        if (env.from < pre) continue;
-        if (meets(env.from, env.beginTo)) out.push(command.range(env.from, env.beginTo));
-        if (env.endFrom < env.to && meets(env.endFrom, env.to)) out.push(command.range(env.endFrom, env.to));
-      }
-      if (math) {
-        for (const f of read.maths) {
-          if (f.from >= pre && meets(f.from, f.to) && !touch(f.from, f.to)) out.push(D.replace({ widget: new MathWidget(f.src, f.display, doc.sliceString(f.from, f.to)) }).range(f.from, f.to));
-        }
-      }
-      return out;
+      for (const m of got.marks) deco.push(mark(m[2], m[3]).range(m[0], m[1]));
+      for (const [pos, cls, style] of got.lines) { const k = pos + "\u0000" + cls; if (seenLines.has(k)) continue; seenLines.add(k); deco.push(lineDeco(cls, style).range(pos)); }
+      for (const p of got.points) deco.push(D.widget({ widget: p.widget, side: 1 }).range(p.at));
+      for (const x of got.bridges) atoms.push(bridge.range(x[0], x[1]));
+      return { deco: deco, atoms: atoms, from: got.pieces.reduce((m, p) => Math.min(m, p.from), Infinity), to: got.pieces.reduce((m, p) => Math.max(m, p.to), -1) };
     }
     // On each change the text is read again whole (3 ms on a 2 MB file, the save's limit); the decorations are mapped
-    // and drawn again only where `redraw` says, so a key costs the same in a long file as in a short one. A move of the
-    // selection that shows and hides nothing new keeps them as they are.
+    // and drawn again only where `redraw` says -- widened over every piece that meets the place, before and after, so
+    // none is left half drawn -- and a key costs the same in a long file as in a short one. Nothing depends on the
+    // selection: a move of the cursor changes nothing drawn.
+    const infoOf = (text, read, math, cites, num) => ({ text: text, num: num || numbersOf(text, read, hooks.doc || null), math: math, cites: cites, typeset: math ? "K" : "-" });
+    const whole = (state, read, info, math) => {
+      const d = decorations(state.doc, read, info, null);
+      return { read: read, info: info, math: math, open: false, live: false, deco: D.set(d.deco, true), atoms: D.set(d.atoms, true) };
+    };
     const field = CM.StateField.define({
       create: (state) => {
-        const read = readLatex(state.doc.toString()), math = typeof window !== "undefined" && !!window.katex;
-        return { read: read, math: math, open: false, live: true, deco: D.set(decorate(read, math, false, state), true) };
+        const text = state.doc.toString(), read = readLatex(text), math = typeof window !== "undefined" && !!window.katex;
+        return whole(state, read, infoOf(text, read, math, hooks.cites || null), math);
       },
       update(value, tr) {
-        let math = value.math, open = value.open, on = value.live;
-        for (const e of tr.effects) { if (e.is(mathOn)) math = true; if (e.is(preamble)) open = e.value; if (e.is(live)) on = e.value; }
-        if (!tr.docChanged && !tr.selection && math === value.math && open === value.open && on === value.live) return value;
-        const read = tr.docChanged ? readLatex(tr.state.doc.toString()) : value.read;
-        if (math !== value.math || open !== value.open || on !== value.live) {
-          return { read: read, math: math, open: open, live: on, deco: D.set(decorate(read, math, open, tr.state, null, on), true) };
+        let math = value.math, again = false;
+        for (const e of tr.effects) { if (e.is(mathOn)) math = true; if (e.is(refresh)) again = true; }
+        if (!tr.docChanged && math === value.math && !again) return value;
+        const text = tr.docChanged ? tr.state.doc.toString() : value.info.text, read = tr.docChanged ? readLatex(text) : value.read;
+        // a text the reader is unsure of (TeX would stop in it) is drawn whole: its pairs are not to be trusted far away
+        const part = tr.docChanged && math === value.math && !again && !read.bad.length && !value.read.bad.length;
+        const cmp = part ? compared(value.read, read, tr.changes) : null;
+        const info = infoOf(text, read, math, hooks.cites || null, part ? numbersKept(value.read, value.info.num, read, tr.changes, cmp) : null);
+        if (!part || info.num.sig !== value.info.num.sig) return whole(tr.state, read, info, math);
+        const doc = tr.state.doc, extents = read.defs.map((c) => [c.from, definitionEnd(text, c)]);
+        const spans = redraw(value.read, read, tr, extents, cmp);
+        let deco = value.deco.map(tr.changes), atoms = value.atoms.map(tr.changes);
+        const wide = (x) => [doc.lineAt(Math.max(0, Math.min(x[0], doc.length))).from, doc.lineAt(Math.max(0, Math.min(x[1], doc.length))).to];
+        for (let s of spans || []) {
+          let d = null;
+          s = paraReach(doc, s);
+          for (let n = 0; n < 6; n++) {
+            // the pieces already drawn that meet the place, and those to be drawn, may reach past it: widen it to them
+            let lo = s[0], hi = s[1];
+            atoms.between(lo, hi, (f, t2) => { if (f < lo - 1) lo = f; if (t2 > hi + 1) hi = t2; });
+            if (lo < s[0] - 1 || hi > s[1] + 1) { s = paraReach(doc, wide([Math.min(lo, s[0]), Math.max(hi, s[1])])); continue; }
+            d = decorations(doc, read, info, s);
+            if (d.from < s[0] - 1 || d.to > s[1] + 1) { s = paraReach(doc, wide([Math.min(d.from, s[0]), Math.max(d.to, s[1])])); d = null; continue; }
+            break;
+          }
+          if (!d) return whole(tr.state, read, info, math);
+          const keep = (from, to) => !(from <= s[1] && to >= s[0]);
+          deco = deco.update({ filterFrom: s[0] - 1, filterTo: s[1] + 1, filter: keep, add: d.deco, sort: true });
+          atoms = atoms.update({ filterFrom: s[0] - 1, filterTo: s[1] + 1, filter: keep, add: d.atoms, sort: true });
         }
-        const spans = redraw(value.read, read, math, tr, on);
-        let deco = tr.docChanged ? value.deco.map(tr.changes) : value.deco;
-        if (!spans && !tr.docChanged) return value;
-        for (const s of spans || []) {
-          deco = deco.update({ filterFrom: s[0], filterTo: s[1], filter: (from, to) => !(from <= s[1] && to >= s[0]), add: decorate(read, math, open, tr.state, s, on), sort: true });
-        }
-        return { read: read, math: math, open: open, live: on, deco: deco };
+        return { read: read, info: info, math: math, open: false, live: false, deco: deco, atoms: atoms };
       },
       provide: (f) => CM.EditorView.decorations.from(f, (v) => v.deco),
     });
-    wx = { CM: CM, field: field, mathOn: mathOn, preamble: preamble, live: live };
+
+    // The atoms are the replaces; those that touch are one (unless the place between is where words go: an empty
+    // heading, a style's edge). Each piece says what typing at its edges means: `lead` (typed at its start, the words
+    // go after it, or to `fwd`), `fwd` (typed at its end, they go there), `trail` (typed at its end, they go before it).
+    function touching(value, pos) {
+      const got = [];
+      value.atoms.between(pos, pos, (f, t2, v) => { if (v.spec.atom) got.push({ from: f, to: t2, spec: v.spec }); });
+      return got;
+    }
+    // The merged atom with `pos` strictly inside ("in"), starting at it ("from") or ending at it ("to"), or null:
+    // {from, to, firstSpec, lastSpec}.
+    function atomAt(value, pos, how) {
+      const ps = touching(value, pos), left = ps.find((x) => x.to === pos && x.from < pos), right = ps.find((x) => x.from === pos && x.to > pos);
+      const joined = !!left && !!right && !left.spec.slotTo && !right.spec.slotFrom && !slotBetween(left.spec, right.spec);
+      let p = null;
+      if (how === "in") p = ps.find((x) => x.from < pos && pos < x.to) || (joined ? left : null);
+      else if (how === "from") p = joined ? null : right;
+      else p = joined ? null : left;
+      if (!p) return null;
+      let from = p.from, to = p.to, firstSpec = p.spec, lastSpec = p.spec, first = p, last = p;
+      for (let n = 0; n < 400; n++) {
+        const l = touching(value, from).find((x) => x.to === from && x.from < from);
+        if (!l || l.spec.slotTo || firstSpec.slotFrom || slotBetween(l.spec, firstSpec)) break;
+        from = l.from; firstSpec = l.spec; first = l;
+      }
+      for (let n = 0; n < 400; n++) {
+        const r = touching(value, to).find((x) => x.from === to && x.to > to);
+        if (!r || r.spec.slotFrom || lastSpec.slotTo || slotBetween(lastSpec, r.spec)) break;
+        to = r.to; lastSpec = r.spec; last = r;
+      }
+      return { from: from, to: to, firstSpec: firstSpec, lastSpec: lastSpec, firstFwd: fwdOf(value, first), lastFwd: fwdOf(value, last) };
+    }
+    // Where words typed at the end of an environment's \begin go: its first item's words, or its first line.
+    function fwdOf(value, p) {
+      if (!p.spec.fwd) return null;
+      const read = value.read, text = value.info.text, e = read.envs.find((x) => x.from >= p.from && x.from < p.to);
+      if (!e) return null;
+      if (e.role === "list") {
+        const m = e.itemCmds[0];
+        if (!m) return null;
+        const opt = m.args.find((a) => a.opt), at = opt ? opt.to : m.nameTo;
+        return text[at] === " " ? at + 1 : at;
+      }
+      const nl = text.indexOf("\n", e.beginTo);
+      return nl >= 0 && nl + 1 < e.endFrom ? nl + 1 : null;
+    }
+    // Where typed words go when typed at `pos` (22.1: where the cursor shows them), or null where none may go.
+    function typedAt(state, value, pos) {
+      for (let n = 0; n < 4; n++) {
+        const inner = atomAt(value, pos, "in");
+        if (inner) { pos = inner.to; continue; }
+        const starts = atomAt(value, pos, "from"), ends = atomAt(value, pos, "to");
+        if (starts && starts.firstSpec.lead) { pos = starts.firstFwd != null && starts.firstFwd > pos ? starts.firstFwd : starts.to; continue; }
+        if (ends && ends.lastFwd != null && ends.lastFwd > pos) { pos = ends.lastFwd; continue; }
+        if (ends && ends.lastSpec.trail && ends.from < pos) { pos = ends.from; continue; }
+        break;
+      }
+      const ctx = contextAt(value.read, pos);
+      if (ctx && ctx.kind === "raw" && ctx.x && ctx.x.kind !== "comment" && pos === ctx.x.to) return pos;   // just after \verb|…|
+      if (ctx && (ctx.kind === "math" || ctx.kind === "raw")) return null;
+      // in a table only a cell of a grid takes words (22.12 T); its caption is an argument, as a figure's
+      if (ctx && ctx.kind === "env" && ctx.x.role === "raw" && !FIGURE_FLOATS.has(ctx.x.name) && !cellAt(value.info.text, value.read, pos)) return null;
+      if (ctx && ctx.kind === "env" && ctx.x.role === "list") {
+        const first = ctx.x.itemCmds[0];
+        if (!first || pos < first.nameTo) return null;
+      }
+      return pos;
+    }
+    // The frames around words: {from, to, openTo, closeFrom, kind, inline} -- a style, a group, a heading, a figure's
+    // caption, an environment, a list (its first \item with its \begin), braces; and the document (always kept).
+    // With [lo, hi], only the frames that may meet it (a superset, in the same order: the caller keeps those it asks
+    // for), so a key looks at what is near it, not at the whole file.
+    const framesCache = new WeakMap();
+    function framesOf(value, lo, hi) {
+      const all = lo == null;
+      if (all && framesCache.has(value)) return framesCache.get(value);
+      const read = value.read, text = value.info.text, out = [];
+      const each = (list, x, y, fn) => { if (all) { for (const item of list) fn(item); } else eachMeeting(list, x, y, fn); };
+      each(read.cmds, lo, hi, (c) => {
+        const args = c.args.filter((a) => !a.opt), a = c.args[c.args.length - 1];
+        if (!a || a.opt || !args.length) return;
+        const wrap = WRAPPERS.get(c.name);
+        if (c.role === "heading" || c.role === "style" || (wrap && args.length === wrap[1] && !c.group)) out.push({ from: c.from, to: c.to, openTo: a.from + 1, closeFrom: a.to - 1, kind: c.role === "heading" ? "heading" : "inline" });
+        else if (c.name === "caption") out.push({ from: c.from, to: c.to, openTo: a.from + 1, closeFrom: a.to - 1, kind: "caption" });
+      });
+      each(read.groups, lo, hi, (g) => out.push({ from: g.from, to: g.to, openTo: g.nameTo, closeFrom: g.to - 1, kind: "inline" }));
+      const braces = [];
+      each(read.braces, lo, hi, (b) => braces.push(b));
+      const args = read.argStarts, groups = new Set(read.groups.map((g) => g.from)), loose = new Set();
+      // the groups after a command that takes none (\noindent{…}, \LaTeX{}{…}) are groups of their own (such a command
+      // holds its argument's brace: it meets wherever the brace starts)
+      const lo2 = braces.reduce((m, b) => Math.min(m, b.from), all ? 0 : lo);
+      each(read.cmds, lo2, hi, (c) => { if (c.args.length && (SILENT.has(c.name) || TEXT_MACROS.has(c.name) || GROUP_CLASSES.has(c.name))) c.args.forEach((a) => loose.add(a.from)); });
+      for (const b of braces) if ((!args.has(b.from) || loose.has(b.from)) && !groups.has(b.from) && b.to - b.from > 2) out.push({ from: b.from, to: b.to, openTo: b.from + 1, closeFrom: b.to - 1, kind: "inline" });
+      const envs = [];
+      each(read.envs, lo, hi, (e) => envs.push(e));
+      for (const e of envs) {
+        if (!(e.endFrom < e.to)) continue;
+        if (e.name === "document") { out.push({ from: e.from, to: e.to, openTo: e.beginTo, closeFrom: e.endFrom, kind: "document", keep: true }); continue; }
+        if (FIGURE_FLOATS.has(e.name)) { out.push({ from: e.from, to: e.to, openTo: e.beginTo, closeFrom: e.endFrom, kind: "figure", keep: true }); continue; }
+        if (e.role === "list") {
+          const first = e.itemCmds[0];
+          out.push({ from: e.from, to: e.to, openTo: first ? first.nameTo : e.beginTo, closeFrom: e.endFrom, kind: "list" });
+        } else if (e.role === "text") out.push({ from: e.from, to: e.to, openTo: e.beginTo, closeFrom: e.endFrom, kind: "env" });
+      }
+      if (read.preamble) out.push({ from: 0, to: read.preamble.to, openTo: read.preamble.to, closeFrom: read.preamble.to, kind: "preamble", keep: true });
+      if (read.end >= 0) out.push({ from: read.end, to: text.length, openTo: text.length, closeFrom: text.length, kind: "after", keep: true });
+      out.sort((a, b) => a.from - b.from || b.to - a.to);
+      if (all) framesCache.set(value, out);
+      return out;
+    }
+
+    // A deletion of [from, to) made whole (22.1, B1 3.): an atom it cuts is taken whole; a construct it covers whole is
+    // deleted whole; one it covers in part keeps its markup round what remains, or loses it with its last word (`pure`:
+    // nothing typed in its place); the document's own markup always stays. Answers the ranges to delete.
+    function protect(value, from, to, pure) {
+      // markup is hidden inside pieces (with the line break or the indent they hide): kept or taken as those pieces whole
+      const piece = (x) => touching(value, x).find((p) => p.from < x && x < p.to) || null;
+      const outer = (x, y) => { const p = piece(x), q = piece(y); return [p ? p.from : x, q ? q.to : y]; };
+      [from, to] = outer(from, to);
+      let D = [[from, to]];
+      const kept = [];
+      const covers = (x, y) => y <= x || D.some((d) => d[0] <= x && y <= d[1]);
+      const meets = (x, y) => D.some((d) => d[0] < y && x < d[1]);
+      const minus = (x, y) => {
+        const next = [];
+        D.forEach((d) => { if (d[1] <= x || d[0] >= y) next.push(d); else { if (d[0] < x) next.push([d[0], x]); if (d[1] > y) next.push([y, d[1]]); } });
+        D = next;
+      };
+      const cut = (x0, y0) => { if (y0 <= x0) return; const [x, y] = outer(x0, y0); kept.push([x, y]); minus(x, y); };
+      const add = (x0, y0) => {
+        const [x, y] = outer(x0, y0);
+        D.push([x, y]);
+        D.sort((p, q) => p[0] - q[0]);
+        const next = [];
+        D.forEach((d) => { const last = next[next.length - 1]; if (last && d[0] <= last[1]) last[1] = Math.max(last[1], d[1]); else next.push(d.slice()); });
+        D = next;
+        kept.forEach((k) => minus(k[0], k[1]));   // what another construct keeps stays kept
+      };
+      const frames = framesOf(value, from, to).filter((f) => f.from < to && from < f.to);
+      for (let pass = 0; pass < 6; pass++) {
+        const before = JSON.stringify(D);
+        for (const f of frames) {
+          if (!meets(f.from, f.to) || (covers(f.from, f.to) && !f.keep)) continue;
+          if (!f.keep && pure && f.kind !== "caption" && covers(f.openTo, f.closeFrom)) { add(f.from, f.to); continue; }
+          cut(f.from, f.openTo);
+          cut(f.closeFrom, f.to);
+        }
+        if (JSON.stringify(D) === before) break;
+      }
+      return D.filter((d) => d[1] > d[0]);
+    }
+
+    // A deletion that takes the line break ending a comment after words, and not the comment, would make the next
+    // line part of the comment: the comment goes with it (hidden comments in a deleted range go with it, 22.1).
+    function uncommented(value, D) {
+      const text = value.info.text;
+      return D.map((d) => {
+        for (const r of value.read.raws) {
+          if (r.kind !== "comment" || r.to >= d[1] || r.to < d[0] || r.from >= d[0] || text[r.to] !== "\n") continue;
+          return [r.from, d[1]];   // what TeX printed is unchanged: the comment had taken the line break
+        }
+        return d;
+      });
+    }
+    // Whether every comment of the text after the change `ch` (read as `now`) near what changed is a comment of the
+    // text before (`was`), with the same extent: nothing was pulled into one.
+    function commentsKept(was, ch, now) {
+      const spans = [];
+      ch.iterChangedRanges((fa, ta, fb, tb) => spans.push([fb - 1, tb + 1]));
+      const old = new Map(was.raws.filter((r) => r.kind === "comment").map((r) => [r.from, r.to]));
+      for (const c of now.raws) {
+        if (c.kind !== "comment" || !spans.some((s) => c.from <= s[1] && c.to >= s[0])) continue;
+        const a = ch.invertedDesc.mapPos(c.from, 1);
+        if (!old.has(a) || ch.mapPos(old.get(a), -1) !== c.to) return false;
+      }
+      return true;
+    }
+    // Words typed on an empty line right after a float (22.12 M, F7 -- browser acceptance 2026-11-14: "Var" typed under a
+    // new table printed as "Second paragraph here. Var", the paragraph before the table going on): they start a paragraph
+    // of their own, as the page shows them, so a blank line is written before them.
+    function afterFloat(doc, at) {
+      const l = doc.lineAt(at);
+      return l.number > 1 && !l.text.trim() && FLOAT_END.test(codePart(doc.line(l.number - 1).text).trim());
+    }
+    // Typed or pasted words as LaTeX that prints them: the special characters escaped; line breaks a space inside a
+    // heading, a style or a caption, a new \item in a list, else a new paragraph.
+    function literal(text, ctx, br, indent) {
+      let s = String(text).replace(/\r\n?/g, "\n").replace(/[%$&#_{}~^\\<>|]/g, (c) => TYPE_ESCAPES[c]);
+      if (s.indexOf("\n") < 0) return s;
+      if (ctx === "inline" || ctx === "cell") return s.replace(/[ \t]*\n\s*/g, " ");
+      if (ctx === "list") return s.split(/\n+/).map((x) => x.trim()).filter(Boolean).join(br + indent + "\\item ");
+      return s.replace(/[ \t]*\n\s*/g, br + br);
+    }
+    function placeOf(value, pos) {
+      const text = value.info.text, inline = framesOf(value, pos, pos).some((f) => (f.kind === "inline" || f.kind === "heading" || f.kind === "caption") && f.openTo <= pos && pos <= f.closeFrom);
+      if (inline) return { ctx: "inline", indent: "" };
+      if (cellAt(text, value.read, pos)) return { ctx: "cell", indent: "" };
+      const ctx = contextAt(value.read, pos);
+      if (ctx && ctx.kind === "env" && ctx.x.role === "list") {
+        const item = ctx.x.itemCmds.filter((c) => c.from < pos).pop();
+        const l = item ? text.slice(text.lastIndexOf("\n", item.from - 1) + 1, item.from) : "";
+        return { ctx: "list", indent: /^[ \t]*/.exec(l)[0] };
+      }
+      return { ctx: "text", indent: "" };
+    }
+    // A control word must not run into what now follows it (\noindent and a letter -- any letter: XeLaTeX reads a CJK
+    // character as one --, \\ and "["), nor may a "[" or "*" typed after \item, \\, \begin{…} or a control word, spaces
+    // or one line break between, become their option or star: "{}" between.
+    function joints(ch, newDoc) {
+      const extra = [];
+      ch.iterChangedRanges((fa, ta, fb, tb) => {
+        [fb, tb].forEach((p) => {
+          if (p <= 0 || p >= newDoc.length) return;
+          const before = newDoc.sliceString(Math.max(0, p - 60), p), after = newDoc.sliceString(p, p + 1);
+          const word = /(?:^|[^\\])(?:\\\\)*\\[A-Za-z]+\*?$/.test(before), bs = /(?:^|[^\\])(?:\\\\)*\\\\$/.test(before);
+          const opt = /(?:^|[^\\])(?:\\\\)*(?:\\[A-Za-z]+\*?|\\\\|\\begin\s*\{[^{}]*\})[ \t]*(?:\r?\n[ \t]*)?$/.test(before);
+          if ((word && /[\p{L}*[]/u.test(after)) || ((bs || opt) && /[*[]/.test(after))) if (!extra.some((x) => x.from === p)) extra.push({ from: p, insert: "{}" });
+        });
+      });
+      return extra;
+    }
+    // A user's edit in the edit view, made safe: {changes, selection} for the same transaction, `tr` itself when
+    // nothing needs changing, or {refused: a sentence}. Typed and pasted words are escaped and go where the cursor shows
+    // them; a deletion is made whole (`protect`); a control word never runs into what follows it; and an edit that
+    // touched any markup is checked: one that would leave the source unbalanced is refused.
+    function userEdit(state, value, tr, ev) {
+      const br = state.lineBreak, compose = /compose/.test(ev), parts = [];
+      tr.changes.iterChanges((fa, ta, fb, tb, ins) => parts.push({ from: fa, to: ta, text: ins.sliceString(0, ins.length, "\n") }));
+      if (compose && parts.every((p) => p.to === p.from)) return tr;   // its words are seen to when it ends (`composeFix`)
+      if (/^input\.paste/.test(ev) && parts.length === 1) { const f = gridPaste(state, value, parts[0], br); if (f) return Object.assign(f, f.changes ? { userEvent: ev, scrollIntoView: true } : {}); }
+      const specs = [];
+      let caret = null, risky = false, inGrid = false;
+      for (const p of parts) {
+        let at = p.from;
+        if (p.to > p.from) {
+          const cut = gridCut(value, p.from, p.to, ev, !p.text);
+          if (cut && !cut.length && !p.text) return { refused: "" };   // nothing but a table's markup: nothing goes
+          if (cut) { risky = true; inGrid = true; }
+          const D = cut || uncommented(value, protect(value, p.from, p.to, !p.text));
+          if (D.length !== 1 || D[0][0] !== p.from || D[0][1] !== p.to || /\n/.test(value.info.text.slice(p.from, p.to))) risky = true;
+          value.atoms.between(p.from, p.to, (f, t2, v) => { if (v.spec.atom && f < p.to && t2 > p.from) risky = true; });
+          D.forEach((d) => specs.push({ from: d[0], to: d[1], insert: "" }));
+          const inner = atomAt(value, at, "in");
+          if (inner) at = inner.from;
+          const hit = D.find((d) => d[0] < at && at < d[1]);
+          if (hit) at = hit[0];
+          if (p.text) {
+            const there = typedAt(state, value, at);
+            if (there == null) return { refused: t("这里不能输入文字。") };
+            if (there !== at && D.some((d) => d[0] < there && there < d[1])) return { refused: t("这里不能输入文字。") };
+            at = there;
+          }
+        } else if (p.text) {
+          const there = compose ? p.from : typedAt(state, value, p.from);
+          if (there == null) return { refused: t("这里不能输入文字。") };
+          if (there !== p.from) risky = true;
+          at = there;
+        }
+        if (p.text) {
+          const place = placeOf(value, at);
+          let s2 = compose ? p.text : literal(p.text, place.ctx, br, place.indent);
+          if (!compose && place.ctx === "text" && afterFloat(state.doc, at)) { s2 = br + s2; risky = true; }
+          if (s2 !== p.text || /\n/.test(p.text)) risky = true;
+          // typed into an empty cell, the words are set apart from the & on each side: "a & b & c" (22.12 T)
+          const pad = !compose && p.to === p.from && place.ctx === "cell" ? cellPad(value, at, s2) : null;
+          if (pad) { specs.push({ from: pad.from, to: pad.to, insert: pad.before + s2 + pad.after }); caret = { at: pad.from, len: (pad.before + s2).split(br).join("\n").length }; risky = true; continue; }
+          const same = specs.find((x) => x.to != null && x.from === at && x.insert === "");
+          if (same) same.insert = s2; else specs.push({ from: at, insert: s2 });
+          caret = { at: at, len: s2.split(br).join("\n").length };   // a line break is one position in the editor
+        } else if (caret == null) caret = { at: specs.length ? specs[0].from : p.from, len: 0 };
+      }
+      specs.sort((x, y) => x.from - y.from || (x.to == null ? x.from : x.to) - (y.to == null ? y.from : y.to));
+      let ch;
+      try { ch = state.changes(specs); } catch (err) { return { refused: t("选中的范围不能这样改。") }; }
+      let nd = ch.apply(state.doc);
+      const more = compose ? [] : joints(ch, nd);
+      if (!risky && !more.length) return tr;
+      let anchor = caret ? ch.mapPos(caret.at, -1) + caret.len : ch.mapPos(state.selection.main.head, -1);
+      if (more.length) { const c2 = CM.ChangeSet.of(more, nd.length); anchor = c2.mapPos(anchor, 1); ch = ch.compose(c2); nd = c2.apply(nd); }
+      if (risky) {
+        const text2 = nd.toString(), read2 = readLatex(text2);
+        if (unsureWhy(text2, read2)) return { refused: t("这样改会让 LaTeX 的结构不完整，没有改。") };
+        // no words outside a comment before the edit are inside one after it (a hidden comment never swallows a line)
+        if (!commentsKept(value.read, ch, read2)) return { refused: t("这样改会让后面的文字变成注释，没有改。") };
+        // a cell emptied by a deletion: the cursor where the page draws that cell, never in the hidden indent before it
+        if (inGrid) anchor = snapCell(text2, read2, Math.min(anchor, nd.length));
+      }
+      return { changes: ch, selection: { anchor: Math.min(anchor, nd.length) }, userEvent: ev, scrollIntoView: true };
+    }
+
+    // A deletion (or what typing over a selection deletes) that meets a table drawn as a grid but does not cover it whole
+    // (22.12 T): only the words of the cells and the caption it covers go -- each made whole as anywhere (`protect`) --,
+    // the grid's & and \\, its rules and its markup stay, so the grid keeps its rows and columns; what it covers outside
+    // the table goes as anywhere, but never the line break beside the table (the table stays on lines of its own). A key's
+    // own deletion (Backspace, Delete, a word's) never reaches across a cell's edge. Null when it meets no grid; [] when
+    // nothing is to go.
+    function gridCut(value, from, to, ev, pure) {
+      const text = value.info.text, read = value.read;
+      const met = gridsNear(text, read, from, to).filter((g) => from <= g.to && to >= g.from && !(from <= g.from && to >= g.to)).sort((a, b) => a.from - b.from);
+      if (!met.length) return null;
+      const out = [], key = /^delete\.(?:backward|forward)$/.test(ev || "");
+      const outside = (a, b) => { if (b > a) out.push(...uncommented(value, protect(value, a, b, pure))); };
+      let at = from;
+      for (const g of met) {
+        // the line break before the table stays (what is kept of the text before may be words: a figure's markup)
+        let end = Math.min(to, g.from);
+        if (end === g.from && text[g.from - 1] === "\n") end = g.from - 1;
+        outside(at, end);
+        if (from < g.to && to > g.from) {
+          const lo = Math.max(from, g.from), hi = Math.min(to, g.to), regions = [];
+          if (g.caption) regions.push([g.caption.open, g.caption.close]);
+          g.rows.forEach((r) => r.cells.forEach((c) => regions.push(c)));
+          if (key && !regions.some((r) => r[0] <= lo && hi <= r[1])) return [];
+          for (const r of regions) {
+            const a = Math.max(lo, r[0]), b = Math.min(hi, r[1]);
+            if (b > a) out.push(...protect(value, a, b, pure));
+          }
+        }
+        // and the line break after it
+        at = Math.max(at, g.to);
+        if (at === g.to && text[g.to] === "\n" && to > g.to) at = g.to + 1;
+      }
+      outside(at, to);
+      out.sort((a, b) => a[0] - b[0]);
+      const merged = [];
+      out.forEach((d) => { const l = merged[merged.length - 1]; if (l && d[0] <= l[1]) l[1] = Math.max(l[1], d[1]); else if (d[1] > d[0]) merged.push(d.slice()); });
+      return merged;
+    }
+    // An empty cell typed into: the whole of it replaced, the words with a space toward each & (none at a line's start).
+    function cellPad(value, at, words) {
+      const text = value.info.text, c = cellAt(text, value.read, at);
+      if (!c || text.slice(c.cell[0], c.cell[1]).trim()) return null;
+      const row = c.g.rows[c.r], before = padBefore(text, c.cell[0], c.c, words);
+      return { from: c.cell[0], to: c.cell[1], before: before, after: c.c < row.cells.length - 1 || row.slash ? " " : "" };
+    }
+    // Pasted text copied from a spreadsheet or a table into a cell fills the cells from there, as a spreadsheet does:
+    // each line a row, each tab the next cell (a spreadsheet's quoted value, line breaks and all, one cell, unquoted),
+    // each value escaped as typing is and put in place of the cell's words; values past the last column go into the
+    // row's last cell, a space between; rows past the last are added. One step of ⌘Z. Only a paste holding a tab, or
+    // one into an empty cell or over a cell's words whole, is spread: lines pasted into a cell's words (a sentence
+    // copied from a PDF) are words of that cell, their line breaks spaces, as typed. Null when it is not such a paste
+    // (it is then pasted as anywhere).
+    function gridPaste(state, value, p, br) {
+      const raw = p.text.replace(/\r\n?/g, "\n").replace(/\n+$/, "");
+      if (!/[\t\n]/.test(raw)) return null;
+      const text = value.info.text, c = cellAt(text, value.read, p.from);
+      if (!c || p.to > c.cell[1]) return null;
+      const own = text.slice(c.cell[0], c.cell[1]), wa = c.cell[0] + (own.length - own.trimStart().length), wb = c.cell[1] - (own.length - own.trimEnd().length);
+      if (!/\t/.test(raw) && own.trim() && !(p.from <= wa && p.to >= wb)) return null;
+      const g = c.g, n = g.cols.length, specs = [], extra = [];
+      tabRows(raw).forEach((line, i) => {
+        const vals = line.map((v) => literal(v, "cell", br, "").trim()), fit = vals.slice(0, n - c.c);
+        if (vals.length > n - c.c) fit[fit.length - 1] = vals.slice(n - c.c - 1).filter(Boolean).join(" ");
+        if (c.r + i < g.rows.length) fit.forEach((v, j) => { const x = cellFill(text, g, c.r + i, c.c + j, v); if (!i && !j) x.first = true; specs.push(x); });
+        else extra.push(new Array(c.c).fill("").concat(fit, new Array(Math.max(0, n - c.c - fit.length)).fill("")));
+      });
+      if (g.rows.length + extra.length > GRID_LIMIT.rows) return { refused: t("表格最多 {n} 行。", { n: GRID_LIMIT.rows }) };
+      if (extra.length) specs.push(rowsAfter(text, g, g.rows.length - 1, extra, br));
+      specs.sort((a, b) => a.from - b.from);
+      const ch = state.changes(specs), nd = ch.apply(state.doc).toString(), first = specs.find((x) => x.first);
+      if (unsureWhy(nd, readLatex(nd))) return { refused: t("这样改会让 LaTeX 的结构不完整，没有改。") };
+      return { changes: ch, selection: { anchor: ch.mapPos(first.from, -1) + first.shown } };
+    }
+
+    // An input method's composition is left as typed while it composes (moving or escaping its text in the middle would
+    // break it); `composed` follows where it wrote. When it ends, `composeFix` puts the words where typing puts them --
+    // after a hidden piece, never inside a comment, before \documentclass or after \end{document} -- escaped as typing
+    // is, as one step joined to the composition's own in ⌘Z; where no words may go they are taken out, saying why.
+    const composeDone = CM.StateEffect.define();
+    const composed = CM.StateField.define({
+      create: () => null,
+      update(r, tr) {
+        for (const e of tr.effects) if (e.is(composeDone)) return null;
+        if (!tr.docChanged) return r;
+        let next = r ? [tr.changes.mapPos(r[0], -1), tr.changes.mapPos(r[1], 1)] : null;
+        if (tr.annotation(CM.Transaction.userEvent) === "input.type.compose") {
+          tr.changes.iterChangedRanges((fa, ta, fb, tb) => { next = next ? [Math.min(next[0], fb), Math.max(next[1], tb)] : [fb, tb]; });
+        }
+        return next;
+      },
+    });
+    function composeFix(state) {
+      const r = state.field(composed, false), value = state.field(field, false);
+      if (!r || !value) return null;
+      const done = composeDone.of(null), from = r[0], to = Math.max(r[0], r[1]), text = state.sliceDoc(from, to);
+      if (!text) return { effects: done };
+      const c1 = state.changes({ from: from, to: to }), st0 = state.update({ changes: c1 }).state, v0 = st0.field(field);
+      const there = typedAt(st0, v0, from);
+      const gone = { changes: c1, selection: { anchor: from }, effects: done, userEvent: "input.type.compose.made" };
+      if (there == null) return Object.assign(gone, { refused: t("这里不能输入文字。") });
+      const place = placeOf(v0, there);
+      let ins = literal(text, place.ctx, state.lineBreak, place.indent);
+      if (place.ctx === "text" && afterFloat(st0.doc, there)) ins = state.lineBreak + ins;
+      let ch = c1.compose(st0.changes({ from: there, insert: ins })), nd = ch.apply(state.doc);
+      const more = joints(ch, nd);
+      if (there === from && ins.split(state.lineBreak).join("\n") === text && !more.length) return { effects: done };
+      let anchor = ch.mapPos(from, 1);
+      anchor = there + ins.split(state.lineBreak).join("\n").length;
+      if (more.length) { const c2 = CM.ChangeSet.of(more, nd.length); anchor = c2.mapPos(anchor, 1); ch = ch.compose(c2); nd = c2.apply(nd); }
+      const text2 = nd.toString(), read2 = readLatex(text2);
+      if (unsureWhy(text2, read2) || !commentsKept(value.read, ch, read2)) return Object.assign(gone, { refused: t("这样改会让 LaTeX 的结构不完整，没有改。") });
+      return { changes: ch, selection: { anchor: Math.min(anchor, nd.length) }, effects: done, userEvent: "input.type.compose.made" };
+    }
+    // Before an input method starts (its first key, or compositionstart), the cursor goes where typing puts words, so the
+    // composition is written there; it is the same place on the page.
+    function composeStart(state) {
+      const value = state.field(field, false), sel = state.selection.main;
+      if (!value || !sel.empty || state.field(composed, false)) return null;
+      const there = typedAt(state, value, sel.head);
+      return there != null && there !== sel.head ? { selection: { anchor: there } } : null;
+    }
+
+    wx = { CM: CM, field: field, mathOn: mathOn, composed: composed, composeFix: composeFix, composeStart: composeStart, refresh: refresh, preamble: preamble, live: live, hooks: hooks, atomAt: atomAt,
+      typedAt: typedAt, framesOf: framesOf, protect: protect, userEdit: userEdit, literal: literal, placeOf: placeOf, viewPieces: viewPieces };
     return wx;
   }
-  // Like Word's extensions, which 显示源码 takes out (a compartment): the field, and the class that sets the text face.
-  function wordExtensions(CM) {
-    const w = wordField(CM);
-    const focus = CM.EditorView.focusChangeEffect;   // absent only in a test's stand-in view
-    return [w.field, CM.EditorView.contentAttributes.of({ class: "latex-word" })]
-      .concat(focus ? [focus.of((state, focusing) => (focusing && !state.field(w.field).live ? w.live.of(true) : null))] : []);
+  // A group is drawn in its face or size when it holds text and its closing brace is not inside a formula (where the
+  // brace belongs to the formula, not to the group).
+  function groupShown(read, g) { return g.to - 1 > g.nameTo && !read.maths.some((f) => f.from < g.to - 1 && g.to - 1 < f.to); }
+  // The words after a heading on its line (its \label and comments left out) that TeX sets as a paragraph of its own:
+  // "" for \paragraph and \subparagraph, which run in.
+  function headingTail(text, c) {
+    if (/^(?:paragraph|subparagraph)$/.test(c.name)) return "";
+    const e = text.indexOf("\n", c.to);
+    return codePart(text.slice(c.to, e < 0 ? text.length : e)).replace(/\\label\s*\{[^{}]*\}/g, "").trim();
+  }
+  // The words a float the edit view cannot draw says: its kind and its caption's plain words -- the kind in the
+  // document's own word where it is known ("Figure 1: The rate", `words` from numbersOf; 22.12 M, F4). The float's own
+  // caption is its \caption outside a subfigure or subtable (whose captions come first, 22.12 R); its number where
+  // numbersOf counted it (`n`). `cells`: with no caption, the words of its cells (a longtable).
+  function floatWords(read, e, kind, text, words, which, n, cells) {
+    const subs = read.envs.filter((x) => x !== e && x.from > e.from && x.to <= e.endFrom && SUB_FLOATS.test(x.name));
+    const caps = read.cmds.filter((c) => c.name === "caption" && c.nameTo === c.from + 8 && c.from > e.beginTo && c.to <= e.endFrom && !subs.some((x) => x.from < c.from && c.to <= x.to));
+    // (two captions of its own print two numbers: its first caption's words, no number)
+    if (caps.length > 1) n = null;
+    const cap = caps[0], a = cap ? cap.args.filter((x) => !x.opt).pop() : null;
+    let said = a ? plainWords(text.slice(a.from + 1, a.to - 1)) : null;
+    if (!cap && cells) said = cellWords(text, e);
+    const name = words ? words[which || "table"] : null, sep = words ? words[(which || "table") === "table" ? "sepTab" : "sepFig"] : null;
+    if (name && sep) return name + (n ? " " + n : "") + (said ? sep + said : "");
+    if (words) return said || kind;   // the document's word unknown (22.12 R): its caption's words, never the interface's 图 or 表
+    return said ? t("{kind}：{words}", { kind: kind, words: said }) : kind;
+  }
+  const SUB_FLOATS = /^sub(?:figure|table|float)\*?$/;
+  // The plain words of a long table's cells, cut short: its spec, caption, label, heads and rules left out.
+  function cellWords(text, e) {
+    let body = text.slice(e.beginTo, e.endFrom).split("\n").map(codePart).join(" ");
+    body = body.replace(/^\s*(?:\[[^\]]*\])?\s*\{(?:[^{}]|\{[^{}]*\})*\}/, "").replace(/\\(?:caption\*?|label)\s*(?:\[[^\]]*\])?\s*\{[^{}]*\}/g, " ")
+      .replace(/\\(?:endfirsthead|endhead|endfoot|endlastfoot|toprule|midrule|bottomrule|hline|addlinespace|centering)(?![A-Za-z])/g, " ");
+    const words = body.split(/\\\\\*?(?:\[[^\]]*\])?|&/).map((x) => plainWords(x)).filter((x) => x);
+    const said = words.join(" ");
+    return said ? (said.length > 80 ? said.slice(0, 80) + "…" : said) : null;
+  }
+
+  // The edit view's extensions, which 「显示代码」 takes out (a compartment): the field, the atomic ranges, the filter
+  // that keeps typing literal and deletions whole, Return, ⇧Return and Backspace like Word, copying as plain text.
+  // `ui.say(sentence)`: a refusal, said quietly in the right column.
+  function wordExtensions(CM, ui) {
+    const w = wordField(CM), say = (s) => { if (ui && ui.say) ui.say(s); };
+    const filter = CM.EditorState.transactionFilter.of((tr) => {
+      const value = tr.startState.field(w.field, false);
+      if (!value) return tr;
+      const ev = tr.annotation(CM.Transaction.userEvent) || "";
+      if (!tr.docChanged) {
+        if (!tr.selection) return tr;
+        // a selection set by a program (a link, a search) that lands inside what is hidden moves to its edge
+        const sel = tr.selection, fix = (p) => { const a = w.atomAt(value, p, "in"); return a ? a.to : p; };
+        let moved = false;
+        const ranges = sel.ranges.map((r) => { const a = fix(r.anchor), h = fix(r.head); if (a !== r.anchor || h !== r.head) moved = true; return CM.EditorSelection.range(a, h); });
+        if (!moved) return tr;
+        return { selection: CM.EditorSelection.create(ranges, sel.mainIndex), effects: tr.effects, scrollIntoView: tr.scrollIntoView, userEvent: ev || undefined };
+      }
+      // a program's own change (a tool, Return's and Backspace's own steps, a footnote's field) passes as it is
+      if (!ev || /^input\.(?:format|enter|footnote|title)/.test(ev) || /\.made$/.test(ev)) return tr;
+      // only typing, pasting, dropping and deleting are the researcher's edits here: CodeMirror's other keys (moving or
+      // copying a line, swapping two characters, indenting, commenting out) would move or show what the edit view
+      // hides -- they are the code's (22.1, B1)
+      if (!/^(?:input$|input\.(?:type|paste|drop)\b|delete\.(?:backward|forward|selection|cut|line)$)/.test(ev)) return {};
+      const r = w.userEdit(tr.startState, value, tr, ev);
+      if (r === tr) return tr;
+      if (r.refused != null) { if (r.refused) say(r.refused); return {}; }
+      return r;
+    });
+    // (a test's stand-in view has neither the atomic ranges nor the clipboard's filter)
+    const atoms = CM.EditorView.atomicRanges ? [CM.EditorView.atomicRanges.of((view) => { const v = view.state.field(w.field, false); return v ? v.atoms : CM.RangeSet.empty; })] : [];
+    const keys = CM.keymap.of([
+      { key: "Enter", run: (view) => runSpec(w, view, (st, v) => enterSpec(CM, st, v, false), say) },
+      { key: "Shift-Enter", run: (view) => runSpec(w, view, (st, v) => enterSpec(CM, st, v, true), say) },
+      { key: "Backspace", run: (view) => runSpec(w, view, (st, v) => backSpec(CM, st, v, -1), say, true) },
+      { key: "Delete", run: (view) => runSpec(w, view, (st, v) => backSpec(CM, st, v, 1), say, true) },
+      // in a table's cell, the next or previous cell (22.12 T); elsewhere Tab is the page's
+      { key: "Tab", run: (view) => runSpec(w, view, (st) => gridSpec(st, "next"), say, true) },
+      { key: "Shift-Tab", run: (view) => runSpec(w, view, (st) => gridSpec(st, "prev"), say, true) },
+      // the up and down arrow keys in a table: the cell above or below (its rows are lines of their own, laid out as a grid)
+      { key: "ArrowUp", run: (view) => runSpec(w, view, (st) => (st.selection.main.empty ? gridSpec(st, "up") : null), say, true) },
+      { key: "ArrowDown", run: (view) => runSpec(w, view, (st) => (st.selection.main.empty ? gridSpec(st, "down") : null), say, true) },
+    ]);
+    const copy = CM.EditorView.clipboardOutputFilter ? [CM.EditorView.clipboardOutputFilter.of((text, state) => {
+      const v = state.field(w.field, false);
+      return v ? state.selection.ranges.filter((r) => !r.empty).map((r) => plainOf(v, r.from, r.to)).join("\n") : text;
+    })] : [];
+    const noDrag = CM.EditorView.domEventHandlers({ dragstart: (event) => { event.preventDefault(); return true; } });
+    // an input method's words, put where typing puts them once it ends (`composeFix`), and its start where they go
+    const settle = (view, n) => {
+      if (!view.state.field(w.composed, false)) return;
+      if (view.composing && (n || 0) < 40) { setTimeout(() => settle(view, (n || 0) + 1), 50); return; }
+      const r = w.composeFix(view.state);
+      if (!r) return;
+      if (r.refused) say(r.refused);
+      view.dispatch(r);
+    };
+    const start = (view) => {
+      if (view.state.field(w.composed, false)) return false;
+      const sel = view.state.selection.main;   // a selection goes first, as a deletion does (whole pieces, balanced)
+      if (!sel.empty) view.dispatch({ changes: { from: sel.from, to: sel.to }, selection: { anchor: sel.from }, userEvent: "delete.selection" });
+      const r = w.composeStart(view.state);
+      if (r) view.dispatch(r);
+      return false;
+    };
+    const ime = CM.EditorView.domEventHandlers({
+      keydown: (event, view) => (event.keyCode === 229 || event.key === "Process" ? start(view) : false),
+      compositionstart: (event, view) => start(view),
+      compositionend: (event, view) => { setTimeout(() => settle(view), 30); return false; },
+    });
+    // (where the composition's end is not a DOM event, as with Android's EditContext, the next update settles it)
+    const imeLate = CM.ViewPlugin.define((view) => ({
+      update(u) { if (!view.composing && u.state.field(w.composed, false) && !u.transactions.some((tr) => tr.annotation(CM.Transaction.userEvent) === "input.type.compose")) setTimeout(() => settle(view), 0); },
+    }));
+    return [w.field, w.composed, filter, keys, noDrag, ime, imeLate, CM.EditorView.contentAttributes.of({ class: "latex-word" })].concat(atoms, copy);
+  }
+  // Runs a key's spec: null lets CodeMirror's own key run (`passOn`), {refused} says why, else one dispatch.
+  function runSpec(w, view, make, say, passOn) {
+    if (view.composing || view.state.readOnly) return false;
+    const value = view.state.field(w.field, false);
+    if (!value) return false;
+    const r = make(view.state, value);
+    if (!r) return !passOn;
+    if (r.refused) { say(r.refused); return true; }
+    view.dispatch(r);
+    return true;
+  }
+  // The plain text of [from, to) as the edit view shows it: hidden markup left out, a chip or a formula its words or
+  // its source, a paragraph's line break a space.
+  // `quiet` (the right column's quotes, 22.2): a formula is 「公式」, never its code.
+  function plainOf(value, from, to, quiet) {
+    const text = value.info.text, atoms = [];
+    // a range set yields overlapping ranges layer by layer: put the replaces in order first
+    value.deco.between(from, to, (f, t2, v) => {
+      if (v.spec.atom) atoms.push([f, t2, quiet && v.spec.kind === "math" ? { plain: t("公式") } : v.spec.widget || (v.spec.plain != null ? { plain: v.spec.plain } : null)]);
+    });
+    atoms.sort((a, b) => a[0] - b[0]);
+    let out = "", at = from;
+    atoms.forEach(([f, t2, w]) => {
+      if (t2 <= at) return;
+      if (f > at) out += text.slice(at, Math.min(f, to));
+      if (w && f >= from && t2 <= to) out += w.plain || "";
+      at = Math.max(at, t2);
+    });
+    if (at < to) out += text.slice(at, to);
+    return out;
+  }
+
+  // Return in the edit view (22.1): a new paragraph (a blank line); in a list a new \item, and an empty item leaves the
+  // list; in a heading the heading ends there and the rest starts a paragraph; inside a style the style is closed before
+  // the paragraph and opened again after it. ⇧Return: a line break \\, only inside a paragraph that has words before it.
+  // A selection is deleted first (as a deletion is), in the same step.
+  function enterSpec(CM, state, value, shift) {
+    const w = wordField(CM), br = state.lineBreak, grid = gridEnter(state, value, shift);
+    if (grid) return grid;
+    let st = state, val = value, first = null;
+    if (!state.selection.main.empty) {
+      const sel = state.selection.main, D = w.protect(value, sel.from, sel.to, true);
+      first = state.changes(D.map((d) => ({ from: d[0], to: d[1] })));
+      st = state.update({ changes: first, selection: { anchor: first.mapPos(sel.from, -1) } }).state;
+      val = st.field(w.field);
+    }
+    const r = enterAt(CM, st, val, shift, br);
+    if (!r || r.refused) return r;
+    const changes = first ? first.compose(r.changes) : r.changes;
+    return { changes: changes, selection: r.selection, userEvent: "input.enter", scrollIntoView: true };
+  }
+  function enterAt(CM, st, val, shift, br) {
+    const w = wordField(CM), text = val.info.text, read = val.read;
+    let pos = st.selection.main.head;
+    const there = w.typedAt(st, val, pos);
+    if (there == null) return { refused: t("这里不能分段。") };
+    pos = there;
+    const frames = w.framesOf(val);
+    // a style the cursor stands at the edge of is left: Return there is outside it
+    for (let moved = true, n = 0; moved && n < 8; n++) {
+      moved = false;
+      for (const f of frames) if (f.kind === "inline" && f.openTo < f.closeFrom) {
+        if (pos === f.openTo) { pos = f.from; moved = true; } else if (pos === f.closeFrom) { pos = f.to; moved = true; }
+      }
+    }
+    const around = frames.filter((f) => f.openTo <= pos && pos <= f.closeFrom && f.from < pos && pos < f.to);
+    const inline = around.filter((f) => f.kind === "inline");
+    const heading = around.find((f) => f.kind === "heading"), caption = around.find((f) => f.kind === "caption" || f.kind === "figure");
+    const make = (specs, anchor) => { const ch = st.changes(specs); return { changes: ch, selection: { anchor: anchor(ch) } }; };
+    if (caption) return { refused: shift ? t("图注里不能换行。") : t("图注里不能分段。") };
+    if (shift) {
+      if (heading) return { refused: t("标题里不能换行。") };
+      const ls = text.lastIndexOf("\n", pos - 1) + 1, before = text.slice(ls, pos);
+      const lineBefore = before.replace(/\\[A-Za-z]+\*?|[{}\s]/g, "");
+      if (!lineBefore && (ls === 0 || /^[ \t]*$/.test(text.slice(text.lastIndexOf("\n", ls - 2) + 1, ls - 1)) || STRUCTURAL.test(text.slice(text.lastIndexOf("\n", ls - 2) + 1, ls - 1)))) return { refused: t("段落开头不能换行。") };
+      const after = text[pos] === "[" || text[pos] === "*" ? "{}" : "";
+      return make([{ from: pos, insert: "\\\\" + after + br }], (ch) => ch.mapPos(pos, 1));
+    }
+    if (heading) {
+      const c = read.cmds.find((x) => x.from === heading.from && x.role === "heading"), line = st.doc.lineAt(heading.to);
+      const rest = text.slice(heading.to, line.to), endAt = /^\s*(\\label\s*\{[^{}]*\}\s*)*$/.test(rest) ? line.to : heading.to;
+      if (pos === heading.openTo && heading.openTo < heading.closeFrom) {   // at its start: an empty paragraph above it
+        const hl = st.doc.lineAt(heading.from), above = hl.number > 1 && st.doc.line(hl.number - 1).text.trim();
+        return make([{ from: hl.from, insert: above ? br + br : br }], (ch) => ch.mapPos(pos, 1));
+      }
+      // the words after the cursor leave the heading for a new paragraph after it (and its \label), set apart from
+      // what follows by a blank line
+      const after = line.number < st.doc.lines && st.doc.line(line.number + 1).text.trim() ? br : "";
+      const moved = text.slice(pos, heading.closeFrom), words = moved.replace(/^\s+/, "");
+      if (!words || crosses(text, read, pos, heading.closeFrom) || !c) {
+        return make([{ from: endAt, insert: br + br + after }], (ch) => ch.mapPos(endAt, -1) + 2);
+      }
+      return make([{ from: pos, to: heading.closeFrom }, { from: endAt, insert: br + br + words + after }], (ch) => ch.mapPos(endAt, -1) + 2);
+    }
+    // in a list: a new \item, or out of the list from an empty one
+    const ctx = contextAt(read, pos);
+    let list = ctx && ctx.kind === "env" && ctx.x.role === "list" ? ctx.x : null;
+    if (!list && inline.length) { const c2 = contextAt(read, inline[0].from); if (c2 && c2.kind === "env" && c2.x.role === "list") list = c2.x; }
+    let para = br + br;
+    if (list) {
+      const items = list.itemCmds, item = items.filter((c) => c.from < pos).pop();
+      if (!item) return { refused: t("这里不能分段。") };
+      const next = items.find((c) => c.from > item.from), end = next ? next.from : list.endFrom;
+      if (!inline.length && !text.slice(item.to, end).replace(/%[^\n]*/g, "").trim()) {
+        const spec = returnSpec(st.update({ selection: { anchor: pos } }).state, read);
+        return { changes: spec.changes, selection: spec.selection };
+      }
+      para = br + /^[ \t]*/.exec(st.doc.lineAt(item.from).text)[0] + "\\item ";
+    }
+    // where the cursor ends up, from the end of what is inserted (a third line break after it: `back` 1)
+    let back = 0;
+    if (!list && !inline.length) {
+      // blank lines take no room (22.12 M, F5): a new empty paragraph is a blank line between two others, so the page
+      // shows it, a line where the cursor stands
+      let line = st.doc.lineAt(pos);
+      // at the end of a line the page shows as a block (the 导言区 line, \maketitle's title): at the start of the next
+      const whole = pos === line.to && line.number < st.doc.lines ? w.atomAt(val, pos, "to") : null;
+      if (whole && whole.from <= line.from) { pos = line.to + 1; line = st.doc.lineAt(pos); }
+      const before = text.slice(line.from, pos).trim(), after = text.slice(pos, line.to).trim();
+      const above = line.number > 1 ? st.doc.line(line.number - 1).text.trim() : "x", below = line.number < st.doc.lines ? st.doc.line(line.number + 1) : null;
+      const prev = line.number > 1 ? st.doc.line(line.number - 1).text : "";
+      if (!before && !after) para = br;                              // on an empty paragraph: another under it
+      else if (!before) {                                            // at a paragraph's start: an empty one above it
+        if (!above) para = br + br;
+        else if (commentLine(prev) || !STRUCTURAL.test(prev)) para = br;   // inside a paragraph (its line before is words): split there
+        else para = br + br + br;                                    // after a heading, a block, the body's start
+      } else if (!after && below && STRUCTURAL.test(below.text) && !commentLine(below.text)) { para = br + br + br; back = 1; }   // before a heading, a block or the end
+      else if (!after && below && below.text.trim()) para = br;      // at a line's end inside a paragraph: split there
+    }
+    const outer = inline.slice().sort((a, b) => a.from - b.from);
+    const closes = outer.map(() => "}").join(""), opens = outer.map((f) => text.slice(f.from, f.openTo)).join("");
+    const ins = closes + para + opens;
+    return make([{ from: pos, insert: ins }], (ch) => ch.mapPos(pos, -1) + ins.split(br).join("\n").length - back);
+  }
+  // Backspace (dir -1) and Delete (dir 1) where Word does more than CodeMirror: at the start of a heading's words it
+  // becomes body text, joined with the paragraph before when that is running text; at the edge of a style the
+  // character outside it is deleted; an empty style goes whole. Elsewhere null (CodeMirror's own, then the filter).
+  function backSpec(CM, state, value, dir) {
+    const w = wordField(CM), sel = state.selection.main, text = value.info.text;
+    if (!sel.empty) return null;
+    const grid = gridBack(value, sel.head, dir);
+    if (grid) return grid;
+    const pos = sel.head, frames = w.framesOf(value, pos, pos);
+    const f = frames.filter((x) => (x.kind === "inline" || x.kind === "heading") && (dir < 0 ? x.openTo === pos : x.closeFrom === pos)).pop();
+    if (!f) return null;
+    if (f.openTo === f.closeFrom) return { changes: state.changes({ from: f.from, to: f.to }), selection: { anchor: f.from }, userEvent: "delete.backward.made" };
+    if (f.kind === "heading") {
+      if (dir > 0) return null;
+      // joined with the paragraph before it when that is running text: the blank lines between become one line break
+      let open = { from: f.from, to: f.openTo, insert: "" };
+      const line = state.doc.lineAt(f.from);
+      if (!text.slice(line.from, f.from).trim() && line.number > 2) {
+        let k = line.number - 1;
+        while (k > 1 && !state.doc.line(k).text.trim()) k -= 1;
+        const p = state.doc.line(k);
+        if (k < line.number - 1 && p.text.trim() && !STRUCTURAL.test(p.text) && !/\\\\\s*$/.test(codePart(p.text))) open = { from: p.to, to: f.openTo, insert: state.lineBreak };
+      }
+      const ch = state.changes([open, { from: f.closeFrom, to: f.to }]), nd = ch.apply(state.doc).toString();
+      if (unsureWhy(nd, readLatex(nd))) return { refused: t("这个标题不能这样变成正文。") };
+      return { changes: ch, selection: { anchor: ch.mapPos(f.openTo, 1) }, userEvent: "delete.backward.made" };
+    }
+    // the character before the style (or after it): one code point, or the atom there whole
+    const q = dir < 0 ? f.from : f.to;
+    if (dir < 0 ? q <= 0 : q >= text.length) return { refused: "" };
+    const a = dir < 0 ? w.atomAt(value, q, "to") : w.atomAt(value, q, "from");
+    let from = dir < 0 ? q - 1 : q, to = dir < 0 ? q : q + 1;
+    if (a) { from = a.from; to = a.to; }
+    else if (dir < 0 && /[\udc00-\udfff]/.test(text[q - 1] || "") && q > 1) from = q - 2;
+    else if (dir > 0 && /[\ud800-\udbff]/.test(text[q] || "")) to = q + 2;
+    const r = w.userEdit(state, value, state.update({ changes: { from: from, to: to }, userEvent: dir < 0 ? "delete.backward" : "delete.forward" }), dir < 0 ? "delete.backward" : "delete.forward");
+    if (r.refused) return r;
+    const made = dir < 0 ? "delete.backward.made" : "delete.forward.made";
+    if (r.changes) return Object.assign({}, r, { userEvent: made });
+    return { changes: state.changes({ from: from, to: to }), selection: { anchor: from }, userEvent: made };
   }
 
   // The innermost place `pos` is in: {kind: math, raw, arg or env, x: what it is}, or null in running text at the top.
@@ -592,17 +3249,18 @@
     };
     if (read.preamble) consider(0, read.preamble.to, "raw", null);
     if (read.end >= 0) consider(read.end, Infinity, "raw", null);
-    read.envs.forEach((e) => consider(e.beginTo, e.endFrom, "env", e));
-    read.raws.forEach((r) => consider(r.from + 1, r.to, "raw", r));
-    read.maths.forEach((f) => consider(f.from + 1, f.to - 1, "math", f));
-    read.cmds.forEach((c) => c.args.forEach((a) => consider(a.from + 1, a.to - 1, "arg", { cmd: c, arg: a })));
+    // only what may hold `pos` is looked at (each place below lies within its item), in the same order
+    eachMeeting(read.envs, pos, pos, (e) => consider(e.beginTo, e.endFrom, "env", e));
+    eachMeeting(read.raws, pos, pos, (r) => consider(r.from + 1, r.to, "raw", r));
+    eachMeeting(read.maths, pos, pos, (f) => consider(f.from + 1, f.to - 1, "math", f));
+    eachMeeting(read.cmds, pos, pos, (c) => c.args.forEach((a) => consider(a.from + 1, a.to - 1, "arg", { cmd: c, arg: a })));
     return best;
   }
 
   // Return by where the cursor is (22.1): running text, a new paragraph; a heading's argument, out of the braces and a
   // new paragraph after the heading; another command's argument, a plain newline; a list, a new \item, and an empty
   // item is removed and the cursor leaves the list; math, raw text, an environment shown as written or `read` null
-  // (显示源码, ⇧Return), a plain newline. Every line break is the file's own (state.lineBreak, 22.1).
+  // (显示代码, ⇧Return in it), a plain newline. Every line break is the file's own (state.lineBreak, 22.1).
   function returnSpec(state, read) {
     const sel = state.selection.main, pos = sel.from, br = state.lineBreak, doc = state.doc;
     const make = (specs, at, back) => {
@@ -628,12 +3286,19 @@
     }
     if (ctx.kind !== "env" || ctx.x.role === "raw") return plain();
     if (ctx.x.role === "text") return paragraph();
-    const env = ctx.x, items = read.cmds.filter((c) => c.role === "item" && c.list === env);
+    const env = ctx.x, items = env.itemCmds;
     const item = items.filter((c) => c.from <= pos).pop();
     if (!item || pos < item.to) return plain();
     const next = items.find((c) => c.from > item.from), end = next ? next.from : env.endFrom;
     if (!doc.sliceString(item.to, end).trim()) {
       if (!sel.empty || env.endFrom >= doc.length) return plain();   // a list never closed: nowhere to leave to
+      if (items.length === 1) {   // its only item: the list goes, an empty paragraph in its place (a list with no item is no list)
+        const first = doc.lineAt(env.from), last = doc.lineAt(env.to);
+        const own = !doc.sliceString(first.from, env.from).trim() && !doc.sliceString(env.to, last.to).trim();
+        const a = own ? first.from : env.from, b = own ? last.to : env.to;
+        const changes = state.changes({ from: a, to: b, insert: "" });
+        return { changes: changes, selection: { anchor: changes.mapPos(a, -1) }, scrollIntoView: true, userEvent: "input" };
+      }
       const line = doc.lineAt(item.from), endLine = doc.lineAt(end), whole = endLine.from > item.from;
       const delFrom = whole && !doc.sliceString(line.from, item.from).trim() ? line.from : item.from;
       return after([{ from: delFrom, to: whole ? endLine.from : end }], env.to);
@@ -652,6 +3317,1692 @@
     };
   }
   function returnKeys(CM) { return CM.keymap.of([{ key: "Enter", run: onReturn(CM, false) }, { key: "Shift-Enter", run: onReturn(CM, true) }]); }
+
+  // -- a grid's cells, rows and columns (22.12 T) -----------------------------------------------------------------
+  //
+  // Each change is one transaction of the editor's own (one step of ⌘Z, saved as typed edits, the passages carried
+  // through it); every line break it writes is the file's own. A new row is "& & \\" as 表格 writes it, on a line of
+  // its own with the row's indent; a new column is an "l" in the spec (with "|" when every column is ruled) and an empty
+  // cell in each row; the researcher's spec letters for the other columns are kept.
+
+  // What sets the words `v` typed into the empty cell `k` (at `at`) apart from what is before it: a space after an &, or
+  // after a rule's control word on the row's line (\toprule&) -- "{}" there when the words start with "[" or "*", which
+  // the rule would read as its option (a compile stops at "\toprule [1]").
+  function padBefore(text, at, k, v) {
+    if (!v) return "";
+    if (k > 0) return " ";
+    const prev = text.slice(Math.max(0, at - 60), at);
+    if (/(?:^|[^\\])(?:\\\\)*\\[A-Za-z@]+\*?$/.test(prev)) return /^[[*]/.test(v) ? "{}" : " ";
+    return /[A-Za-z@]$/.test(prev) ? " " : "";
+  }
+  // Tab-separated text as a spreadsheet copies it: its rows, each a list of values; a value in double quotes (as Excel
+  // and Numbers write one holding a tab, a line break or a quote) is the text between them, "" a quote.
+  function tabRows(s) {
+    const rows = [[]];
+    let cell = "", i = 0, start = true;
+    while (i < s.length) {
+      const ch = s[i];
+      if (start && ch === '"') {
+        let j = i + 1, v = "";
+        for (;;) {
+          const q = s.indexOf('"', j);
+          if (q < 0) { v = null; break; }
+          if (s[q + 1] === '"') { v += s.slice(j, q + 1); j = q + 2; continue; }
+          v += s.slice(j, q); j = q + 1; break;
+        }
+        if (v != null && (j >= s.length || s[j] === "\t" || s[j] === "\n")) { cell = v; i = j; start = false; continue; }
+      }
+      if (ch === "\t" || ch === "\n") { rows[rows.length - 1].push(cell); if (ch === "\n") rows.push([]); cell = ""; start = true; i += 1; continue; }
+      cell += ch; start = false; i += 1;
+    }
+    rows[rows.length - 1].push(cell);
+    return rows;
+  }
+  // A row's line of `vals` (escaped words): "a & & c \\", an empty one "& & \\".
+  function rowLine(vals) { return vals.reduce((s, v, k) => s + (k ? "& " : "") + (v ? v + " " : ""), "") + "\\\\"; }
+  // The change that puts `v` in place of the words of cell (r, k): an empty cell's spaces with them, a space toward each &.
+  // `shown`: where the words end, counted from its `from`.
+  function cellFill(text, g, r, k, v) {
+    const row = g.rows[r], cell = row.cells[k], s = text.slice(cell[0], cell[1]);
+    if (s.trim()) {
+      const a = cell[0] + (s.length - s.trimStart().length), b = cell[1] - (s.length - s.trimEnd().length);
+      return { from: a, to: b, insert: v, shown: v.length };
+    }
+    const before = padBefore(text, cell[0], k, v), after = v && (k < row.cells.length - 1 || row.slash) ? " " : "";
+    return { from: cell[0], to: cell[1], insert: v ? before + v + after : s, shown: (before + v).length };
+  }
+  // The change that adds rows of `valsList` after row `r`: on the lines before the next row (after the rules between,
+  // so a header keeps its rule under it), or after the last row's \\ (before rules on its line), its \\ written first
+  // when it had none.
+  function rowsAfter(text, g, r, valsList, br) {
+    const rows = g.rows, row = rows[r], next = rows[r + 1], indent = (x) => /^[ \t]*/.exec(text.slice(x.from, x.to))[0];
+    const lines = valsList.map((vals) => rowLine(vals));
+    if (next) return { from: next.lead, insert: lines.join(br + indent(next)) + br + indent(next) };
+    return { from: row.slashTo, insert: (row.slash ? "" : " \\\\") + br + lines.map((l) => indent(row) + l).join(br) };
+  }
+  // The rules between the first row and the second (\midrule or \hline): the header's, [from, to] each.
+  function headerRules(text, g) {
+    const hits = [], a0 = g.rows[0].slashTo, b0 = g.rows[1] ? g.rows[1].lead : a0;
+    for (let a = a0; a < b0;) {
+      const e = Math.min(lineEndAt(text, a), b0), code = codePart(text.slice(a, e)), re = /\\(?:midrule|hline)(?![A-Za-z])[ \t]*(?:\[[^\]\n]*\])?/g;
+      for (let m = re.exec(code); m; m = re.exec(code)) hits.push([a + m.index, a + m.index + m[0].length]);
+      a = e + 1;
+    }
+    return hits;
+  }
+  // 表格's actions (the right column) and Tab: `act` is rowAbove, rowBelow, colLeft, colRight, rowDelete, colDelete,
+  // header (第一行是表头, on or off), next or prev (Tab, ⇧Tab: the next or previous cell, as Word with its words selected;
+  // Tab in the last cell adds a row), up or down (the up and down arrow keys: the cell above or below; past the first or last row, the caption or
+  // the line beside the table). {changes, selection}, {selection}, {refused}, or null when the cursor is in no
+  // grid's cell. The cursor ends in the cell the action is about, read again after the change.
+  function gridSpec(state, act) {
+    const text = state.doc.toString(), read = readLatex(text), sel = state.selection.main, br = state.lineBreak;
+    const at = cellNear(text, read, sel.head);
+    if ((act === "up" || act === "down") && !at) {   // from a caption to the row beside it
+      const g = gridAt(text, read, sel.head), cap = g && g.caption;
+      if (!cap || sel.head < cap.open || sel.head > cap.close || (act === "down") === cap.below) return null;
+      const row = g.rows[cap.below ? g.rows.length - 1 : 0];
+      return { selection: { anchor: cellCaret(text, row.cells[0]) }, userEvent: "select", scrollIntoView: true };
+    }
+    if (!at) return null;
+    const g = at.g, rows = g.rows, n = g.cols.length, last = rows.length - 1, row = rows[at.r];
+    const value = wx ? state.field(wx.field, false) : null;
+    const go = (r, c) => ({ selection: cellSelection(text, rows[r].cells[c], value && value.info.text === text ? value : null), userEvent: "select", scrollIntoView: true });
+    const done = (specs, r, c) => {
+      specs.sort((a, b) => a.from - b.from || (a.to == null ? a.from : a.to) - (b.to == null ? b.from : b.to));
+      const changes = state.changes(specs), text2 = changes.apply(state.doc).toString(), read2 = readLatex(text2);
+      const g2 = gridAt(text2, read2, changes.mapPos(g.env.from, 1));
+      if (!g2 || unsureWhy(text2, read2)) return { refused: t("这样改会让 LaTeX 的结构不完整，没有改。") };
+      const r2 = Math.max(0, Math.min(r, g2.rows.length - 1)), cell = g2.rows[r2].cells[Math.max(0, Math.min(c, g2.cols.length - 1))];
+      return { changes: changes, selection: { anchor: cellCaret(text2, cell) }, userEvent: "input.format.table", scrollIntoView: true };
+    };
+    const empty = () => new Array(n).fill("");
+    const tooMany = () => rows.length >= GRID_LIMIT.rows ? { refused: t("表格最多 {n} 行。", { n: GRID_LIMIT.rows }) } : null;
+    if (act === "next") {
+      if (at.c < n - 1) return go(at.r, at.c + 1);
+      if (at.r < last) return go(at.r + 1, 0);
+      return tooMany() || done([rowsAfter(text, g, last, [empty()], br)], last + 1, 0);
+    }
+    if (act === "up" || act === "down") {   // the cell above or below, as a spreadsheet; past the table's edge, out of it
+      const r = at.r + (act === "down" ? 1 : -1), cap = g.caption;
+      if (r >= 0 && r <= last) return { selection: { anchor: cellCaret(text, rows[r].cells[at.c]) }, userEvent: "select", scrollIntoView: true };
+      if (cap && (r < 0) !== cap.below) return { selection: { anchor: cap.close }, userEvent: "select", scrollIntoView: true };
+      const out = r < 0 ? g.from - 1 : g.to + 1;
+      return out >= 0 && out <= text.length ? { selection: { anchor: out }, userEvent: "select", scrollIntoView: true } : { selection: { anchor: sel.head } };
+    }
+    if (act === "prev") {
+      if (at.c > 0) return go(at.r, at.c - 1);
+      if (at.r > 0) return go(at.r - 1, n - 1);
+      return { selection: { anchor: sel.anchor, head: sel.head } };   // the first cell: nowhere before it in the table
+    }
+    if (act === "rowAbove") return tooMany() || done([at.r ? rowsAfter(text, g, at.r - 1, [empty()], br) :
+      { from: row.lead, insert: rowLine(empty()) + br + /^[ \t]*/.exec(text.slice(row.from, row.to))[0] }], at.r, at.c);
+    if (act === "rowBelow") return tooMany() || done([rowsAfter(text, g, at.r, [empty()], br)], at.r + 1, at.c);
+    if (act === "rowDelete") {
+      if (!last) return { refused: t("表格至少要有一行。") };
+      // the row's line goes whole, unless it holds rules too (they stay, on their line)
+      const own = !text.slice(row.from, row.lead).trim() && !codePart(text.slice(row.slashTo, row.to)).trim();
+      const specs = [own ? { from: row.from, to: Math.min(text.length, row.to + 1) } : { from: row.lead, to: row.slashTo }];
+      // a row between two rules: the rules it kept apart would print as a double line -- those under it go (above it,
+      // for the last row, so the table keeps its closing rule)
+      const below = at.r < last ? rows[at.r + 1].above : row.below;
+      if (row.above && below) specs.push(...(at.r < last ? rulesGone(text, row.slashTo, rows[at.r + 1].lead) : rulesGone(text, rows[at.r - 1].slashTo, row.lead)));
+      return done(specs, Math.min(at.r, last - 1), at.c);
+    }
+    if (act === "colLeft" || act === "colRight" || act === "colDelete") {
+      if (!g.items) return { refused: t("这个表格的列格式比较特别，加减列要在「显示代码」里改。") };
+      const cols = g.items.filter((x) => x.col), sf = g.spec.from;
+      const ruled = n >= 2 ? g.bars.slice(1, n).every(Boolean) : g.bars[0] && g.bars[1];
+      const specs = [];
+      if (act === "colDelete") {
+        if (n === 1) return { refused: t("表格至少要有一列。") };
+        const k = at.c, item = cols[k], after = g.items[g.items.indexOf(item) + 1];
+        specs.push({ from: sf + item.from, to: sf + (ruled && after && after.bar ? after.to : item.to) });
+        rows.forEach((r) => specs.push(k < n - 1 ? { from: r.cells[k][0], to: r.cells[k + 1][0] } : { from: r.seps[k - 1], to: r.cells[k][1] }));
+        return done(specs, at.r, Math.min(at.c, n - 2));
+      }
+      if (n >= GRID_LIMIT.columns) return { refused: t("表格最多 {n} 列。", { n: GRID_LIMIT.columns }) };
+      const k = act === "colRight" ? at.c : at.c - 1;   // the new column comes after column k (-1: first)
+      specs.push(k >= 0 ? { from: sf + cols[k].to, insert: ruled ? "|l" : "l" } : { from: sf + cols[0].from, insert: ruled ? "l|" : "l" });
+      rows.forEach((r) => specs.push(k < 0 ? { from: r.cells[0][0], insert: "& " } : k < n - 1 ? { from: r.cells[k + 1][0], insert: " &" } : { from: r.cells[k][1], insert: "& " }));
+      return done(specs, at.r, k + 1);
+    }
+    if (act === "header") {
+      if (!last) return { refused: t("表格要有两行以上，才能把第一行设成表头。") };
+      const hits = headerRules(text, g);
+      if (!hits.length) return done([{ from: rows[0].to, insert: br + /^[ \t]*/.exec(text.slice(rows[0].from, rows[0].to))[0] + (g.booktabs ? "\\midrule" : "\\hline") }], at.r, at.c);
+      return done(hits.map((h) => {
+        const ls = lineStartAt(text, h[0]), le = lineEndAt(text, h[0]), rest = codePart(text.slice(ls, h[0]) + text.slice(h[1], le));
+        if (ls > rows[0].to && le < rows[1].from && !rest.trim()) return { from: ls, to: Math.min(text.length, le + 1) };   // its line
+        let a = h[0];
+        while (a > rows[0].slashTo && (text[a - 1] === " " || text[a - 1] === "\t")) a -= 1;   // "\\ \hline": the space too
+        return { from: a, to: h[1] };
+      }), at.r, at.c);
+    }
+    return null;
+  }
+  // The deletions that take away the rules (\toprule, \midrule, \bottomrule, \hline) in [a, b): a rule's line whole when
+  // it holds nothing else, else the rule with the spaces between it and the row.
+  function rulesGone(text, a, b) {
+    const out = [];
+    for (let at = a; at < b;) {
+      const ls = lineStartAt(text, at), le = lineEndAt(text, at), e = Math.min(le, b), code = codePart(text.slice(at, e));
+      const re = /\\(?:toprule|midrule|bottomrule|hline)(?![A-Za-z])[ \t]*(?:\[[^\]\n]*\])?/g, hits = [];
+      for (let m = re.exec(code); m; m = re.exec(code)) hits.push([at + m.index, at + m.index + m[0].length]);
+      const rest = hits.reduce((x, h) => x.slice(0, h[0] - ls) + " ".repeat(h[1] - h[0]) + x.slice(h[1] - ls), text.slice(ls, le));
+      if (hits.length && !rest.trim() && ls >= a && le < b) out.push([ls, Math.min(text.length, le + 1)]);
+      else hits.forEach((h) => {
+        let x = h[0], y = h[1];
+        if (codePart(text.slice(y, le)).trim()) { while (text[y] === " " || text[y] === "\t") y += 1; }
+        else while (x > Math.max(a, ls) && (text[x - 1] === " " || text[x - 1] === "\t")) x -= 1;
+        out.push([x, y]);
+      });
+      at = le + 1;
+    }
+    return out.map((d) => ({ from: d[0], to: d[1] }));
+  }
+  // Whether the first row is a header: a \midrule or \hline under it (第一行是表头 pressed).
+  function gridHeader(text, g) { return g.rows.length > 1 && headerRules(text, g).length > 0; }
+  // Return in a grid's cell: the cursor goes to the cell below, as a spreadsheet's (in the last row it stays); ⇧Return
+  // is refused there (a line break would end the row). At the very start of a table (before its caption or its first
+  // cell), Return makes an empty paragraph above it, as Word does. Null elsewhere.
+  function gridEnter(state, value, shift) {
+    const text = value.info.text, read = value.read, sel = state.selection.main, head = sel.head;
+    const atStart = sel.empty && gridsNear(text, read, head, head).some((g) => g.from === head);
+    // ⇧Return at the table's first place: typed words go to its first cell (or caption), where no line break goes
+    if (atStart && shift) return { refused: t("表格的格子里不能换行。") };
+    if (atStart) {
+      const blankBefore = head === 0 || !text.slice(lineStartAt(text, head - 1), head - 1).trim();
+      return { changes: state.changes({ from: head, insert: blankBefore ? state.lineBreak : state.lineBreak + state.lineBreak }),
+        selection: { anchor: blankBefore ? head : head + 1 }, userEvent: "input.enter", scrollIntoView: true };
+    }
+    const c = cellNear(text, read, head);
+    if (!c) return null;
+    if (shift) return { refused: t("表格的格子里不能换行。") };
+    if (c.r === c.g.rows.length - 1) return { selection: { anchor: sel.anchor, head: sel.head } };
+    return { selection: { anchor: cellCaret(text, c.g.rows[c.r + 1].cells[c.c]) }, userEvent: "select", scrollIntoView: true };
+  }
+  // Backspace and Delete at a grid's edges do nothing: at a cell's start (end), the table's first place, before its
+  // caption's words or after them, and where they would join the table's lines with the text before or after it.
+  function gridBack(value, pos, dir) {
+    const text = value.info.text, read = value.read, c = cellAt(text, read, pos);
+    if (c && (dir < 0 ? pos <= c.cell[0] : pos >= c.cell[1])) return { refused: "" };
+    for (const g of gridsNear(text, read, pos - 1, pos + 1)) {
+      if (dir < 0 ? pos === g.from || (pos === g.to + 1 && text.slice(pos, lineEndAt(text, pos)).trim()) : pos === g.to || (pos === g.from - 1 && text.slice(lineStartAt(text, pos), pos).trim())) return { refused: "" };
+      if (g.caption && pos === (dir < 0 ? g.caption.open : g.caption.close)) return { refused: "" };
+    }
+    return null;
+  }
+
+  // -- 格式与插入: the tools (22.12) ----------------------------------------------------------------------------------
+  //
+  // Each tool is exactly the same as typing its command: given an EditorState (and what the page knows of the main
+  // file), it answers {changes, selection} for the editor's own dispatch -- one transaction, so ⌘Z, the save, the
+  // passages' mapping and the line-break filter all apply --, {refused: a sentence}, or null when there is nothing to
+  // do. Nothing here writes anything else. Positions are the editor's (a line break is one); a block's line breaks are
+  // the file's own (state.lineBreak).
+
+  const CHAPTER_CLASSES = new Set(["book", "report", "ctexbook", "ctexrep", "memoir", "scrbook", "scrreprt"]);
+  const GRAPHICX_PACKAGES = new Set(["graphicx", "tikz", "pgf", "pgfplots", "adjustbox"]);   // each loads graphicx
+  const GRAPHICX_CLASSES = new Set(["beamer", "ctexbeamer"]);
+  const TEXT_STYLE_NAMES = ["textbf", "textit", "underline"];
+  const FONT_COMMANDS = ["textsf", "texttt", "textrm"], FONT_DECLS = ["songti", "heiti", "kaishu", "fangsong"];
+  const SIZE_DECLS = ["small", "large", "Large"];
+  const HEADING_NAMES = ["chapter", "section", "subsection", "subsubsection"];
+  // The arguments no tool writes into: a key, a label, a file name, a package.
+  const NAME_ARGS = new Set(["label", "includegraphics", "input", "include", "subfile", "import", "subimport", "url",
+    "usepackage", "documentclass", "bibliography", "bibliographystyle", "addbibresource", "graphicspath", "href"]);
+  // A line that is a command or an environment of its own, never part of a paragraph a heading or a list is made of.
+  const STRUCTURAL = /^\s*(?:\\(?:begin|end|item|part|chapter|section|subsection|subsubsection|paragraph|caption|label|centering|includegraphics|maketitle|tableofcontents|bibliography|bibliographystyle|printbibliography|appendix|input|include|subfile|newpage|clearpage)\b|%|\\\[|\$\$)/;
+  // 首行缩进 on the page (22.12 B2): a line the edit view hides whole (a comment, a \label, \noindent, \vspace{…} …) is
+  // passed over when it is asked where a paragraph starts; a paragraph starts after a blank line, at the body's start,
+  // after \maketitle, a contents line or a page break ("latex-para"), or as the first after a heading, blank lines
+  // between or not ("latex-para-first", indented only where the class does: ctex, indentfirst). What follows a list or
+  // a float without a blank line goes on the paragraph before it, as TeX sets it, and \noindent is never indented.
+  function quietLine(line) {
+    if (!line.trim()) return false;
+    let s = codePart(line).trim();
+    for (let n = 0; n < 40 && s; n++) {
+      const m = /^\\([A-Za-z@]+)\*?\s*/.exec(s);
+      const k = m ? skipLen(m[1], s.slice(m[1].length + 1)) : -1;
+      if (k > 0) { s = s.slice(m[1].length + 1 + k).trim(); continue; }
+      if (!m || m[1] === "maketitle" || !(SILENT.has(m[1]) || SILENT_ARGS.has(m[1]) || m[1] === "label" || k === 0)) return false;
+      s = s.slice(m[0].length);
+      for (let g = /^(?:\{[^{}]*\}|\[[^\]]*\])\s*/.exec(s); g; g = /^(?:\{[^{}]*\}|\[[^\]]*\])\s*/.exec(s)) s = s.slice(g[0].length);
+    }
+    return !s;
+  }
+  const PARA_AFTER = /^\s*\\(?:begin\s*\{document\}|maketitle|tableofcontents|listoffigures|listoftables|newpage|clearpage|cleardoublepage|pagebreak)(?![A-Za-z])/;
+  const HEADING_LINE = /^\s*\\(?:part|chapter|section|subsection|subsubsection)\*?\s*[[{]/;
+  // \par (22.12 M, F7): a line of it alone (its code), one that holds it, one that ends or starts with it
+  const commentLine = (line) => { const c = codePart(line); return c.length < line.length && !c.trim(); };
+  // (and what ends a paragraph as \par does: \vskip with its length, \vfill, \hrule -- 22.12 R)
+  const VPAR = String.raw`(?:\\(?:par|vfil(?:l|neg)?|vss)(?![A-Za-z])|\\hrule(?![A-Za-z])` + RULE_SPEC + String.raw`|\\vskip(?![A-Za-z])` + GLUE + ")";
+  const PAR_ONLY = new RegExp(String.raw`^\s*` + VPAR + String.raw`\s*$`), PAR_LINE = new RegExp(String.raw`(?:^|[^\\])(?:\\\\)*` + VPAR);
+  const PAR_END = new RegExp(String.raw`(?:^|[^\\])(?:\\\\)*` + VPAR + String.raw`\s*$`), PAR_START = new RegExp(String.raw`^\s*` + VPAR);
+  const PARS_LEAD = new RegExp(String.raw`^\s*(?:` + VPAR + String.raw`\s*)+`);
+  // a float's \end, the whole code of its line, and its \begin at a line's start
+  const FLOAT_END = /^\\end\s*\{(?:figure|table)\*?\}$/, FLOAT_BEGIN = /^\s*\\begin\s*\{(?:figure|table)\*?\}/;
+  // A change on a line can start or end the paragraph of the next line with words, and a quiet or blank line's place is
+  // drawn from what follows it: the place drawn again reaches back over the quiet and blank lines before it and on, over
+  // those after it, to the next line with words.
+  function paraReach(doc, s) {
+    let a = doc.lineAt(Math.max(0, Math.min(s[0], doc.length))).number, b = doc.lineAt(Math.max(0, Math.min(s[1], doc.length))).number;
+    const still = (n) => { const t2 = doc.line(n).text; return !t2.trim() || quietLine(t2); };
+    while (a > 1 && still(a - 1)) a -= 1;
+    if (a > 1) a -= 1;   // and the line before them: blank lines are joined to it (22.12 M, F5)
+    if (b < doc.lines) { b += 1; while (b < doc.lines && still(b)) b += 1; }
+    return [Math.min(s[0], doc.line(a).from), Math.max(s[1], doc.line(b).to)];
+  }
+  const IMAGE_UNSAFE = /[%#{}\\~$^&"]| {2}/;   // a file name \includegraphics cannot take (TeX reads two spaces as one)
+  const CARET = "\u0001";   // where the cursor goes in a block
+
+  // What a preamble says: the class, whether it has \chapter, loads ctex, loads graphicx (itself, or by a package or
+  // class that does), loads booktabs, and its \graphicspath folders. Commented lines do not count.
+  function preambleFacts(text) {
+    const code = String(text || "").split("\n").map(codePart).join("\n");
+    const m = /\\documentclass\s*(?:\[[^\]]*\])?\s*\{\s*([^{}\s]+)\s*\}/.exec(code), cls = m ? m[1] : null;
+    const packages = new Set(), re = /\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^{}]*)\}/g;
+    for (let p = re.exec(code); p; p = re.exec(code)) p[1].split(",").forEach((x) => { if (x.trim()) packages.add(x.trim()); });
+    const gp = /\\graphicspath\s*\{((?:\s*\{[^{}]*\})*)\s*\}/.exec(code);
+    return {
+      cls: cls, chapters: !!cls && CHAPTER_CLASSES.has(cls), ctex: (!!cls && /^ctex/.test(cls)) || packages.has("ctex"),
+      graphicx: (!!cls && GRAPHICX_CLASSES.has(cls)) || Array.from(packages).some((x) => GRAPHICX_PACKAGES.has(x)),
+      booktabs: packages.has("booktabs"), ulem: packages.has("ulem"), cjkUnderline: packages.has("xeCJKfntef"),
+      cjk: (!!cls && /^ctex/.test(cls)) || packages.has("ctex") || packages.has("xeCJK"),
+      amsmath: (!!cls && /^ams/.test(cls)) || packages.has("amsmath") || packages.has("mathtools"),
+      url: ["url", "xurl", "hyperref"].some((x) => packages.has(x)),
+      graphicspath: gp ? Array.from(gp[1].matchAll(/\{([^{}]*)\}/g), (x) => x[1].trim()).filter(Boolean) : [],
+    };
+  }
+
+  // Project-relative posix paths: `normPath` folds "." and "..", `relPath` is `to` as seen from the folder `from`.
+  function normPath(p) {
+    const out = [];
+    String(p).split("/").forEach((s) => {
+      if (!s || s === ".") return;
+      if (s === ".." && out.length && out[out.length - 1] !== "..") out.pop(); else out.push(s);
+    });
+    return out.join("/");
+  }
+  function relPath(from, to) {
+    const a = normPath(from || "").split("/").filter(Boolean), b = normPath(to).split("/");
+    let k = 0;
+    while (k < a.length && k < b.length - 1 && a[k] === b[k]) k += 1;
+    return a.slice(k).map(() => "..").concat(b.slice(k)).join("/");
+  }
+  // The path \includegraphics is given for the project file `file`, as the export compiles it (22.4: TeX runs in the
+  // main file's folder): relative to a \graphicspath folder the file is under, else to the main file's folder.
+  // `exists` (a project path): a file of the same name in the main file's folder would be found first, so the path
+  // through \graphicspath is used only when there is none.
+  function figurePath(file, folder, graphicspath, exists) {
+    for (const g of graphicspath || []) {
+      const base = normPath((folder ? folder + "/" : "") + g);
+      if (!base || base.startsWith("..") || !file.startsWith(base + "/")) continue;
+      const rel = file.slice(base.length + 1), shadow = normPath((folder ? folder + "/" : "") + rel);
+      if (exists && shadow !== file && exists(shadow)) break;
+      return rel;
+    }
+    return relPath(folder, file);
+  }
+
+  // A caption as typed, set as text: one line, every character TeX would read as markup escaped as typing escapes it
+  // (TYPE_ESCAPES: ~ and ^ print as themselves, < > | too without the T1 font encoding).
+  function escapeTex(s) { return String(s || "").replace(/\s+/g, " ").trim().replace(/[\\{}$&#_%~^<>|]/g, (c) => TYPE_ESCAPES[c]); }
+  // A label for `prefix` from `words` (a file's name, a caption): letters and digits joined by "-", made unique in `text`
+  // (\label{…} written any way) and among `taken`, the labels of the paper's other files.
+  function newLabel(text, prefix, words, fallback, taken) {
+    const base = String(words || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || fallback;
+    const used = new Set(Array.from(text.matchAll(/\\label\s*\{\s*([^{}]*?)\s*\}/g), (m) => m[1]));
+    (taken || []).forEach((k) => used.add(k));
+    let name = prefix + ":" + base;
+    for (let n = 2; used.has(name); n++) name = prefix + ":" + base + "-" + n;
+    return name;
+  }
+
+  // Why a tool of `kind` cannot work at `pos`, or null. Kinds: inline (a style, a font, a formula, a citation, a
+  // reference), note (a footnote), url (a web address), block (a displayed formula, a list, a paragraph tool, a page
+  // break), float (a figure or a table), heading. Said by what the edit view shows, never by a command's name (22.12, B1).
+  const MOVING = new Set(["caption", "title", "author", "thanks", "chapter", "section", "subsection", "subsubsection", "paragraph", "subparagraph", "part"]);
+  const UNDERLINES = ["underline", "uline", "CJKunderline"];
+  const BOXES = new Set(["mbox", "hbox", "makebox", "fbox", "framebox", "parbox", "raisebox", "sbox", "savebox", "textsuperscript", "textsubscript"]);
+  const FLOAT_HOSTS = /^(?:minipage|multicols\*?|tabular[x*]?|tabu|longtable|tcolorbox|wrapfigure|wraptable|subfigure|subtable|figure\*?|table\*?)$/;
+  function refusal(read, text, pos, kind) {
+    if (read.preamble && pos <= read.preamble.to) return t("光标在导言区里。请把光标放到正文里。");
+    if (read.end >= 0 && pos >= read.end) return t("光标在正文结束之后。请把光标放到正文里。");
+    // between a backslash and what it escapes, in a command's name or between its name and its arguments, in an
+    // environment's \begin{…} or \end{…} and their arguments: where nothing may be typed
+    let run = 0;
+    while (pos - run - 1 >= 0 && text[pos - run - 1] === "\\") run += 1;
+    const inMarkup = run % 2 === 1 || read.cmds.some((c) => c.from < pos && pos < Math.max(c.to, c.nameTo) && !c.args.some((a) => a.from < pos && pos < a.to)) ||
+      read.envs.some((e) => (e.from < pos && pos < envArgsEnd(text, e)) || (e.endFrom < pos && pos < e.to));
+    if (inMarkup) return t("光标在 LaTeX 命令里。请把光标移开。");
+    const ctx = contextAt(read, pos);
+    // a footnote or a web address cannot go into a heading, a caption (TeX moves them to the contents and the lists) or
+    // underlined words (their line cannot break)
+    if (kind === "note" || kind === "url") {
+      const host = read.cmds.filter((c) => c.args.some((a) => !a.opt && a.from < pos && pos < a.to));
+      const note = kind === "note";
+      if (host.some((c) => c.role === "heading" || c.name === "part" || c.name === "paragraph")) return note ? t("标题里不能加脚注。") : t("标题里不能放网址。");
+      if (host.some((c) => c.name === "caption")) return note ? t("图注里不能加脚注。") : t("图注里不能放网址。");
+      if (host.some((c) => UNDERLINES.includes(c.name))) return note ? t("带下划线的文字里不能加脚注。") : t("带下划线的文字里不能放网址。");
+      if (host.some((c) => MOVING.has(c.name) || BOXES.has(c.name))) return note ? t("这里不能加脚注。") : t("这里不能放网址。");
+    }
+    // a figure or a table floats: never inside a box or columns that hold it in place (TeX loses it there)
+    if (kind === "float" && read.envs.some((e) => e.beginTo <= pos && pos <= e.endFrom && FLOAT_HOSTS.test(e.name))) {
+      return t("光标在并排的小块或分栏里，这里不能插入图片或表格。");
+    }
+    if (!ctx) return null;
+    if (ctx.kind === "math") return t("光标在公式里。请把光标移到公式外面。");
+    if (ctx.kind === "raw") return t("光标在注释或原样照排的文字里，这里不能用格式工具。");
+    if (ctx.kind === "arg") {
+      const c = ctx.x.cmd, block = kind === "block" || kind === "float";
+      if (c.role === "cite" || c.role === "ref" || NAME_ARGS.has(c.name) || ctx.x.arg.opt || block || (kind === "heading" && c.role !== "heading")) {
+        if (c.role === "heading") return t("标题里不能用这个工具。");
+        if (c.name === "caption") return t("图注里不能用这个工具。");
+        if (c.name === "footnote") return t("脚注里不能用这个工具。");
+        return t("这里不能用这个工具。");
+      }
+    }
+    if (ctx.kind === "env" && ctx.x.role === "raw") return t("这部分要在「显示代码」里改，这里不能用这个工具。");
+    if (ctx.kind === "env" && ctx.x.role === "list" && kind === "heading") return t("光标在列表里，不能把这一段变成标题。");
+    return null;
+  }
+  function refusalOf(read, text, sel, kind) { return refusal(read, text, sel.from, kind) || (sel.to > sel.from ? refusal(read, text, sel.to, kind) : null); }
+
+  // Whether wrapping [from, to] would break it: a brace opened or closed outside it, a backslash cut from what it
+  // escapes, a command's name or two of its arguments, an environment's \begin or \end, a formula's edge, a comment.
+  function crosses(text, read, from, to) {
+    if (from >= to) return false;
+    const odd = (at) => { let run = 0; while (at - run - 1 >= 0 && text[at - run - 1] === "\\") run += 1; return run % 2 === 1; };
+    if (odd(from) || odd(to)) return true;
+    let depth = 0;
+    for (let j = from; j < to; j++) {
+      const c = text[j];
+      if (c === "\\") { j += 1; continue; }
+      if (c === "%") { const e = text.indexOf("\n", j); if (e < 0 || e >= to) return true; j = e; continue; }
+      if (c === "{") depth += 1;
+      else if (c === "}" && --depth < 0) return true;
+    }
+    if (depth) return true;
+    const split = (slot) => slot(from) !== slot(to);
+    for (const c of read.cmds) {
+      if (to <= c.from || from >= c.to) continue;
+      if (split((p) => { if (p <= c.from || p >= c.to) return "out"; const k = c.args.findIndex((a) => p > a.from && p < a.to); return k < 0 ? "x" + p : "a" + k; })) return true;
+    }
+    for (const e of read.envs) if (split((p) => p <= e.from || p >= e.to ? "out" : p >= e.beginTo && p <= e.endFrom ? "body" : "x" + p)) return true;
+    for (const f of read.maths) if (split((p) => p > f.from && p < f.to)) return true;
+    for (const r of read.raws) if (split((p) => p > r.from && (r.kind === "comment" ? p <= r.to : p < r.to))) return true;
+    return false;
+  }
+  function blankIn(text, from, to) { return /\n[ \t\r]*\n/.test(text.slice(from, to)); }
+  // What [from, to] holds that a command's argument cannot (`what`): `wrap` (\textbf and its like), raw text (\verb and
+  // its like, verbatim), \par, an environment or a displayed formula; `underline` that and a footnote, a web address or
+  // a line break (\uline cannot hold them); `heading` that and a footnote or a web address (TeX moves a heading to the
+  // contents and the PDF's bookmarks); `math`, any formula. A reason, or null.
+  function heldIn(text, read, from, to, what) {
+    const within = (x) => from <= x.from && x.to <= to;
+    const raw = read.raws.some((r) => r.kind !== "comment" && within(r)) || read.cmds.some((c) => c.name === "par" && within(c));
+    const block = read.envs.some(within) || read.maths.some((f) => f.display && within(f));
+    if (what === "math") return read.maths.some(within) || raw || block ? t("选中的文字里已经有公式或不能放进公式的内容，不能再变成公式。") : null;
+    if (raw || block) return what === "heading" ? t("这一段里有原样照排的文字、分段、列表或公式块，不能整段变成标题。") : t("选中的文字里有原样照排的文字、分段、列表或公式块，不能整段加这个格式。");
+    const notes = read.cmds.some((c) => (c.name === "footnote" || c.name === "footnotemark" || URL_LIKE.has(c.name)) && within(c));
+    if (what === "heading" && notes) return t("这一段里有脚注或网址，不能整段变成标题。");
+    if (what === "underline" && (notes || read.symbols.some((x) => x.ch === "\\" && within(x)))) return t("选中的文字里有脚注、网址或换行，不能加下划线。");
+    return null;
+  }
+  function wrapRefusal(text, read, from, to, what) {
+    if (blankIn(text, from, to)) return t("选中的文字跨了段落，不能整段加这个格式。");
+    if (crosses(text, read, from, to)) return t("选中的文字有一部分在别的格式里，不能整段加格式。请只选同一种格式里的文字。");
+    return heldIn(text, read, from, to, what || "wrap");
+  }
+
+  // A construct a tool toggles: a command \name{…} or a group {\name …} (`decl`), as {from, innerFrom, innerTo, to,
+  // name, form}.
+  function commandConstruct(c) {
+    const a = c.args.find((x) => !x.opt);
+    return a ? { from: c.from, innerFrom: a.from + 1, innerTo: a.to - 1, to: a.to, name: c.name, form: "command" } : null;
+  }
+  function declAt(text, read, decls, o) {
+    if (!decls.length || text[o] !== "{") return null;
+    const m = new RegExp("^\\{[ \\t]*\\\\(" + decls.join("|") + ")(?![A-Za-z])[ \\t]?").exec(text.slice(o, o + 48));
+    if (!m || read.cmds.some((c) => c.args.some((a) => a.from === o))) return null;   // a command's argument is not a group of its own
+    const close = skipGroup(text, o, false);
+    return close > 0 ? { from: o, innerFrom: o + m[0].length, innerTo: close - 1, to: close, name: m[1], form: "decl" } : null;
+  }
+  // The innermost group {\decl …} around [from, to]: the braces before `from` read backwards, line by line (at most
+  // 400 lines), comments and escaped braces left out.
+  function declAround(text, read, decls, from, to) {
+    let depth = 0;
+    for (let end = from, n = 0; n < 400; n++) {
+      const ls = text.lastIndexOf("\n", end - 1) + 1, code = codePart(text.slice(ls, end));
+      for (let k = code.length - 1; k >= 0; k--) {
+        const ch = code[k];
+        if (ch !== "{" && ch !== "}") continue;
+        let run = 0;
+        while (k - run - 1 >= 0 && code[k - run - 1] === "\\") run += 1;
+        if (run % 2) continue;
+        if (ch === "}") { depth += 1; continue; }
+        if (depth > 0) { depth -= 1; continue; }
+        const g = declAt(text, read, decls, ls + k);
+        if (g && g.innerTo >= to) return g;
+      }
+      if (ls === 0) break;
+      end = ls - 1;
+    }
+    return null;
+  }
+  // The innermost construct of `names` (commands) or `decls` (groups) around [from, to].
+  function around(text, read, names, decls, from, to) {
+    let best = null;
+    for (const c of read.cmds) {
+      if (!names.includes(c.name)) continue;
+      const k = commandConstruct(c);
+      if (k && k.innerFrom <= from && to <= k.innerTo && (!best || k.innerFrom > best.innerFrom)) best = k;
+    }
+    const g = decls && decls.length ? declAround(text, read, decls, from, to) : null;
+    return g && (!best || g.innerFrom > best.innerFrom) ? g : best;
+  }
+  // The construct of `names` or `decls` whose text or whole is exactly [from, to].
+  function exactly(text, read, names, decls, from, to) {
+    const same = (k) => k && ((k.innerFrom === from && k.innerTo === to) || (k.from === from && k.to === to));
+    for (const c of read.cmds) if (names.includes(c.name) && same(commandConstruct(c))) return commandConstruct(c);
+    const g = declAt(text, read, decls || [], from) || (decls && decls.length ? declAround(text, read, decls, from, to) : null);
+    return same(g) ? g : null;
+  }
+  function openingOf(form, name) { return form === "decl" ? "{\\" + name + " " : "\\" + name + "{"; }
+
+  // A transaction of `specs`, the selection carried through it (or `selection`, given in the new text).
+  function edited(state, specs, selection) {
+    const ch = state.changes(specs), sel = state.selection.main;
+    if (selection) return { changes: ch, selection: selection };
+    const lo = Math.min(sel.anchor, sel.head), map = (p) => ch.mapPos(p, p === lo && !sel.empty ? -1 : 1);
+    return { changes: ch, selection: { anchor: map(sel.anchor), head: map(sel.head) } };
+  }
+  function unwrapped(state, k) { return edited(state, [{ from: k.from, to: k.innerFrom }, { from: k.innerTo, to: k.to }]); }
+  // The selection wrapped in `open` and `close` ("}" by default), the same text selected inside.
+  function wrapped(state, open, close) {
+    const sel = state.selection.main, n = open.length;
+    return edited(state, [{ from: sel.from, insert: open }, { from: sel.to, insert: close == null ? "}" : close }],
+      { anchor: sel.anchor + n, head: sel.head + n });
+  }
+  function inserted(state, pos, before, after) {
+    return { changes: state.changes({ from: pos, insert: before + after }), selection: { anchor: pos + before.length } };
+  }
+  function prepare(state, kind) {
+    const text = state.doc.toString(), read = readLatex(text), sel = state.selection.main;
+    return { text: text, read: read, sel: sel, no: refusalOf(read, text, sel, kind) };
+  }
+
+  // 加粗, 斜体, 下划线 (\textbf, \textit, \underline), toggled like Word: a selection is wrapped, or unwrapped when it
+  // is exactly that command's text (or the whole command); with no selection the command the cursor is in is
+  // unwrapped, else an empty one is typed with the cursor in its braces.
+  // 下划线 writes \uline (ulem, loaded as [normalem] so \emph stays italic), whose line breaks as words do (\underline's
+  // never does: a long one ran off the page), or \CJKunderline (xeCJKfntef) in a XeLaTeX document with Chinese, whose
+  // words have no spaces to break at; any of the three is toggled off. `opts` (the main file's facts, as figureSpec's):
+  // {engine, cjk, ulem, cjkUnderline, isMain, main}.
+  function styleSpec(state, name, opts) {
+    const p = prepare(state, "inline"), sel = p.sel;
+    if (p.no) return { refused: p.no };
+    const under = name === "underline", names = under ? UNDERLINES : [name];
+    if (!sel.empty) {
+      const k = exactly(p.text, p.read, names, null, sel.from, sel.to) || nestedIn(p.text, p.read, names, sel.from, sel.to);
+      if (k) return unwrapped(state, k);
+      const part = around(p.text, p.read, names, null, sel.from, sel.to);
+      if (part) return splitAround(state, p, part, sel);   // like Word: the selected words lose it, the rest keep it
+    }
+    if (sel.empty) {
+      const k = around(p.text, p.read, names, null, sel.from, sel.to);
+      if (k) return unwrapped(state, k);
+    }
+    const o = opts || {}, cjk = under && o.engine === "xelatex" && o.cjk;
+    const cmd = !under ? name : cjk ? "CJKunderline" : "uline";
+    const need = !under ? { more: [] } : cjk ? needs(state, p.read, o, "xeCJKfntef", o.cjkUnderline) : needs(state, p.read, o, "ulem", o.ulem, "\\usepackage[normalem]{ulem}");
+    let r;
+    if (sel.empty) r = inserted(state, sel.from, openingOf("command", cmd), "}");
+    else {
+      const bad = wrapRefusal(p.text, p.read, sel.from, sel.to, under ? "underline" : "wrap");
+      if (bad) return { refused: bad };
+      r = wrapped(state, openingOf("command", cmd));
+    }
+    return withPackage(state, r, need);
+  }
+  // A tool's {changes, selection} with the package line `need` asks for added in the same transaction (or its note).
+  function withPackage(state, r, need) {
+    const out = need.note ? Object.assign(r, { note: need.note }) : r;
+    if (!need.more.length) return out;
+    const add = state.changes(need.more).map(r.changes), map = (x) => add.mapPos(x, 1);
+    const sel = r.selection;
+    return Object.assign(out, { changes: r.changes.compose(add), selection: { anchor: map(sel.anchor), head: map(sel.head == null ? sel.anchor : sel.head) } });
+  }
+  // The construct of `names` whose text is exactly [from, to] once the constructs whose whole text it is are taken in:
+  // "bothword" selected in \textbf{\textit{bothword}} is \textbf's text.
+  const innerIs = (x, from, to) => { const a = x.args[x.args.length - 1]; return !!a && !a.opt && a.from + 1 === from && a.to - 1 === to; };
+  function nestedIn(text, read, names, from, to) {
+    for (let n = 0; n < 12; n++) {
+      const own = read.cmds.find((x) => names.includes(x.name) && innerIs(x, from, to));
+      if (own) return commandConstruct(own);
+      const k = read.cmds.find((x) => innerIs(x, from, to)) || read.groups.find((x) => x.nameTo === from && x.to - 1 === to);
+      if (!k) return null;
+      from = k.from; to = k.to;
+    }
+    return null;
+  }
+  // `k` (a style around the selection) taken off the selected words only: closed before them and opened again after.
+  function splitAround(state, p, k, sel) {
+    if (crosses(p.text, p.read, k.innerFrom, sel.from) || crosses(p.text, p.read, sel.to, k.innerTo)) {
+      return { refused: t("选中的文字有一部分在别的格式里，不能整段加格式。请只选同一种格式里的文字。") };
+    }
+    const open = p.text.slice(k.from, k.innerFrom), specs = [];
+    specs.push(sel.from > k.innerFrom ? { from: sel.from, insert: "}" } : { from: k.from, to: k.innerFrom });
+    specs.push(sel.to < k.innerTo ? { from: sel.to, insert: open } : { from: k.innerTo, to: k.to });
+    const ch = state.changes(specs);
+    return { changes: ch, selection: { anchor: ch.mapPos(sel.from, 1), head: ch.mapPos(sel.to, -1) } };
+  }
+
+  // 字体 (\textsf, \texttt, \textrm; ctex's {\songti …} …) and 字号 ({\small …} …): `choice` "" removes the one the
+  // selection is or the cursor is in; another changes it to `choice`; with none, a selection is wrapped or an empty one
+  // is typed.
+  function groupSpec(state, choice, names, decls) {
+    const p = prepare(state, "inline"), sel = p.sel;
+    if (p.no) return { refused: p.no };
+    const k = sel.empty ? around(p.text, p.read, names, decls, sel.from, sel.to) : exactly(p.text, p.read, names, decls, sel.from, sel.to);
+    const form = decls.includes(choice) ? "decl" : "command";
+    if (k) {
+      if (!choice) return unwrapped(state, k);
+      if (k.name === choice) return null;
+      if (k.form === "decl" && form === "command") {   // {\heiti …} as \textsf{…}: an argument holds no paragraph, \verb …
+        const bad = blankIn(p.text, k.innerFrom, k.innerTo) ? t("选中的文字跨了段落，不能整段加这个格式。") : heldIn(p.text, p.read, k.innerFrom, k.innerTo, "wrap");
+        if (bad) return { refused: bad };
+      }
+      const open = openingOf(form, choice), delta = open.length - (k.innerFrom - k.from);
+      const map = (x) => (x <= k.from ? x : x >= k.innerFrom ? x + delta : k.from + open.length);
+      return edited(state, [{ from: k.from, to: k.innerFrom, insert: open }], { anchor: map(sel.anchor), head: map(sel.head) });
+    }
+    if (!choice) return null;
+    if (sel.empty) return inserted(state, sel.from, openingOf(form, choice), "}");
+    const bad = form === "decl" ? (blankIn(p.text, sel.from, sel.to) ? t("选中的文字跨了段落，不能整段加这个格式。") : crosses(p.text, p.read, sel.from, sel.to) ? t("选中的文字有一部分在别的格式里，不能整段加格式。请只选同一种格式里的文字。") : null)
+      : wrapRefusal(p.text, p.read, sel.from, sel.to);
+    if (bad) return { refused: bad };
+    // a size over a whole paragraph ends it inside the group, so its lines take the size's spacing too ({\Large … \par})
+    const at = SIZE_DECLS.includes(choice) ? paragraphAt(state, p.read, sel.from, sel.to) : null;
+    const whole = at && at.from != null && !p.text.slice(at.from, sel.from).trim() && !codePart(p.text.slice(sel.to, at.to)).trim();
+    return wrapped(state, openingOf(form, choice), whole ? "\\par}" : "}");
+  }
+  function fontSpec(state, choice) { return groupSpec(state, choice, FONT_COMMANDS, FONT_DECLS); }
+  function sizeSpec(state, choice) { return groupSpec(state, choice, [], SIZE_DECLS); }
+
+  // The paragraph [from, to] is in: a heading (its lines), the run of lines between blank lines and lines of their
+  // own (STRUCTURAL), `empty` on a blank line, `structural` on such a line, `blank` when [from, to] spans a blank line.
+  function paragraphAt(state, read, from, to) {
+    const doc = state.doc;
+    for (const c of read.cmds) {
+      if (c.role !== "heading") continue;
+      const a = doc.lineAt(c.from).from, b = doc.lineAt(c.to).to;
+      if (a <= from && to <= b) return { heading: c, from: a, to: b };
+    }
+    const first = doc.lineAt(from).number, last = doc.lineAt(to).number;
+    const blank = (n) => !doc.line(n).text.trim(), hard = (n) => STRUCTURAL.test(doc.line(n).text);
+    for (let n = first; n <= last; n++) {
+      if (blank(n) && first < last) return { blank: true };
+      if (hard(n)) return { structural: true };
+    }
+    if (first === last && blank(first)) return { empty: true };
+    let top = first, bottom = last;
+    while (top > 1 && !blank(top - 1) && !hard(top - 1)) top -= 1;
+    while (bottom < doc.lines && !blank(bottom + 1) && !hard(bottom + 1)) bottom += 1;
+    return { from: doc.line(top).from, to: doc.line(bottom).to };
+  }
+
+  // 标题: the paragraph the cursor is in becomes \section{…} (its text kept), an existing heading changes its level,
+  // and "" (正文) unwraps it. 章 only where the class has \chapter (`chapters`).
+  function headingSpec(state, level, chapters) {
+    const p = prepare(state, "heading"), sel = p.sel;
+    if (p.no) return { refused: p.no };
+    if (level === "chapter" && !chapters) return { refused: t("这份文稿的文档类没有「章」。") };
+    const at = paragraphAt(state, p.read, sel.from, sel.to);
+    if (at.blank) return { refused: t("标题里不能有空行：选中的文字跨了段落。") };
+    if (at.heading) {
+      const c = at.heading, k = commandConstruct(c);
+      if (!level) return edited(state, [{ from: c.from, to: k.innerFrom }, { from: k.innerTo, to: k.to }]);
+      return c.name === level ? null : edited(state, [{ from: c.from + 1, to: c.from + 1 + c.name.length, insert: level }]);
+    }
+    if (at.structural) return { refused: t("这一行是命令或环境，不能变成标题。") };
+    if (!level) return null;
+    if (at.empty) return inserted(state, sel.from, "\\" + level + "{", "}");
+    const lastLine = state.doc.lineAt(at.to);
+    const start = at.from + /^\s*/.exec(p.text.slice(at.from, at.to))[0].length;
+    const end = lastLine.from + codePart(lastLine.text).replace(/\s+$/, "").length;
+    if (end <= start) return inserted(state, sel.from, "\\" + level + "{", "}");
+    if (crosses(p.text, p.read, start, end)) return { refused: t("这一段有一部分在别的格式里，不能整段变成标题。") };
+    const held = heldIn(p.text, p.read, start, end, "heading");
+    if (held) return { refused: held };
+    const ch = state.changes([{ from: start, insert: "\\" + level + "{" }, { from: end, insert: "}" }]);
+    const map = (x) => ch.mapPos(x, x >= end ? -1 : 1);
+    return { changes: ch, selection: { anchor: map(sel.anchor), head: map(sel.head) } };
+  }
+  // The level of the paragraph the cursor is in: a heading's command, "" for running text, null where none applies.
+  function headingLevel(state, read) {
+    const sel = state.selection.main, at = paragraphAt(state, read, sel.from, sel.to);
+    return at.heading ? at.heading.name : at.structural || at.blank ? null : "";
+  }
+
+  // `block` (lines joined by "\n", CARET where the cursor goes) set on lines of its own in place of [from, to]: after
+  // the text before it on its line, before the text after it, in the file's own line break; no blank line is added, so
+  // no paragraph is split or joined. With no CARET the cursor goes where the text goes on: the text after it, else the
+  // start of the next line, else a new line at the end. `more`: other changes of the same transaction.
+  function blockSpec(state, from, to, block, more) {
+    const doc = state.doc, LATIN = /[A-Za-z0-9\u00c0-\u024f]/;
+    // never inside a word: a cursor in the middle of one puts the block after it (TeX reads a line break as a space)
+    if (from === to) while (to < doc.lineAt(to).to && LATIN.test(doc.sliceString(to - 1, to)) && LATIN.test(doc.sliceString(to, to + 1))) to += 1;
+    if (from < to && from === state.selection.main.from && state.selection.main.empty) from = to;
+    const line = doc.lineAt(to), before = doc.sliceString(doc.lineAt(from).from, from), after = doc.sliceString(to, line.to);
+    const caretIn = block.indexOf(CARET) >= 0, tail = after.trim() || (!caretIn && line.number === doc.lines) ? "\n" : "";
+    // mid-line, a "%" at each edge keeps the words' spacing as it was: no space where there was none
+    const mid = !!before.trim() && !!after.trim();
+    const whole = (before.trim() ? (mid && /\S$/.test(before) ? "%" : "") + "\n" : "") + block + (mid && /^\S/.test(after) ? "%" : "") + tail;
+    const at = whole.indexOf(CARET), plain = whole.replace(CARET, "");
+    const ch = state.changes([{ from: from, to: to, insert: plain.split("\n").join(state.lineBreak) }].concat(more || []));
+    const caret = at >= 0 ? at : tail ? plain.length : plain.length + after.length + 1;
+    return { changes: ch, selection: { anchor: ch.mapPos(from, -1) + caret } };
+  }
+  // \usepackage{name} on the line after the \documentclass line of this file, or null when it has none.
+  function packageLine(state, read, name, line) {
+    const c = read.cmds.find((x) => x.name === "documentclass" && (!read.preamble || x.from < read.preamble.to));
+    return c ? { from: state.doc.lineAt(c.to).to, insert: state.lineBreak + (line || "\\usepackage{" + name + "}") } : null;
+  }
+  // A package the main file needs: added to this file in the same transaction when it is the main file (`isMain`),
+  // else the sentence that says which line the main file needs (`note`).
+  function needs(state, read, opts, name, have, written) {
+    if (have) return { more: [] };
+    const line = written || "\\usepackage{" + name + "}";
+    const add = opts.isMain ? packageLine(state, read, name, line) : null;
+    if (add) return { more: [add] };
+    return { more: [], note: opts.main && !opts.isMain ? t("主文件 {main} 的导言区需要加一行：{line}", { main: opts.main, line: line })
+      : t("主文件的导言区需要加一行：{line}", { line: line }) };
+  }
+
+  // 图片: \begin{figure}[htbp] … \end{figure} after the cursor, `opts` {path (as \includegraphics takes it), file,
+  // caption, half, graphicx, isMain, main}.
+  function figureSpec(state, opts) {
+    const p = prepare(state, "float");
+    if (p.no) return { refused: p.no };
+    const stem = String(opts.file || opts.path).split("/").pop().replace(/\.[^.]*$/, "");
+    const block = ["\\begin{figure}[htbp]", "\\centering",
+      "\\includegraphics[width=" + (opts.half ? "0.5\\linewidth" : "\\linewidth") + "]{" + opts.path + "}",
+      "\\caption{" + escapeTex(opts.caption) + "}", "\\label{" + newLabel(p.text, "fig", stem, "figure", opts.taken) + "}", "\\end{figure}"].join("\n");
+    const need = needs(state, p.read, opts, "graphicx", opts.graphicx);
+    return Object.assign(blockSpec(state, p.sel.to, p.sel.to, block, need.more), need.note ? { note: need.note } : {});
+  }
+
+  // 表格: a table of `rows` (1-20) by `cols` (1-10), the first row a header when `header`, booktabs rules when the main
+  // file loads booktabs (or this file is the main file, which then loads it), else \hline; the cursor in the first cell.
+  function tableSpec(state, opts) {
+    const p = prepare(state, "float");
+    if (p.no) return { refused: p.no };
+    const rows = Math.min(20, Math.max(1, Math.round(Number(opts.rows) || 1))), cols = Math.min(10, Math.max(1, Math.round(Number(opts.cols) || 1)));
+    const add = !opts.booktabs && opts.isMain ? packageLine(state, p.read, "booktabs") : null, rules = opts.booktabs || !!add;
+    const rule = (k) => (rules ? "\\" + k + "rule" : "\\hline");
+    const cells = (cols > 1 ? new Array(cols - 1).fill("&").join(" ") + " " : "") + "\\\\";
+    const lines = ["\\begin{table}[htbp]", "\\centering", "\\caption{" + escapeTex(opts.caption) + "}",
+      "\\label{" + newLabel(p.text, "tab", opts.caption, "table", opts.taken) + "}", "\\begin{tabular}{" + "l".repeat(cols) + "}", rule("top")];
+    for (let r = 0; r < rows; r++) {
+      lines.push((r === 0 ? CARET : "") + cells);
+      if (r === 0 && opts.header && rows > 1) lines.push(rule("mid"));
+    }
+    lines.push(rule("bottom"), "\\end{tabular}", "\\end{table}");
+    return blockSpec(state, p.sel.to, p.sel.to, lines.join("\n"), add ? [add] : []);
+  }
+
+  // 公式: 行内 $…$ (a selection wrapped, else the cursor between), 独立 an equation environment (a selection moved
+  // into it, else the cursor in it).
+  function mathSpec(state, display) {
+    const p = prepare(state, display ? "block" : "inline"), sel = p.sel;
+    if (p.no) return { refused: p.no };
+    const bad = sel.empty ? null : wrapRefusal(p.text, p.read, sel.from, sel.to, "math");
+    if (bad) return { refused: bad };
+    // with nothing in it, a formula is still one TeX reads: \(\) (an empty "$$" would open a displayed one), and an
+    // equation with no blank line in it
+    if (!display) return sel.empty ? inserted(state, sel.from, "\\(", "\\)") : wrapped(state, "$", "$");
+    if (sel.empty) return blockSpec(state, sel.from, sel.to, "\\begin{equation}\n" + CARET + "\\end{equation}");
+    return blockSpec(state, sel.from, sel.to, "\\begin{equation}\n" + p.text.slice(sel.from, sel.to) + CARET + "\n\\end{equation}");
+  }
+
+  // 列表: 项目符号 (itemize) or 编号 (enumerate). The lines a selection touches become its items (each non-empty line
+  // one \item); with none, an empty list with one \item and the cursor after it.
+  function listSpec(state, kind) {
+    const p = prepare(state, "block"), sel = p.sel, doc = state.doc;
+    if (p.no) return { refused: p.no };
+    const env = kind === "enumerate" ? "enumerate" : "itemize";
+    if (sel.empty) return blockSpec(state, sel.from, sel.to, "\\begin{" + env + "}\n  \\item " + CARET + "\n\\end{" + env + "}");
+    const first = doc.lineAt(sel.from);
+    let last = doc.lineAt(sel.to);
+    if (sel.to === last.from && last.number > first.number) last = doc.line(last.number - 1);
+    const lines = doc.sliceString(first.from, last.to).split("\n");
+    if (lines.some((l) => STRUCTURAL.test(l))) return { refused: t("选中的几行里有命令或环境，不能变成列表。") };
+    // each line becomes an item: none may cut a formula or a brace that runs on to the next line
+    for (let n = first.number; n <= last.number; n++) {
+      const l = doc.line(n);
+      if (crosses(p.text, p.read, l.from, l.to)) return { refused: t("选中的几行有一部分在别的格式里，不能变成列表。") };
+    }
+    const items = lines.filter((l) => l.trim()).map((l) => "  \\item " + l.trim());
+    if (!items.length) items.push("  \\item ");
+    items[items.length - 1] += CARET;
+    return blockSpec(state, first.from, last.to, ["\\begin{" + env + "}"].concat(items, ["\\end{" + env + "}"]).join("\n"));
+  }
+
+  // 脚注: \footnote{} after the selection (its text is new text), the cursor in its braces.
+  function footnoteSpec(state) {
+    const p = prepare(state, "note");
+    return p.no ? { refused: p.no } : inserted(state, p.sel.to, "\\footnote{", "}");
+  }
+  // 引用文献: \cite{key,key} after the selection, the cursor after it.
+  function citeSpec(state, keys) {
+    const p = prepare(state, "inline");
+    if (p.no) return { refused: p.no };
+    return keys && keys.length ? inserted(state, p.sel.to, "\\cite{" + keys.join(",") + "}", "") : null;
+  }
+
+  // What the panel shows of where the cursor is: each style pressed or not, the font, the size and the heading level.
+  function formatState(state, read) {
+    const text = state.doc.toString(), sel = state.selection.main, pressed = {};
+    TEXT_STYLE_NAMES.forEach((name) => { pressed[name] = !!around(text, read, name === "underline" ? UNDERLINES : [name], null, sel.from, sel.to); });
+    const font = around(text, read, FONT_COMMANDS, FONT_DECLS, sel.from, sel.to), size = around(text, read, [], SIZE_DECLS, sel.from, sel.to);
+    return { pressed: pressed, font: font ? font.name : "", size: size ? size.name : "", heading: headingLevel(state, read) };
+  }
+
+  // -- 版式: the document's layout settings (22.12, A2) ---------------------------------------------------------------
+  //
+  // The settings live in the main file's preamble. `readPreamble` reads it -- the class and its options, each
+  // \usepackage, \geometry and the setting lines -- with comments masked (positions kept), each command's brace depth and
+  // how many \if…\fi it sits in; `layoutOf` turns that into each setting's value, or `mine` ({line, file}) where the
+  // setting is written in a form 版式 does not take (inside a macro or a condition, a project .sty/.cls, a class it does
+  // not know, several lines that disagree): such a setting is shown, never guessed or written twice. `layoutSpec` writes
+  // one setting as the editor's own transaction: a setting already there is changed in place (only its option or line),
+  // a new one goes on a line of its own after the last \usepackage (hyperref last of all), removing one removes only
+  // what the tool would have written.
+
+  const LAYOUT_CLASSES = new Set(["article", "report", "book", "amsart", "amsbook", "ctexart", "ctexrep", "ctexbook"]);
+  const SLIDE_CLASSES = /^(?:ctex)?beamer$/;
+  // a paper size among geometry's keys: never a margin (版式 has no 纸张: the researcher, 2026-11-14; new papers are A4, 22.11)
+  const PAPER_ITEM = /^(?:[abc]\d|b\dj|letter|legal|executive)paper$/;
+  const MARGIN_KEYS = new Set(["margin", "top", "bottom", "left", "right"]);
+  // geometry's other keys that place the text block: with one of them the margins are the person's own
+  const LAYOUT_KEYS = /^(?:[hv]?margin|[lrtb]margin|inner|outer|hmarginratio|vmarginratio|marginratio|ratio|centering|[hv]centering|textwidth|textheight|width|height|total|body|text|scale|[hv]scale|includehead|includefoot|includeheadfoot|includeall|includemp|bindingoffset|twoside|landscape|portrait|layout\w*|hdivide|vdivide|divide|left|right|top|bottom|margin)$/;
+  const MARGIN_PRESETS = ["2", "2.5", "3"];
+  const SPACINGS = ["1", "1.25", "1.5", "2"];
+  // setspace's own commands, as the stretch they set at \@ptsize 0, 1, 2 (10, 11, 12 pt; setspace.sty)
+  const SETSPACE_NAMED = { singlespacing: [1, 1, 1], onehalfspacing: [1.25, 1.213, 1.241], doublespacing: [1.667, 1.618, 1.655] };
+  const named = (name) => (Object.prototype.hasOwnProperty.call(SETSPACE_NAMED, name) ? SETSPACE_NAMED[name] : null);
+  const PAGE_SIZES = new Set(["10pt", "11pt", "12pt"]), ZIHAO = new Set(["5", "-4"]);
+  const MARGIN_PACKAGES = new Set(["fullpage", "a4wide", "a4", "vmargin", "anysize", "typearea", "savetrees"]);
+  const HYPERREF_AFTER = new Set(["cleveref", "hypcap", "bookmark", "glossaries", "glossaries-extra"]);
+  const NEEDS_HYPERREF = /\\(?:href|hypersetup|autoref|nameref|hyperref|hypertarget|hyperlink|phantomsection|texorpdfstring|pdfbookmark|nolinkurl|pdfstringdefDisableCommands|pdfstringdef|hyperdef|hyperbaseurl|currentpdfbookmark|subpdfbookmark|belowpdfbookmark|TextField|CheckBox|ChoiceMenu|PushButton|Form|Submit|Reset)(?![A-Za-z@])/;
+  // url.sty's own commands: hyperref loads url, so without url or xurl they go with it
+  const NEEDS_URL = /\\(?:url|urlstyle|urldef|DeclareUrlCommand|Url)(?![A-Za-z@])/;
+  // packages that load hyperref themselves: a hyperref line of 版式's then takes no option (they would clash)
+  const HYPERREF_LOADERS = new Set(["doi", "bookmark", "hyperxmp", "hypdoc"]);
+  const HIDELINKS = /^[ \t]*\\hypersetup\s*\{\s*hidelinks\s*\}[ \t]*$/m;
+  // a known class names its paper with one of these (anything else in its options it does not take; geometry and
+  // hyperref would)
+  const CLASS_PAPERS = /^(?:a4|a5|b5|letter|legal|executive)paper$/;
+  const DEFINERS = new Set(["renewcommand", "newcommand", "providecommand", "DeclareRobustCommand", "def", "gdef", "edef", "xdef", "let"]);
+  const LENGTH_SETTERS = new Set(["setlength", "addtolength"]);
+  // What a project .sty or .cls says of each setting: any of it makes the setting the file's own.
+  const LOCAL_MARKERS = {
+    margin: /\\(?:textwidth|textheight|oddsidemargin|evensidemargin|topmargin|hoffset|voffset|newgeometry)\b|\bgeometry\b/,
+    size: /\bzihao\b|\b1[012]pt\b|\\normalsize\b/,
+    spacing: /\\(?:setstretch|linespread|singlespacing|onehalfspacing|doublespacing|baselinestretch|SetSinglespace)\b|\bsetspace\b|\blinespread\b/,
+    indent: /\\parindent\b|\bparskip\b/,
+    parskip: /\\parskip\b|\bparskip\b/,
+    pagestyle: /\\(?:pagestyle|thispagestyle)\b|\\ps@|\bnopageno\b/,
+    columns: /\b(?:two|one)column\b/,
+    hyperref: /\bhyperref\b/,
+    secnum: /\bsecnumdepth\b|\\(?:(?:(?:re)?new|provide)command|[gex]?def|let)\s*\*?\s*\{?\s*\\(?:the(?:sub)*section|@seccntformat)\b|\\titleformat\b|\\titlelabel\b|\btitlesec\b|\b(?:sub)*section\s*\/\s*(?:name|number|aftername|numbering)\b/,
+    capname: /\\(?:figurename|tablename)\b|\b(?:figurename|tablename)\s*=/,
+    capnum: /\\(?:(?:(?:re)?new|provide)command|[gex]?def|let)\s*\*?\s*\{?\s*\\theH?(?:figure|table)\b|\\(?:counterwithin|counterwithout|numberwithin|@addtoreset)\s*\*?\s*(?:\[[^\]]*\]\s*)?\{\s*(?:figure|table)\s*\}/,
+  };
+  const LAYOUT_KEYS_ORDER = ["margin", "columns", "pagestyle", "hyperref", "size", "spacing", "indent", "parskip", "secnum", "capname", "capnum"];
+  // 章节编号, 图表名称, 图表编号 (22.12, A3): the classes 版式 knows that have chapters, the commands whose definitions it
+  // reads, and the lines and \ctexset keys it writes.
+  const LAYOUT_CHAPTER_CLASSES = new Set(["report", "book", "amsbook", "ctexrep", "ctexbook"]);
+  const DEFINED = new Map([["thesection", "secnum"], ["thesubsection", "secnum"], ["thesubsubsection", "secnum"], ["@seccntformat", "secnum"],
+    ["figurename", "capname"], ["tablename", "capname"], ["thefigure", "capnum"], ["thetable", "capnum"], ["theHfigure", "capnum"], ["theHtable", "capnum"]]);
+  const ZH_NUMBER_DEFS = { thesection: "\\chinese{section}", thesubsection: "（\\chinese{subsection}）", thesubsubsection: "\\arabic{subsubsection}" };
+  const ZH_NUMBER_KEYS = { "section/name": ",、", "section/aftername": "", "subsection/aftername": "", "subsubsection/name": ",." };
+  // the lines 图表名称 writes, whole (the Chinese names are LaTeX written into the paper, never words of the interface)
+  const CAPTION_LINES = { zh: ["\\renewcommand{\\figurename}{图}", "\\renewcommand{\\tablename}{表}"],
+    en: ["\\renewcommand{\\figurename}{Figure}", "\\renewcommand{\\tablename}{Table}"] };
+  const CAPTION_NAMES = {};
+  Object.keys(CAPTION_LINES).forEach((k) => { const v = CAPTION_LINES[k].map((l) => /\{([^{}]*)\}$/.exec(l)[1]); CAPTION_NAMES[k] = { figurename: v[0], tablename: v[1] }; });
+  const squash = (x) => String(x == null ? "" : x).replace(/\s+/g, "");
+  // what a \ctexset key sets, as 版式 counts it: the section headings' numbers, the figure and table names, or neither
+  function ctexKey(key) {
+    const k = squash(key);
+    if (/^(?:sub)*section(?:\/(?:name|number|aftername|numbering))?$/.test(k) || k === "secnumdepth") return "secnum";
+    if (k === "figurename" || k === "tablename") return "capname";
+    return null;
+  }
+  // The lines 图表编号 writes: by section in a class without chapters (the counters reset there, the number printed with
+  // a hyphen, hyperref's anchors kept apart by section: it loads later and would name them figure.1 in every section);
+  // by chapter, a chapter class already resets them and only the hyphen is written; 连续编号 in a chapter class stops
+  // the reset. Figures and tables only: equations keep the class's numbering.
+  function capnumLines(chapters, value) {
+    const both = (f) => [f("figure"), f("table")];
+    if (value === "within" && chapters) return both((x) => "\\renewcommand{\\the" + x + "}{\\thechapter-\\arabic{" + x + "}}");
+    if (value === "within") return both((x) => "\\counterwithin{" + x + "}{section}").concat(both((x) => "\\renewcommand{\\the" + x + "}{\\arabic{section}-\\arabic{" + x + "}}"),
+      both((x) => "\\providecommand{\\theH" + x + "}{\\theHsection.\\arabic{" + x + "}}"));
+    if (value === "continuous" && chapters) return both((x) => "\\counterwithout{" + x + "}{chapter}");
+    return [];
+  }
+  // 章节编号's Chinese style: 一、 （一） 1. -- \the… redefined so a \ref prints the number the heading shows (ctex's own
+  // `number` key changes the heading only), the punctuation after it from ctex's `name`, no space after 、 or ）.
+  const ZH_NUMBER_LINES = Object.keys(ZH_NUMBER_DEFS).map((k) => "\\renewcommand{\\" + k + "}{" + ZH_NUMBER_DEFS[k] + "}")
+    .concat(["\\ctexset{" + Object.keys(ZH_NUMBER_KEYS).map((k) => k + "={" + ZH_NUMBER_KEYS[k] + "}").join(",") + "}"]);
+
+  // `text` with every comment turned into spaces, so positions and line breaks stay.
+  function masked(text) { return text.split("\n").map((l) => { const c = codePart(l); return c + " ".repeat(l.length - c.length); }).join("\n"); }
+  function skipBlank(code, i) { while (i < code.length && (code[i] === " " || code[i] === "\t" || code[i] === "\n" || code[i] === "\r")) i += 1; return i; }
+
+  // Each command of the masked `code`: {name, from, nameTo, depth (braces it sits in), cond (\if…\fi it sits in),
+  // lineStart (only spaces before it on its line), prev (the command before)}.
+  function scanCommands(code) {
+    const out = [], n = code.length;
+    let depth = 0, cond = 0;
+    for (let i = 0; i < n; i++) {
+      const c = code[i];
+      if (c === "{") { depth += 1; continue; }
+      if (c === "}") { depth = Math.max(0, depth - 1); continue; }
+      if (c !== "\\") continue;
+      let e = i + 1;
+      while (e < n && /[A-Za-z@]/.test(code[e])) e += 1;
+      if (e === i + 1) { i += 1; continue; }   // \\, \{, \%: one character, never a command we read
+      const name = code.slice(i + 1, e), prev = out[out.length - 1] || null;
+      const ls = code.lastIndexOf("\n", i - 1) + 1;
+      out.push({ name: name, from: i, nameTo: e, depth: depth, cond: cond, lineStart: !code.slice(ls, i).trim(), prev: prev });
+      if (name === "fi") cond = Math.max(0, cond - 1);
+      // a primitive or \newif conditional runs to its \fi; etoolbox's \ifdef{…} and \ifthenelse{…} take braces
+      else if (/^if/.test(name) && name !== "ifthenelse" && code[skipBlank(code, e)] !== "{" && !(prev && prev.name === "newif")) cond += 1;
+      i = e - 1;
+    }
+    return out;
+  }
+
+  // The groups after a command, by `shape` ("o" an optional [..], "m" a mandatory {..}): {args: [{from, to, inner}], to}.
+  function readArgs(code, at, shape) {
+    const args = [];
+    for (const s of shape) {
+      const j = skipBlank(code, at);
+      if (code[j] !== (s === "o" ? "[" : "{")) { if (s === "o") continue; return null; }
+      const g = skipGroup(code, j, false);
+      if (g < 0) return null;
+      args.push({ from: j, to: g, opt: s === "o", inner: [j + 1, g - 1] });
+      at = g;
+    }
+    return { args: args, to: at };
+  }
+
+  // A key=value list in [..] or {..}: its items {from, to, text, key, value}, split at commas outside braces.
+  function optionList(code, arg) {
+    const a = arg.inner[0], b = arg.inner[1], items = [];
+    let depth = 0, start = a;
+    const push = (end) => {
+      const raw = code.slice(start, end), text = raw.trim();
+      if (!text) return;
+      const from = start + raw.length - raw.trimStart().length, eq = text.indexOf("=");
+      items.push({ from: from, to: from + text.length, text: text, key: (eq < 0 ? text : text.slice(0, eq)).trim(),
+        value: eq < 0 ? null : text.slice(eq + 1).trim().replace(/^\{([\s\S]*)\}$/, "$1").trim() });
+    };
+    for (let j = a; j < b; j++) {
+      const c = code[j];
+      if (c === "\\") { j += 1; continue; }
+      if (c === "{") depth += 1;
+      else if (c === "}") depth -= 1;
+      else if (c === "," && depth === 0) { push(j); start = j + 1; }
+    }
+    push(b);
+    return { open: arg.from, close: arg.to, from: a, to: b, items: items, square: code[arg.from] === "[" };
+  }
+
+  // A length in cm from "2cm", "25mm", "1in" (null for anything else).
+  function cmOf(value) {
+    const m = /^(\d+(?:\.\d+)?|\.\d+)\s*(cm|mm|in)$/.exec(String(value || "").trim());
+    if (!m) return null;
+    const n = Number(m[1]) * (m[2] === "mm" ? 0.1 : m[2] === "in" ? 2.54 : 1);
+    return Math.round(n * 1000) / 1000;
+  }
+  const num = (x) => String(Math.round(Number(x) * 1000) / 1000);
+  const cm = (x) => num(x) + "cm";
+
+  // The preamble `pre` read: the class, the packages, the geometry commands, the setting lines, and `marks`: where a
+  // setting is written in a form 版式 does not take, {key: [{line, why?}]}.
+  function readPreamble(pre) {
+    const code = masked(pre), cmds = scanCommands(code), starts = [0];
+    for (let i = 0; i < pre.length; i++) if (pre[i] === "\n") starts.push(i + 1);
+    const lineOf = (pos) => { let lo = 0, hi = starts.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= pos) lo = mid; else hi = mid - 1; } return lo + 1; };
+    const lineEnd = (pos) => { const e = code.indexOf("\n", pos); return e < 0 ? code.length : e; };
+    // a line of its own: the command first on its line, nothing after it, and a line break after (the preamble ends
+    // where \begin{document} starts, which no setting line may share)
+    const alone = (c, to) => c.lineStart && !code.slice(to, lineEnd(to)).trim() && lineEnd(to) < code.length;
+    const top = (c) => c.depth === 0 && c.cond === 0;
+    const r = { pre: pre, code: code, lineOf: lineOf, lineEnd: lineEnd, dc: null, packages: [], geometry: [], lines: [], ctexsets: [], marks: {} };
+    const mark = (key, pos, why) => { (r.marks[key] = r.marks[key] || []).push({ line: lineOf(pos), why: why || null }); };
+    for (const c of cmds) {
+      const n = c.name;
+      if (n === "documentclass") {
+        const a = readArgs(code, c.nameTo, "om");
+        if (!a || r.dc) continue;
+        const opt = a.args.find((x) => x.opt), cls = a.args.find((x) => !x.opt);
+        r.dc = { c: c, top: top(c), cls: code.slice(cls.inner[0], cls.inner[1]).trim(), opts: opt ? optionList(code, opt) : null, to: a.to, line: lineOf(c.from) };
+        continue;
+      }
+      if (n === "usepackage" || n === "RequirePackage") {
+        const a = readArgs(code, c.nameTo, "om");
+        if (!a) continue;
+        const opt = a.args.find((x) => x.opt), names = optionList(code, a.args.find((x) => !x.opt));
+        r.packages.push({ c: c, names: names.items.map((x) => x.text), nameList: names, opts: opt ? optionList(code, opt) : null, from: c.from, to: a.to,
+          line: lineOf(c.from), top: top(c), own: top(c) && alone(c, a.to) && names.items.length === 1 });
+        continue;
+      }
+      if (n === "geometry") {
+        const a = readArgs(code, c.nameTo, "m");
+        if (a) r.geometry.push({ c: c, list: optionList(code, a.args[0]), from: c.from, to: a.to, line: lineOf(c.from), top: top(c), own: top(c) && alone(c, a.to) });
+        continue;
+      }
+      const recognised = (kind, shape, value) => {
+        const a = readArgs(code, c.nameTo, shape);
+        if (a && top(c) && alone(c, a.to)) { r.lines.push({ kind: kind, c: c, args: a.args, value: value(a.args), from: code.lastIndexOf("\n", c.from) + 1, to: lineEnd(a.to), line: lineOf(c.from) }); return true; }
+        return false;
+      };
+      const arg = (args, k) => code.slice(args[k].inner[0], args[k].inner[1]).trim();
+      if (n === "setstretch" || n === "linespread") { if (!recognised(n, "m", (x) => arg(x, 0))) mark("spacing", c.from); continue; }
+      if (named(n)) { if (!recognised(n, "", () => n)) mark("spacing", c.from); continue; }
+      if (n === "baselinestretch" || n === "SetSinglespace" || /^setspace@/.test(n)) { mark("spacing", c.from); continue; }
+      if (n === "pagestyle") { if (!recognised("pagestyle", "m", (x) => arg(x, 0))) mark("pagestyle", c.from); continue; }
+      if (n === "thispagestyle" || /^ps@/.test(n)) { mark("pagestyle", c.from); continue; }
+      if (n === "twocolumn" || n === "onecolumn") { mark("columns", c.from); continue; }
+      if (n === "newgeometry") { mark("margin", c.from); continue; }
+      if (n === "normalsize" && c.prev && DEFINERS.has(c.prev.name)) { mark("size", c.from); continue; }
+      // 章节编号, 图表名称, 图表编号 (A3): \renewcommand{\thesection}{…} and their like, read where 版式 writes them --
+      // \renewcommand (\providecommand for hyperref's \theH…) of one command, at the top, alone on its line; any other
+      // definition of these commands is the person's own
+      if (DEFINERS.has(n)) {
+        let j = skipBlank(code, c.nameTo);
+        const star = code[j] === "*";
+        if (star) j = skipBlank(code, j + 1);
+        const braced = code[j] === "{";
+        if (braced) j = skipBlank(code, j + 1);
+        const m = /^\\([A-Za-z@]+)/.exec(code.slice(j, j + 40)), key = m ? DEFINED.get(m[1]) : null;
+        if (!key) continue;
+        let after = skipBlank(code, j + m[0].length);
+        if (braced) { if (code[after] !== "}") { mark(key, c.from); continue; } after += 1; }
+        const a = !star && (n === "renewcommand" || n === "providecommand") ? readArgs(code, after, "m") : null;
+        if (a && top(c) && alone(c, a.to)) r.lines.push({ kind: "def", name: m[1], definer: n, c: c, args: a.args, value: code.slice(a.args[0].inner[0], a.args[0].inner[1]).trim(), from: code.lastIndexOf("\n", c.from) + 1, to: lineEnd(a.to), line: lineOf(c.from) });
+        else mark(key, c.from);
+        continue;
+      }
+      if (n === "setcounter" || n === "addtocounter") {
+        const a = readArgs(code, c.nameTo, "mm");
+        if (!a) { if (/^\s*\{\s*secnumdepth\s*\}/.test(code.slice(c.nameTo, c.nameTo + 40))) mark("secnum", c.from); continue; }
+        if (code.slice(a.args[0].inner[0], a.args[0].inner[1]).trim() !== "secnumdepth") continue;
+        if (n === "setcounter" && top(c) && alone(c, a.to)) r.lines.push({ kind: "secnumdepth", c: c, args: a.args, value: code.slice(a.args[1].inner[0], a.args[1].inner[1]).trim(), from: code.lastIndexOf("\n", c.from) + 1, to: lineEnd(a.to), line: lineOf(c.from) });
+        else mark("secnum", c.from);
+        continue;
+      }
+      if (n === "counterwithin" || n === "counterwithout" || n === "numberwithin" || n === "@addtoreset") {
+        const star = code[c.nameTo] === "*", a = readArgs(code, c.nameTo + (star ? 1 : 0), n === "numberwithin" ? "omm" : "mm");
+        const args = a ? a.args.filter((x) => !x.opt) : null, what = args && args.length === 2 ? code.slice(args[0].inner[0], args[0].inner[1]).trim() : "";
+        if (what !== "figure" && what !== "table") { if (!a && /^\*?\s*(?:\[[^\]]*\]\s*)?\{\s*(?:figure|table)\s*\}/.test(code.slice(c.nameTo, c.nameTo + 60))) mark("capnum", c.from); continue; }
+        if (!star && (n === "counterwithin" || n === "counterwithout") && top(c) && alone(c, a.to)) r.lines.push({ kind: n, c: c, args: args, value: what, within: code.slice(args[1].inner[0], args[1].inner[1]).trim(), from: code.lastIndexOf("\n", c.from) + 1, to: lineEnd(a.to), line: lineOf(c.from) });
+        else mark("capnum", c.from);
+        continue;
+      }
+      // \ctexset{…}: a line of its own is read key by key (the keys 版式 writes are its own, others left alone); one in a
+      // macro or a condition, or sharing its line, makes what it sets the person's own
+      if (n === "ctexset") {
+        const a = readArgs(code, c.nameTo, "m");
+        if (!a) continue;
+        const list = optionList(code, a.args[0]);
+        if (top(c) && alone(c, a.to)) r.ctexsets.push({ c: c, list: list, from: code.lastIndexOf("\n", c.from) + 1, to: lineEnd(a.to), line: lineOf(c.from) });
+        else list.items.forEach((it) => { const k = ctexKey(it.key); if (k) mark(k, c.from); });
+        continue;
+      }
+      // the caption package's names: the person's own
+      if (n === "captionsetup") {
+        const a = readArgs(code, c.nameTo, "om"), arg = a && a.args.find((x) => !x.opt);
+        if (arg && optionList(code, arg).items.some((it) => /^(?:name|figurename|tablename)$/.test(it.key))) mark("capname", c.from);
+        continue;
+      }
+      if (LENGTH_SETTERS.has(n)) {
+        // \setlength{\parindent}{2em} or \setlength\parindent{2em}: what it sets is its first argument
+        let j = skipBlank(code, c.nameTo), braced = code[j] === "{";
+        if (braced) j = skipBlank(code, j + 1);
+        const m = /^\\([A-Za-z@]+)/.exec(code.slice(j, j + 40));
+        if (!m) continue;
+        const target = m[1], after = skipBlank(code, j + m[0].length) + (braced ? 1 : 0);
+        const key = target === "parindent" ? "indent" : target === "parskip" ? "parskip"
+          : /^(?:textwidth|textheight|oddsidemargin|evensidemargin|topmargin|hoffset|voffset)$/.test(target) ? "margin" : null;
+        if (!key) continue;
+        const a = n === "setlength" && (!braced || code[after - 1] === "}") ? readArgs(code, after, "m") : null;
+        if (a && top(c) && alone(c, a.to) && (key === "indent" || key === "parskip")) {
+          r.lines.push({ kind: key, c: c, args: a.args, value: code.slice(a.args[0].inner[0], a.args[0].inner[1]).trim(), from: code.lastIndexOf("\n", c.from) + 1, to: lineEnd(a.to), line: lineOf(c.from) });
+        } else mark(key, c.from);
+        continue;
+      }
+      // a length set as TeX does it, \parindent=0pt or \parindent 0pt (never one only read, as in \hspace{\parindent})
+      if (/^(?:parindent|parskip|textwidth|textheight|oddsidemargin|evensidemargin|topmargin)$/.test(n) && !(c.prev && LENGTH_SETTERS.has(c.prev.name) && c.prev.nameTo >= c.from - 2)) {
+        const next = code[skipBlank(code, c.nameTo)];
+        if (next === "=" || /[\d.-]/.test(next || "")) mark(n === "parindent" ? "indent" : n === "parskip" ? "parskip" : "margin", c.from);
+      }
+    }
+    return r;
+  }
+
+  // Each setting of the preamble `pre` (with `local`, the project's .sty/.cls it loads: [{path, text}]): {value, mine,
+  // occ (what a write changes), ...}, and the document's facts: the class, whether 版式 knows it, ctex, the stretch of
+  // its single line (`s0`).
+  function layoutOf(pre, local) {
+    const r = readPreamble(pre), out = { r: r, settings: {} };
+    const dc = r.dc;
+    if (!dc) { out.why = t("主文件里没有找到 {command}。", { command: "\\documentclass" }); return out; }
+    out.cls = dc.cls;
+    if (SLIDE_CLASSES.test(dc.cls)) { out.why = t("幻灯片（beamer）不用这些版式设置。"); return out; }
+    const known = LAYOUT_CLASSES.has(dc.cls) && dc.top, ctexClass = /^ctex/.test(dc.cls);
+    const pk = r.packages.filter((p) => p.top), has = (name) => pk.some((p) => p.names.includes(name));
+    const ctexPkg = pk.find((p) => p.own && p.names[0] === "ctex");
+    out.known = known; out.ctexClass = ctexClass; out.ctex = ctexClass || has("ctex");
+    out.s0 = out.ctex ? 1.3 : 1;   // ctex's own \linespread{1.3} (ctex.sty), measured 22.12
+    out.ctexPkg = ctexPkg || null;
+    const S = {};
+    LAYOUT_KEYS_ORDER.forEach((k) => { S[k] = { value: "", occ: [], mine: null }; });
+    out.settings = S;
+    const mine = (key, line, extra) => { if (!S[key].mine) S[key].mine = Object.assign({ line: line }, extra || {}); };
+    Object.keys(r.marks).forEach((k) => mine(k, r.marks[k][0].line));
+    const items = (list) => (list ? list.items : []);
+    const dcItems = items(dc.opts);
+    const classOwn = known ? null : { line: dc.line, why: t("文档类 {cls} 的选项这里不认识，请在 {command} 那一行自己改。", { cls: dc.cls, command: "\\documentclass" }) };
+    // the packages a hidden line (a condition, a macro) or a project file loads are their own
+    r.packages.filter((p) => !p.top).forEach((p) => p.names.forEach((nm) => {
+      if (nm === "geometry") mine("margin", p.line);
+      if (nm === "setspace" || nm === "doublespace") mine("spacing", p.line);
+      if (nm === "parskip") { mine("parskip", p.line); mine("indent", p.line); }
+      if (nm === "nopageno") mine("pagestyle", p.line);
+      if (nm === "hyperref") mine("hyperref", p.line);
+      if (nm === "ctex") { mine("size", p.line); mine("secnum", p.line); }
+      if (nm === "babel" || nm === "polyglossia") mine("capname", p.line);
+    }));
+    pk.forEach((p) => p.names.forEach((nm) => {
+      if (MARGIN_PACKAGES.has(nm)) mine("margin", p.line);
+      if (nm === "titlesec") mine("secnum", p.line);   // it sets the headings and their numbers its own way
+      if (nm === "doublespace") mine("spacing", p.line);
+    }));
+    r.geometry.filter((g) => !g.top).forEach((g) => mine("margin", g.line));
+
+    // 纸张 is not a setting (A3): the class's or geometry's paper is left as written, never read or changed
+    const geoLists = pk.filter((p) => p.names.includes("geometry") && p.opts).map((p) => ({ list: p.opts, line: p.line, pkg: p }))
+      .concat(r.geometry.filter((g) => g.top).map((g) => ({ list: g.list, line: g.line, geo: g })));
+    // 页边距: geometry's margin, top, bottom, left and right in cm, mm or in; any other key that places the text is the person's
+    const margin = {}, marginLines = [];
+    geoLists.forEach((g) => g.list.items.forEach((it) => {
+      if (PAPER_ITEM.test(it.key) || /^paper/.test(it.key)) return;
+      if (MARGIN_KEYS.has(it.key) && it.value != null && cmOf(it.value) != null) {
+        if (it.key in margin && margin[it.key] !== cmOf(it.value)) mine("margin", g.line);
+        margin[it.key] = cmOf(it.value); marginLines.push(g.line); S.margin.occ.push({ list: g.list, item: it }); return;
+      }
+      if (LAYOUT_KEYS.test(it.key) && !/^(?:landscape|portrait|twoside)$/.test(it.key)) mine("margin", g.line);
+    }));
+    // 正文字号: a class option (10pt, 11pt, 12pt; zihao=5 or -4 for a ctex class), or the ctex package's zihao
+    const sizeSeen = [];
+    dcItems.forEach((it) => {
+      if (/^\d+(?:\.\d+)?pt$/.test(it.key) && it.value == null) {
+        if (known && PAGE_SIZES.has(it.key)) { sizeSeen.push({ v: it.key, line: dc.line }); S.size.occ.push({ list: dc.opts, item: it }); } else mine("size", dc.line, known ? null : classOwn);
+      } else if (it.key === "zihao" || it.key === "fontsize") {
+        if (known && ctexClass && it.key === "zihao" && ZIHAO.has(it.value)) { sizeSeen.push({ v: "zihao=" + it.value, line: dc.line }); S.size.occ.push({ list: dc.opts, item: it }); } else mine("size", dc.line, known ? null : classOwn);
+      }
+    });
+    pk.filter((p) => p.names.includes("ctex")).forEach((p) => items(p.opts).forEach((it) => {
+      if (it.key !== "zihao") return;
+      if (p.own && ZIHAO.has(it.value)) { sizeSeen.push({ v: "zihao=" + it.value, line: p.line }); S.size.occ.push({ list: p.opts, item: it }); } else mine("size", p.line);
+    }));
+    if (new Set(sizeSeen.map((x) => (/^zihao/.test(x.v) ? "zihao" : "pt"))).size > 1) mine("size", sizeSeen[sizeSeen.length - 1].line);   // never both
+    // 分栏: twocolumn or onecolumn among the class options
+    const colSeen = [];
+    dcItems.forEach((it) => { if ((it.key === "twocolumn" || it.key === "onecolumn") && it.value == null) { if (known) { colSeen.push({ v: it.key === "twocolumn" ? "twocolumn" : "", line: dc.line }); S.columns.occ.push({ list: dc.opts, item: it }); } else mine("columns", dc.line, classOwn); } });
+    // 行距: \setstretch, \linespread, setspace's own commands and options, ctex's linespread option
+    const size = sizeSeen.length ? sizeSeen[0].v : "", ptsize = size === "11pt" ? 1 : size === "12pt" || size === "zihao=-4" ? 2 : 0;
+    const spaceSeen = [];
+    r.lines.filter((l) => l.kind === "setstretch" || l.kind === "linespread" || named(l.kind)).forEach((l) => {
+      const s = named(l.kind) ? named(l.kind)[ptsize] : Number(l.value);
+      if (!(s > 0) || (l.kind === "setstretch" && !has("setspace"))) { mine("spacing", l.line); return; }
+      spaceSeen.push({ s: s, line: l.line }); S.spacing.occ.push({ line: l });
+    });
+    pk.filter((p) => p.names.includes("setspace")).forEach((p) => items(p.opts).forEach((it) => {
+      if (!named(it.key)) return;
+      if (p.own) { spaceSeen.push({ s: named(it.key)[ptsize], line: p.line }); S.spacing.occ.push({ list: p.opts, item: it, setspace: true }); } else mine("spacing", p.line);
+    }));
+    [[dc.opts, dc.line, ctexClass && known], [ctexPkg && ctexPkg.opts, ctexPkg && ctexPkg.line, !!ctexPkg]].forEach(([list, line, ok]) => items(list).forEach((it) => {
+      if (it.key !== "linespread") return;
+      if (ok && Number(it.value) > 0) { spaceSeen.push({ s: Number(it.value), line: line }); S.spacing.occ.push({ list: list, item: it, ctex: true }); } else mine("spacing", line);
+    }));
+    // 首行缩进 and 段间距: \setlength lines; the parskip package (skip=, and indent to keep the class's indent)
+    const indentSeen = [], parSeen = [];
+    r.lines.filter((l) => l.kind === "indent").forEach((l) => {
+      const v = /^0(?:\.0*)?(?:pt|em|cm|mm)?$/.test(l.value) ? "0pt" : /^2(?:\.0*)?(?:em|\\ccwd)$/.test(l.value) ? "2em" : null;
+      if (v) { indentSeen.push({ v: v, line: l.line }); S.indent.occ.push({ line: l }); } else mine("indent", l.line);
+    });
+    const parskipValue = (x) => (/^0(?:\.0*)?(?:pt|em)?$/.test(x) ? "" : /^0?\.5\s*\\baselineskip$/.test(x) ? "half" : /^1?\s*\\baselineskip$/.test(x) ? "one" : null);
+    r.lines.filter((l) => l.kind === "parskip").forEach((l) => {
+      const v = parskipValue(l.value);
+      if (v != null) { parSeen.push({ v: v, line: l.line }); S.parskip.occ.push({ line: l }); } else mine("parskip", l.line);
+    });
+    pk.filter((p) => p.names.includes("parskip")).forEach((p) => {
+      const its = items(p.opts), skip = its.find((it) => it.key === "skip"), keeps = its.some((it) => it.key === "indent" && it.value == null);
+      const v = skip ? parskipValue(skip.value || "") : "half";   // parskip's default: .5\baselineskip
+      if (!p.own || v == null || its.some((it) => it.key !== "skip" && it.key !== "indent") || its.some((it) => it.key === "indent" && it.value != null)) { mine("parskip", p.line); mine("indent", p.line); return; }
+      parSeen.push({ v: v, line: p.line }); S.parskip.occ.push({ pkg: p, skip: skip || null });
+      if (!keeps) mine("indent", p.line);   // parskip without indent sets the indent to 0
+    });
+    // 页码: \pagestyle{plain} or {empty}, the nopageno package
+    const styleSeen = [];
+    r.lines.filter((l) => l.kind === "pagestyle").forEach((l) => {
+      if (l.value === "plain" || l.value === "empty") { styleSeen.push({ v: l.value, line: l.line }); S.pagestyle.occ.push({ line: l }); } else mine("pagestyle", l.line);
+    });
+    pk.filter((p) => p.names.includes("nopageno")).forEach((p) => {
+      if (p.own && !p.opts) { styleSeen.push({ v: "empty", line: p.line, nopageno: true }); S.pagestyle.occ.push({ pkg: p }); } else mine("pagestyle", p.line);
+    });
+    // 超链接: hyperref loaded
+    const hyper = pk.filter((p) => p.names.includes("hyperref"));
+    S.hyperref.value = hyper.length ? "on" : "off";
+    S.hyperref.occ = hyper.map((p) => ({ pkg: p }));
+    const hide = HIDELINKS.exec(r.code);
+    if (hide && hyper.length) S.hyperref.occ.push({ hide: { from: hide.index, to: hide.index + hide[0].length } });
+    out.hyperLoaded = pk.some((p) => p.names.some((n) => HYPERREF_LOADERS.has(n))) || !known;
+    // memoir stands in for setspace and parskip itself (\setstretch is not there; parskip's options clash)
+    if (dc.cls === "memoir") ["spacing", "parskip"].forEach((k) => mine(k, dc.line, { why: t("文档类 {cls} 自己设置行距和段间距，请用它自己的命令。", { cls: dc.cls }) }));
+    // the paper: a known class names it, or nothing does (TeX's own A4 then; geometry and hyperref would set Letter)
+    out.paper = dcItems.find((it) => PAPER_ITEM.test(it.key)) ? dcItems.find((it) => PAPER_ITEM.test(it.key)).key : null;
+    out.paperOdd = !!out.paper && known && !CLASS_PAPERS.test(out.paper);
+    out.geoPaper = geoLists.some((g) => g.list.items.some((it) => PAPER_ITEM.test(it.key) || /^paper/.test(it.key)));
+
+    // 章节编号, 图表名称, 图表编号 (A3)
+    const chapters = known && LAYOUT_CHAPTER_CLASSES.has(dc.cls);
+    out.chapters = chapters;
+    const heading = ctexPkg && items(ctexPkg.opts).some((it) => it.key === "heading" && (it.value == null || it.value === "true"));
+    // Chinese numbers need ctex's headings: a ctex class, or the ctex package with heading=true (without it ctex has no
+    // section keys: "The key 'ctex/section/name' is unknown", measured); Chinese names need a font with them
+    out.zhNumbers = (ctexClass && known) || !!heading;
+    out.zhNumbersWhy = out.zhNumbers ? null : out.ctex ? t("中文编号需要 ctex 宏包的 {option} 选项", { option: "heading=true" }) : t("中文编号需要中文文档类");
+    out.cjk = out.ctex || has("xeCJK");
+    out.capDefault = out.ctex ? "zh" : "en";
+    const defs = (names) => r.lines.filter((l) => l.kind === "def" && names.includes(l.name));
+    const classNumbers = known ? null : { line: dc.line, why: t("文档类 {cls} 的编号这里不认识，请自己设置。", { cls: dc.cls }) };
+    // 章节编号: 一、（一）1. as the three \renewcommand lines and ctex's four keys, all of them; 不编号 as secnumdepth
+    // 0 (-1 with chapters: a chapter's level is 0)
+    const zhLines = [], zhItems = [];
+    defs(["thesection", "thesubsection", "thesubsubsection", "@seccntformat"]).forEach((l) => {
+      const want = Object.prototype.hasOwnProperty.call(ZH_NUMBER_DEFS, l.name) ? ZH_NUMBER_DEFS[l.name] : null;
+      if (l.definer === "renewcommand" && want != null && squash(l.value) === squash(want) && !zhLines.some((x) => x.name === l.name)) zhLines.push(l); else mine("secnum", l.line);
+    });
+    const nameSeen = [];
+    r.ctexsets.forEach((set) => set.list.items.forEach((it) => {
+      const k = squash(it.key), kind = ctexKey(k);
+      if (kind === "secnum") {
+        const want = Object.prototype.hasOwnProperty.call(ZH_NUMBER_KEYS, k) ? ZH_NUMBER_KEYS[k] : null;
+        if (want != null && it.value != null && squash(it.value) === want && !zhItems.some((x) => x.k === k)) zhItems.push({ set: set, item: it, k: k }); else mine("secnum", set.line);
+      } else if (kind === "capname") {
+        if (it.value == null) mine("capname", set.line); else nameSeen.push({ name: k, v: squash(it.value), line: set.line, occ: { set: set, item: it, name: k } });
+      }
+    }));
+    const zh = zhLines.length || zhItems.length;
+    if (zh && (zhLines.length < 3 || zhItems.length < 4 || !out.zhNumbers)) mine("secnum", (zhLines[0] || zhItems[0].set).line);
+    const depth = r.lines.filter((l) => l.kind === "secnumdepth"), none = [];
+    depth.forEach((l) => { if (/^-?\d+$/.test(l.value) && Number(l.value) <= (chapters ? -1 : 0)) none.push(l); else mine("secnum", l.line); });
+    if (zh && none.length) mine("secnum", none[0].line);
+    S.secnum.value = zh ? "zh" : none.length ? "none" : "";
+    S.secnum.occ = zhLines.map((l) => ({ line: l })).concat(zhItems, none.map((l) => ({ line: l })));
+    // 图表名称: \renewcommand{\figurename}{…} and {\tablename}, or ctex's figurename= and tablename=; the class's own
+    // names when none is set. babel and polyglossia set the names again at \begin{document}: theirs.
+    defs(["figurename", "tablename"]).forEach((l) => { if (l.definer === "renewcommand") nameSeen.push({ name: l.name, v: squash(l.value), line: l.line, occ: { line: l, name: l.name } }); else mine("capname", l.line); });
+    const lang = pk.find((p) => p.names.some((nm) => nm === "babel" || nm === "polyglossia"));
+    if (lang) mine("capname", lang.line, { why: t("文稿用 {pkg} 设置语言，图表名称由它决定。", { pkg: lang.names.find((nm) => nm === "babel" || nm === "polyglossia") }) });
+    pk.filter((p) => p.names.includes("caption")).forEach((p) => { if (items(p.opts).some((it) => /^(?:name|figurename|tablename)$/.test(it.key))) mine("capname", p.line); });
+    S.capname.value = out.capDefault;
+    if (nameSeen.length) {
+      const one = (name) => Array.from(new Set(nameSeen.filter((x) => x.name === name).map((x) => x.v)));
+      const fig = one("figurename"), tab = one("tablename");
+      const v = fig.length === 1 && tab.length === 1 ? Object.keys(CAPTION_NAMES).find((x) => CAPTION_NAMES[x].figurename === fig[0] && CAPTION_NAMES[x].tablename === tab[0]) : null;
+      if (v && (v === "en" || out.cjk)) { S.capname.value = v; S.capname.occ = nameSeen.map((x) => x.occ); } else mine("capname", nameSeen[0].line);
+    }
+    // 图表编号: exactly the lines the tool writes (capnumLines), with or without the \theH… lines; anything else theirs
+    const numLines = r.lines.filter((l) => (l.kind === "def" && /^theH?(?:figure|table)$/.test(l.name)) || l.kind === "counterwithin" || l.kind === "counterwithout");
+    if (numLines.length) {
+      const sig = (l) => (l.kind === "def" ? "\\" + l.definer + "{\\" + l.name + "}{" + squash(l.value) + "}" : "\\" + l.kind + "{" + l.value + "}{" + l.within + "}");
+      const sigs = numLines.map(sig);
+      const form = ["within", "continuous"].find((v) => {
+        const want = capnumLines(chapters, v).map(squash), need = want.filter((x) => !/\\theH/.test(x));
+        return want.length && need.every((x) => sigs.filter((y) => y === x).length === 1) && sigs.every((x) => want.filter((y) => y === x).length === 1);
+      });
+      if (form) { S.capnum.value = form; S.capnum.occ = numLines.map((l) => ({ line: l })); } else mine("capnum", numLines[0].line);
+    }
+    if (!known) { mine("secnum", dc.line, classNumbers); mine("capnum", dc.line, classNumbers); }
+
+    // the values; settings that disagree are the person's own
+    const agree = (key, seen, v) => {
+      if (!seen.length) return;
+      const vals = new Set(seen.map(v));
+      if (vals.size > 1) { mine(key, seen[seen.length - 1].line); return; }
+      S[key].value = v(seen[0]);
+    };
+    agree("size", sizeSeen, (x) => x.v);
+    agree("columns", colSeen, (x) => x.v);
+    agree("indent", indentSeen, (x) => x.v);
+    agree("parskip", parSeen, (x) => x.v);
+    if (styleSeen.some((x) => x.nopageno)) S.pagestyle.value = "empty"; else agree("pagestyle", styleSeen, (x) => x.v);
+    if (spaceSeen.length) {
+      if (new Set(spaceSeen.map((x) => x.s)).size > 1) mine("spacing", spaceSeen[spaceSeen.length - 1].line);
+      const n = Math.round((spaceSeen[0].s / out.s0) * 100) / 100;
+      S.spacing.n = n;
+      S.spacing.value = SPACINGS.find((p) => Math.abs(Number(p) - n) < 0.006) || "custom";
+    }
+    const sides = ["top", "bottom", "left", "right"];
+    // geometry with more than margins stays loaded when the margins go: its own margins, not the class's, then apply
+    S.margin.stays = geoLists.some((g) => g.list.items.some((it) => !MARGIN_KEYS.has(it.key)));
+    if (S.margin.occ.length) {
+      const each = {};
+      sides.forEach((k) => { each[k] = k in margin ? margin[k] : "margin" in margin ? margin.margin : null; });
+      if (sides.some((k) => each[k] == null)) mine("margin", marginLines[0]);
+      else {
+        Object.assign(S.margin, each);
+        const one = Object.keys(margin).length === 1 && "margin" in margin ? num(margin.margin) : null;
+        S.margin.value = one && MARGIN_PRESETS.includes(one) ? one : "custom";
+      }
+    }
+    if (!known) ["size", "columns"].forEach((k) => mine(k, dc.line, classOwn));
+    // a project .sty or .cls that touches a setting makes it its own
+    (local || []).forEach((f) => {
+      const code = masked(String(f.text || "")), lines = code.split("\n");
+      LAYOUT_KEYS_ORDER.forEach((k) => {
+        const at = lines.findIndex((l) => LOCAL_MARKERS[k].test(l));
+        if (at >= 0) mine(k, at + 1, { file: f.path });
+      });
+    });
+    return out;
+  }
+
+  // Edits of an option list, merged so that touching ranges never overlap: `remove` (items), `replace` (Map item, text),
+  // `add` (texts appended). `empty`: what to do when no item is left -- "drop" the brackets, else leave them empty.
+  function listChanges(r, list, ops, empty) {
+    const its = list.items, gone = new Set(ops.remove || []), rep = ops.replace || new Map(), add = ops.add || [];
+    const kept = its.filter((it) => !gone.has(it));
+    if (!kept.length) {
+      if (add.length) return [{ from: list.from, to: list.to, insert: add.join(",") }];
+      if (!its.length) return [];
+      return empty === "drop" ? [{ from: list.open, to: list.close, insert: "" }] : [{ from: list.from, to: list.to, insert: "" }];
+    }
+    const out = [];
+    const lastKept = its.lastIndexOf(kept[kept.length - 1]);
+    its.forEach((it, k) => {
+      if (gone.has(it)) out.push(k < lastKept ? { from: it.from, to: its[k + 1].from, insert: "" } : { from: its[k - 1].to, to: it.to, insert: "" });
+      else if (rep.has(it)) out.push({ from: it.from, to: it.to, insert: rep.get(it) });
+    });
+    if (add.length) {
+      const sep = its.length > 1 && /,\s/.test(r.pre.slice(its[0].to, its[1].from)) ? ", " : ",";
+      out.push(kept.length ? { from: kept[kept.length - 1].to, to: kept[kept.length - 1].to, insert: add.map((x) => sep + x).join("") }
+        : { from: list.from, to: list.from, insert: add.join(sep) });
+    }
+    return out;
+  }
+  // Specs sorted, those that touch merged into one (an insert at the end of a deletion, two deletions end to end).
+  function merged(specs) {
+    const s = specs.slice().sort((a, b) => a.from - b.from || a.to - b.to), out = [];
+    s.forEach((x) => {
+      const last = out[out.length - 1];
+      if (last && x.from <= last.to) { last.insert += x.insert || ""; last.to = Math.max(last.to, x.to); } else out.push({ from: x.from, to: x.to, insert: x.insert || "" });
+    });
+    return out;
+  }
+
+  // The specs of a batch of option edits [{list, remove?: item, replace?: [item, text], add?: text}], by list.
+  function optionChanges(r, edits, empty) {
+    const byList = new Map();
+    edits.forEach((e) => {
+      const o = byList.get(e.list) || { remove: [], replace: new Map(), add: [] };
+      if (e.remove) o.remove.push(e.remove);
+      if (e.replace) o.replace.set(e.replace[0], e.replace[1]);
+      if (e.add) o.add.push(e.add);
+      byList.set(e.list, o);
+    });
+    const out = [];
+    byList.forEach((o, list) => out.push(...listChanges(r, list, o, empty)));
+    return out;
+  }
+  // `text` added to the class's options: in its [..], or a new [..] after \documentclass.
+  function classAdd(r, text) {
+    return r.dc.opts ? optionChanges(r, [{ list: r.dc.opts, add: text }]) : [{ from: r.dc.c.nameTo, to: r.dc.c.nameTo, insert: "[" + text + "]" }];
+  }
+  function packageAdd(r, p, text) {
+    return p.opts ? optionChanges(r, [{ list: p.opts, add: text }]) : [{ from: p.c.nameTo, to: p.c.nameTo, insert: "[" + text + "]" }];
+  }
+  // A whole line removed, its line break with it.
+  function lineGone(r, from, to) { const s = r.code.lastIndexOf("\n", from - 1) + 1; return { from: s, to: r.lineEnd(to == null ? from : to) + 1, insert: "" }; }
+  // New lines, each of its own, after the last \usepackage (hyperref: before a package that must follow it, else last).
+  function newLines(r, lines, hyper) {
+    const pk = r.packages.filter((p) => p.top);
+    if (hyper) {
+      const after = pk.find((p) => p.names.some((n) => HYPERREF_AFTER.has(n)));
+      if (after) { const s = r.code.lastIndexOf("\n", after.from - 1) + 1; return { from: s, to: s, insert: lines.join("\n") + "\n" }; }
+    }
+    const last = pk.filter((p) => hyper || !p.names.some((n) => n === "hyperref" || HYPERREF_AFTER.has(n))).pop();
+    const at = r.lineEnd(last ? last.to : r.dc.to);
+    return { from: at, to: at, insert: "\n" + lines.join("\n") };
+  }
+
+  // One setting written: {changes, selection} for the editor's dispatch, {refused}, or null when it already is so.
+  // `opts`: {local, text (the whole main file, for hyperref's users)}.
+  function layoutSpec(state, key, value, opts) {
+    opts = opts || {};
+    const text = state.doc.toString(), read = readLatex(text);
+    if (!read.preamble) return { refused: t("主文件里没有 {command}，版式还不能设置。", { command: "\\begin{document}" }) };
+    const L = layoutOf(text.slice(0, read.preamble.to), opts.local), r = L.r;
+    if (L.why) return { refused: L.why };
+    const S = L.settings[key];
+    if (!S) return null;
+    if (S.mine) return { refused: S.mine.why || t("导言区第 {n} 行已有自己写的设置", { n: S.mine.line }) };
+    let specs = [], note = null;
+    const gone = (o) => (o.line ? lineGone(r, o.line.c.from, o.line.to) : lineGone(r, o.pkg.from, o.pkg.to));
+    // geometry and hyperref set the PDF's paper from the class's; with none named that is Letter, where TeX's own was
+    // A4: a4paper goes into the class's options in the same step, and the tab says so. A paper the class does not take
+    // (a2paper in article) they would honour: said too.
+    const paperKept = () => {
+      if (L.paperOdd) { note = t("文档类不认识选项里的纸张 {paper}，加上这项设置后 PDF 会按 {paper} 排。", { paper: L.paper }); return []; }
+      if (L.paper || L.geoPaper || !L.known) return [];
+      note = t("纸张保持 A4：文档类的选项里加上了 a4paper。");
+      return classAdd(r, "a4paper");
+    };
+    const argText = (l, k, s) => ({ from: l.args[k].inner[0], to: l.args[k].inner[1], insert: s });
+    // what 章节编号 and 图表名称 found taken away: each line whole; \ctexset keys one by one, the line gone when none is left
+    const removed = (occ) => {
+      const out = [], bySet = new Map();
+      occ.forEach((o) => { if (o.line) out.push(gone(o)); else bySet.set(o.set, (bySet.get(o.set) || []).concat([o.item])); });
+      bySet.forEach((its, set) => out.push(...(its.length === set.list.items.length ? [lineGone(r, set.c.from, set.to)] : listChanges(r, set.list, { remove: its }))));
+      return out;
+    };
+    if (key === "margin") {
+      const v = value || {};
+      const items = !v.preset ? [] : v.preset === "custom" ? ["top", "bottom", "left", "right"].map((k) => k + "=" + cm(v[k])) : ["margin=" + cm(v.preset)];
+      if (v.preset === "custom" && ["top", "bottom", "left", "right"].some((k) => !(Number(v[k]) >= 0 && Number(v[k]) <= 10))) return { refused: t("页边距要在 0 到 10 厘米之间。") };
+      if (v.preset === S.value && (v.preset !== "custom" || ["top", "bottom", "left", "right"].every((k) => Number(v[k]) === S[k]))) return null;
+      if (!v.preset && S.stays) return { refused: t("geometry 宏包还有别的设置，页边距回不到文档类的默认。请选一个页边距。") };
+      const edits = S.occ.map((o) => ({ list: o.list, remove: o.item }));
+      const pk = r.packages.filter((p) => p.top && p.names.includes("geometry"));
+      if (items.length && !pk.length) specs.push(...paperKept());
+      const ownPkg = pk.find((p) => p.own), ownGeo = r.geometry.find((g) => g.own);
+      const target = S.occ.length ? S.occ[0].list : ownPkg && ownPkg.opts ? ownPkg.opts : ownGeo ? ownGeo.list : null;
+      if (items.length && target) items.forEach((x) => edits.push({ list: target, add: x }));
+      else if (items.length && ownPkg) specs.push(...packageAdd(r, ownPkg, items.join(",")));
+      // a class 版式 does not know may load geometry itself: the option then goes in \geometry{…}, never a clash
+      else if (items.length) specs.push(newLines(r, pk.length ? ["\\geometry{" + items.join(",") + "}"] : !L.known ? ["\\usepackage{geometry}", "\\geometry{" + items.join(",") + "}"]
+        : ["\\usepackage[" + items.join(",") + "]{geometry}"]));
+      // back to 默认: a geometry line the margins leave empty goes, unless something else still needs geometry
+      const emptied = (list) => list.items.every((it) => edits.some((e) => e.list === list && e.remove === it)) && !edits.some((e) => e.list === list && e.add);
+      const others = /\\(?:geometry|newgeometry|restoregeometry|savegeometry|loadgeometry)\b/.test(masked(text).slice(read.preamble.to));
+      const lines = [];
+      r.geometry.filter((g) => g.own && emptied(g.list)).forEach((g) => lines.push(g));
+      const geoLeft = r.geometry.filter((g) => !lines.includes(g));
+      pk.filter((p) => p.own && p.opts && emptied(p.opts) && !geoLeft.length && !others).forEach((p) => lines.push(p));
+      // \usepackage{geometry} with no option, left by the \geometry{…} lines that go, goes too
+      if (lines.length && !geoLeft.length && !others) pk.filter((p) => p.own && !p.opts).forEach((p) => lines.push(p));
+      specs.push(...optionChanges(r, edits.filter((e) => !lines.some((l) => (l.list || l.opts) === e.list)), "drop"), ...lines.map((l) => lineGone(r, l.from, l.to)));
+    } else if (key === "size") {
+      if (value === S.value) return null;
+      const zihao = /^zihao=/.test(value);
+      if (zihao && !(L.ctexClass || L.ctexPkg)) return { refused: t("五号、小四这些字号要用 ctex。") };
+      const edits = [];
+      const same = S.occ.filter((o) => (o.item.key === "zihao") === zihao);
+      S.occ.forEach((o) => { if (!value || o !== same[0]) edits.push({ list: o.list, remove: o.item }); });
+      if (value && same.length) edits.push({ list: same[0].list, replace: [same[0].item, value] });
+      const home = zihao && !L.ctexClass ? L.ctexPkg : null, homeOpts = home ? home.opts : r.dc.opts;
+      if (value && !same.length && homeOpts) edits.push({ list: homeOpts, add: value });
+      specs = optionChanges(r, edits, "drop");
+      if (value && !same.length && !homeOpts) specs.push({ from: (home ? home.c : r.dc.c).nameTo, to: (home ? home.c : r.dc.c).nameTo, insert: "[" + value + "]" });
+    } else if (key === "columns") {
+      if (value === S.value) return null;
+      if (value && S.occ.length) specs = optionChanges(r, S.occ.map((o, k) => (k === 0 ? { list: o.list, replace: [o.item, value] } : { list: o.list, remove: o.item })), "drop");
+      else if (value) specs = classAdd(r, value);
+      else specs = optionChanges(r, S.occ.map((o) => ({ list: o.list, remove: o.item })), "drop");
+    } else if (key === "spacing") {
+      const n = value && value !== "custom" ? Number(value) : value === "custom" ? Number(opts.n) : 0;
+      if (value && !(n >= 0.5 && n <= 4)) return { refused: t("行距要在 0.5 到 4 倍之间。") };
+      if (!value && !S.occ.length) return null;
+      if (value && S.occ.length && Math.abs((S.n || 0) - n) < 0.006) return null;
+      const s = num(n * L.s0), edits = [];
+      S.occ.forEach((o) => {
+        if (o.list) {
+          if (o.ctex && value) edits.push({ list: o.list, replace: [o.item, "linespread=" + s] });
+          else edits.push({ list: o.list, remove: o.item });
+          if (o.setspace && value && !specs.some((x) => x.setspace)) specs.push(Object.assign(newLines(r, ["\\setstretch{" + s + "}"]), { setspace: true }));
+        } else if (!value) specs.push(gone(o));
+        else if (named(o.line.kind)) specs.push({ from: o.line.c.from, to: o.line.c.nameTo, insert: "\\setstretch{" + s + "}" });
+        else specs.push(argText(o.line, 0, s));
+      });
+      specs.push(...optionChanges(r, edits, "drop"));
+      if (value && !S.occ.length) {
+        const setspace = r.packages.some((p) => p.top && p.names.includes("setspace"));
+        specs.push(newLines(r, L.ctex ? ["\\linespread{" + s + "}"] : setspace ? ["\\setstretch{" + s + "}"] : ["\\usepackage{setspace}", "\\setstretch{" + s + "}"]));
+      }
+    } else if (key === "indent") {
+      if (value === S.value) return null;
+      if (!value) specs = S.occ.map(gone);
+      else if (S.occ.length) specs = S.occ.map((o) => argText(o.line, 0, value));
+      else specs = [newLines(r, ["\\setlength{\\parindent}{" + value + "}"])];
+    } else if (key === "parskip") {
+      if (value === S.value) return null;
+      const len = value === "half" ? "0.5\\baselineskip" : "\\baselineskip";
+      // parskip without its indent option had set the indent to 0: that stays, as its own line (首行缩进 无)
+      const keepsIndent = (o) => !o.pkg || (o.pkg.opts && o.pkg.opts.items.some((it) => it.key === "indent"));
+      if (!value) specs = S.occ.map((o) => (keepsIndent(o) ? gone(o) : { from: o.pkg.from, to: o.pkg.to, insert: "\\setlength{\\parindent}{0pt}" }));
+      else if (S.occ.length) {
+        S.occ.forEach((o) => {
+          if (o.line) specs.push(argText(o.line, 0, len));
+          else if (o.skip) specs.push(...optionChanges(r, [{ list: o.pkg.opts, replace: [o.skip, "skip=" + len] }]));
+          else specs.push(...packageAdd(r, o.pkg, "skip=" + len));
+        });
+      } else specs = [newLines(r, ["\\usepackage[skip=" + len + ",indent]{parskip}"])];
+    } else if (key === "pagestyle") {
+      if (value === S.value) return null;
+      const lines = S.occ.filter((o) => o.line), nopageno = S.occ.filter((o) => o.pkg);
+      if (!value) specs = S.occ.map(gone);
+      else if (value === "plain") {
+        // nopageno's line becomes \pagestyle{plain} in place, or the \pagestyle lines change
+        specs = lines.map((o) => argText(o.line, 0, "plain")).concat(nopageno.map((o, k) => (k || lines.length ? gone(o) : { from: o.pkg.from, to: o.pkg.to, insert: "\\pagestyle{plain}" })));
+        if (!lines.length && !nopageno.length) specs.push(newLines(r, ["\\pagestyle{plain}"]));
+      } else {
+        specs = lines.filter((o) => o.line.value === "plain").map(gone);
+        specs.push(newLines(r, ["\\usepackage{nopageno}"]));
+      }
+    } else if (key === "hyperref") {
+      if (value === S.value) return null;
+      // a package or class that loads hyperref itself: hyperref then takes no option, hidelinks set by \hypersetup
+      if (value === "on") specs = [...paperKept(), newLines(r, L.hyperLoaded ? ["\\usepackage{hyperref}", "\\hypersetup{hidelinks}"] : ["\\usepackage[hidelinks]{hyperref}"], true)];
+      else {
+        const pk = r.packages.filter((p) => p.top), hide = S.occ.find((o) => o.hide);
+        let body = masked(text);
+        if (hide) body = body.slice(0, hide.hide.from) + " ".repeat(hide.hide.to - hide.hide.from) + body.slice(hide.hide.to);
+        const user = NEEDS_HYPERREF.exec(body) || (!pk.some((p) => p.names.some((n) => n === "url" || n === "xurl")) ? NEEDS_URL.exec(body) : null);
+        const dependent = pk.find((p) => p.names.some((n) => n === "bookmark" || n === "hypcap"));
+        if (user || dependent) return { refused: t("文稿用到了 {command}，它需要 hyperref，不能关掉超链接。", { command: user ? user[0] : dependent.names.find((n) => n === "bookmark" || n === "hypcap") }) };
+        S.occ.forEach((o) => {
+          if (o.hide) specs.push(lineGone(r, o.hide.from));
+          else if (o.pkg.own) specs.push(gone(o));
+          else specs.push(...listChanges(r, o.pkg.nameList, { remove: o.pkg.nameList.items.filter((x) => x.text === "hyperref") }));
+        });
+      }
+    } else if (key === "secnum") {
+      // 1 / 1.1 / 1.1.1 (the class's), 一、（一）1. (ctex), 不编号: what was there goes, the new style's lines come
+      if (!["", "zh", "none"].includes(value) || value === S.value) return null;
+      if (value === "zh" && !L.zhNumbers) return { refused: L.zhNumbersWhy };
+      if (value === "none" && L.settings.capnum.value === "within" && !L.settings.capnum.mine) return { refused: t("图表按章或节编号时，章节不能不编号：没有章节号，图表会印成 0-1。") };
+      specs = removed(S.occ);
+      if (value === "zh") specs.push(newLines(r, ZH_NUMBER_LINES));
+      if (value === "none") specs.push(newLines(r, ["\\setcounter{secnumdepth}{" + (L.chapters ? "-1" : "0") + "}"]));
+    } else if (key === "capname") {
+      // 图 / 表 or Figure / Table: the class's own names remove the setting; a setting there changes in place
+      if (!CAPTION_NAMES[value] || value === S.value) return null;
+      if (value === "zh" && !L.cjk) return { refused: t("中文图表名需要中文文档类") };
+      const names = CAPTION_NAMES[value];
+      if (value === L.capDefault) specs = removed(S.occ);
+      else if (S.occ.length) specs = S.occ.map((o) => (o.line ? argText(o.line, 0, names[o.name]) : { from: o.item.from, to: o.item.to, insert: o.item.text.slice(0, o.item.text.indexOf("=") + 1) + names[o.name] }));
+      else specs = [newLines(r, CAPTION_LINES[value])];
+    } else if (key === "capnum") {
+      // 连续编号（图 1） / 按章或节编号（图 2-3） (and, with chapters, the class's 图 2.3): the old lines go, the new come
+      if (!(L.chapters ? ["", "continuous", "within"] : ["", "within"]).includes(value) || value === S.value) return null;
+      if (value === "within" && L.settings.secnum.value === "none" && !L.settings.secnum.mine) return { refused: t("章节不编号时，图表不能按章或节编号：没有章节号，图表会印成 0-1。") };
+      specs = S.occ.map(gone);
+      const lines = capnumLines(L.chapters, value);
+      if (lines.length) specs.push(newLines(r, lines));
+    }
+    if (!specs.length) return null;
+    const done = edited(state, merged(specs).map((x) => ({ from: x.from, to: x.to, insert: x.insert.split("\n").join(state.lineBreak) })));
+    return note ? Object.assign(done, { note: note }) : done;
+  }
+
+  // -- 段落 and the further insertions (22.12, A2) --------------------------------------------------------------------
+
+  const ALIGN_ENVS = ["flushleft", "center", "flushright"];
+  // The innermost environment of `names` the selection [from, to] is inside the body of.
+  function envAround(read, names, from, to) {
+    let best = null;
+    read.envs.forEach((e) => { if (names.includes(e.name) && e.beginTo <= from && to <= e.endFrom && (!best || e.beginTo > best.beginTo)) best = e; });
+    return best;
+  }
+  // An environment's \begin and \end taken away: each whole line when it is alone on it, else the command alone.
+  function envRemoved(state, e) {
+    const doc = state.doc, out = [];
+    [[e.from, e.beginTo], [e.endFrom, e.to]].forEach(([a, b]) => {
+      const la = doc.lineAt(a), lb = doc.lineAt(b);
+      const alone = !doc.sliceString(la.from, a).trim() && !doc.sliceString(b, lb.to).trim();
+      out.push(alone ? { from: la.from, to: Math.min(lb.to + 1, doc.length) } : { from: a, to: b });
+    });
+    return out;
+  }
+  // The lines of the paragraphs [from, to] touches (blank lines between them kept), or why there are none.
+  function paragraphsOf(state, read, from, to) {
+    const a = paragraphAt(state, read, from, from), b = paragraphAt(state, read, to, to);
+    if (a.heading || b.heading) return { refused: t("这一段是标题，不能这样设置。") };
+    if (a.structural || b.structural) return { refused: t("这一行是命令或环境，不能这样设置。") };
+    if (a.empty && b.empty) return { empty: true };
+    const doc = state.doc, first = a.empty ? doc.lineAt(from).number + 1 : doc.lineAt(a.from).number, last = b.empty ? doc.lineAt(to).number - 1 : doc.lineAt(b.to).number;
+    for (let n = first; n <= last; n++) if (STRUCTURAL.test(doc.line(n).text)) return { refused: t("选中的几段里有命令或环境，不能这样设置。") };
+    return { from: doc.line(first).from, to: doc.line(last).to };
+  }
+  // The paragraphs wrapped in `env`, its \begin and \end on lines of their own.
+  function envWrapped(state, at, env) {
+    if (at.empty) return blockSpec(state, state.selection.main.from, state.selection.main.to, "\\begin{" + env + "}\n" + CARET + "\n\\end{" + env + "}");
+    const br = state.lineBreak, sel = state.selection.main;
+    if (!sel.empty) return edited(state, [{ from: at.from, insert: "\\begin{" + env + "}" + br }, { from: at.to, insert: br + "\\end{" + env + "}" }]);
+    // the cursor stays in the paragraph, even at its very end, never after the \end
+    const ch = state.changes([{ from: at.from, insert: "\\begin{" + env + "}" + br }, { from: at.to, insert: br + "\\end{" + env + "}" }]);
+    const map = (x) => ch.mapPos(x, x >= at.to ? -1 : 1);
+    return { changes: ch, selection: { anchor: map(sel.anchor), head: map(sel.head) } };
+  }
+
+  // 对齐: 两端对齐 (the default: an alignment environment the paragraph is in is taken away), 左对齐 (flushleft), 居中
+  // (center), 右对齐 (flushright) for the paragraph(s) the selection touches; another alignment's environment is renamed.
+  function alignSpec(state, kind) {
+    if (kind && !ALIGN_ENVS.includes(kind)) return null;
+    const p = prepare(state, "block"), sel = p.sel;
+    if (p.no) return { refused: p.no };
+    const e = envAround(p.read, ALIGN_ENVS, sel.from, sel.to);
+    if (e) {
+      if (e.name === kind) return null;
+      if (!kind) return edited(state, envRemoved(state, e));
+      const name = (x) => { const at = p.text.indexOf("{", x) + 1; return { from: at, to: p.text.indexOf("}", at), insert: kind }; };
+      return edited(state, [name(e.from), name(e.endFrom)]);
+    }
+    if (!kind) return null;
+    const at = paragraphsOf(state, p.read, sel.from, sel.to);
+    return at.refused ? at : envWrapped(state, at, kind);
+  }
+  // 引文块: the paragraph(s) in a quote environment, or out of the one they are in.
+  function quoteSpec(state) {
+    const p = prepare(state, "block"), sel = p.sel;
+    if (p.no) return { refused: p.no };
+    const e = envAround(p.read, ["quote", "quotation"], sel.from, sel.to);
+    if (e) return edited(state, envRemoved(state, e));
+    const at = paragraphsOf(state, p.read, sel.from, sel.to);
+    return at.refused ? at : envWrapped(state, at, "quote");
+  }
+  // What the cursor's paragraph is: its alignment ("" when justified) and whether it is quoted.
+  function paragraphState(state, read) {
+    const sel = state.selection.main, e = envAround(read, ALIGN_ENVS, sel.from, sel.to);
+    return { align: e ? e.name : "", quote: !!envAround(read, ["quote", "quotation"], sel.from, sel.to) };
+  }
+
+  // 分页: \clearpage on a line of its own after the selection (22.12: the floats before it are set first, as a page break
+  // in Word keeps what is before it before it).
+  function pageBreakSpec(state) {
+    const p = prepare(state, "block");
+    return p.no ? { refused: p.no } : blockSpec(state, p.sel.to, p.sel.to, "\\clearpage");
+  }
+  // 目录: \tableofcontents after \maketitle when the file has one, else after the selection; never a second one.
+  function tocSpec(state) {
+    const p = prepare(state, "block"), doc = state.doc;
+    const at = (name) => { const c = p.read.cmds.find((x) => x.name === name && (!p.read.preamble || x.from > p.read.preamble.to)); return c || null; };
+    const toc = at("tableofcontents");
+    if (toc) return { refused: t("文稿里已经有目录（第 {n} 行）。", { n: doc.lineAt(toc.from).number }) };
+    const title = at("maketitle");
+    if (title) {
+      const line = doc.lineAt(title.to), ins = state.lineBreak + "\\tableofcontents";
+      return { changes: state.changes({ from: line.to, insert: ins }), selection: { anchor: line.to + 1 + "\\tableofcontents".length } };
+    }
+    return p.no ? { refused: p.no } : blockSpec(state, p.sel.to, p.sel.to, "\\tableofcontents");
+  }
+  // 交叉引用: \ref{key} (\eqref for a formula when amsmath is loaded) after the selection.
+  function refSpec(state, key, eq) {
+    const p = prepare(state, "inline");
+    if (p.no) return { refused: p.no };
+    return key ? inserted(state, p.sel.to, "\\" + (eq ? "eqref" : "ref") + "{" + key + "}", "") : null;
+  }
+  // 网址: \url{…} for the address typed (in place of the selection when it is that address); `opts` as figureSpec's
+  // {url: whether url, xurl or hyperref is loaded, isMain, main}: the open main file gets \usepackage{url}.
+  function urlSpec(state, address, opts) {
+    const p = prepare(state, "url"), sel = p.sel;
+    if (p.no) return { refused: p.no };
+    const url = String(address || "").trim();
+    if (!url) return null;
+    if (/[\s{}\\]|[\u0000-\u001f]/.test(url)) return { refused: t("网址里不能有空格、花括号或反斜杠。") };
+    const ctx = contextAt(p.read, sel.from);
+    if (/[%#]/.test(url) && ctx && ctx.kind === "arg") return { refused: t("网址里有 % 或 #，放在命令的参数里（比如脚注）会出错。请把它放在正文里。") };
+    const need = needs(state, p.read, opts || {}, "url", opts && opts.url);
+    const whole = state.doc.sliceString(sel.from, sel.to) === url, cmd = "\\url{" + url + "}";
+    const at = whole ? sel.from : sel.to, ch = state.changes([{ from: at, to: whole ? sel.to : at, insert: cmd }].concat(need.more));
+    return Object.assign({ changes: ch, selection: { anchor: ch.mapPos(at, -1) + cmd.length } }, need.note ? { note: need.note } : {});
+  }
+
+  // The \label keys of the open file, each with its kind, as latex_edit.labels_in reads another file's: the prefix
+  // (fig:, tab:, eq:, sec: and their like), else the environment it is in, else a heading just before it, else other.
+  const LABEL_PREFIXES = [["figure", /^(?:fig|figure)[:_-]/i], ["table", /^(?:tab|table|tbl)[:_-]/i], ["equation", /^(?:eq|eqn|equation)[:_-]/i],
+    ["section", /^(?:sec|ssec|subsec|chap|ch|chapter|section|part|app)[:_-]/i]];
+  const LABEL_ENVS = { figure: "figure", "figure*": "figure", wrapfigure: "figure", subfigure: "figure", table: "table", "table*": "table", longtable: "table", sidewaystable: "table" };
+  function labelsOf(text, read) {
+    const out = [], re = /\\label\s*\{([^{}]+)\}/g;
+    for (let m = re.exec(text); m; m = re.exec(text)) {
+      const at = m.index, key = m[1].trim();
+      if (!key || read.raws.some((x) => x.from <= at && at < x.to)) continue;
+      let kind = (LABEL_PREFIXES.find(([, rx]) => rx.test(key)) || [null])[0];
+      if (!kind && read.maths.some((f) => f.display && f.from < at && at < f.to)) kind = "equation";
+      if (!kind) {
+        const env = read.envs.filter((e) => e.beginTo <= at && at < e.endFrom && Object.prototype.hasOwnProperty.call(LABEL_ENVS, e.name)).pop();
+        if (env) kind = LABEL_ENVS[env.name];
+      }
+      if (!kind) {
+        const h = read.cmds.filter((c) => c.role === "heading" && c.to <= at).pop();
+        kind = h && !text.slice(h.to, at).trim() ? "section" : "other";
+      }
+      out.push({ key: key, kind: kind });
+    }
+    return out;
+  }
 
   // -- the editor page -------------------------------------------------------------------------------------------
 
@@ -715,20 +5066,32 @@
     // from 撤销这次保存
     const undoLink = mkButton(t("撤销这次关联"), "ws-text-link latex-act-undo hidden", () => undoAct(ed));
     const exported = exporter(file.path, () => saveFirst(me));   // 22.4: 导出 PDF, quiet
-    const source = mkButton(t("显示源码"), "ws-text-link latex-source", () => toggleSource(me));   // 22.1: like Word off for the file
     const said = mk("span", "latex-act");
     said.append(status, undoLink);
-    tools.append(save, undo, exported.button, source, said);
-    head.append(mk("div", "node-path mono", file.path), tools);
+    tools.append(save, undo, exported.button, said);
+    const where = mk("div", "node-path mono", file.path);
+    where.title = file.path;   // 22.12 B: a long path is cut short in the header, said whole on hover
+    head.append(where, tools);
     const readOnly = mk("p", "node-sub latex-read-only" + (file.read_only ? "" : " hidden"), file.read_only_message || "");
     const notice = mk("div", "latex-notice hidden"), box = mk("div", "latex-editor"), side = mk("aside", "latex-side");
-    const body = mk("div", "latex-body");
-    body.append(box, side);
+    // 22.12 B: under the text, quietly, how many words the body has and whether it is saved
+    const bar = mk("div", "latex-statusbar"), count = mk("span", "latex-words"), saved = mk("span", "latex-save-state");
+    bar.append(count, saved);
+    const body = mk("div", "latex-body"), main = mk("div", "latex-main");
     const note = mk("p", "node-sub latex-new-note" + (at && at.note ? "" : " hidden"), (at && at.note) || "");   // 22.11: \input not added
-    page.append(backBar(), head, exported.block, readOnly, note, notice, body);
+    // the header, the notices and the status line in the text's column; the right column beside it, from the top
+    main.append(head, exported.block, readOnly, note, notice, box, bar);
+    body.append(main, side);
+    page.append(backBar(), body);
     host.replaceChildren(page);
-    const me = { path: file.path, CM: CM, ui: { save: save, undo: undo, status: status, notice: notice, box: box, side: side, undoLink: undoLink, source: source },
+    const me = { path: file.path, CM: CM, ui: { save: save, undo: undo, status: status, notice: notice, box: box, side: side, undoLink: undoLink,
+      page: page, words: count, saveState: saved },
       lastKey: 0, busy: false, lastSave: null, afterComposing: null, target: at || null, panel: null };
+    me.ui.format = formatPanel(me);   // 22.12: 格式与插入, at the top of the right column
+    // what the column shows under it (the passages, the link panel) is drawn again on its own: the panel is never taken
+    // out and put back, so a field being typed in keeps the focus
+    me.ui.sideRest = mk("div", "latex-side-rest");
+    side.append(me.ui.format.box, me.ui.sideRest);
     me.ui.linkButton = mkButton(t("关联依据文件"), "btn btn-small latex-link-button hidden", () => openLinkPanel(me));
     me.ui.linkButton.addEventListener("mousedown", (event) => event.preventDefault());   // the selection stays
     box.appendChild(me.ui.linkButton);
@@ -746,23 +5109,50 @@
     });
   }
 
+  // CodeMirror's history, with a tool's step never joined to the typing just before or after it (within half a second
+  // CodeMirror joins adjacent edits): ⌘Z takes back the tool alone (22.12's one rule).
+  let hx = null;
+  function historyOf(CM) {
+    if (!hx || hx.CM !== CM) {
+      const last = CM.StateField.define({ create: () => "", update: (v, tr) => (tr.docChanged ? tr.annotation(CM.Transaction.userEvent) || "" : v) });
+      const tool = (ev) => /^input\.format/.test(ev || "");
+      hx = { CM: CM, ext: [last, CM.history({ joinToEvent: (tr, adjacent) => adjacent && !tool(tr.startState.field(last, false)) && !tool(tr.annotation(CM.Transaction.userEvent)) })] };
+    }
+    return hx.ext;
+  }
   // (Re)loads `file` into the editor: a fresh state, so CodeMirror's own undo history starts again.
   function load(me, file) {
     const CM = me.CM;
     me.wordComp = new CM.Compartment();
-    me.ui.source.setAttribute("aria-pressed", String(sourceShown.has(me.path)));
+    me.codeComp = new CM.Compartment();   // 22.12 M (F3): the code's colours, only while 显示代码 shows the code
+    // B1 (22.1): a file the edit view cannot show safely opens as code, the switch on and disabled, saying why: a
+    // read-only file always (`forced`), one the reader is unsure of while it is so (`unsure`, read again as it changes)
+    me.forced = file.read_only ? t("这个文件只能查看，只显示代码。") : null;
+    me.unsure = file.read_only ? null : unsureWhy(file.text, readLatex(file.text));
+    if (me.unsure) sourceShown.add(file.path);
+    me.codeNote = null;
+    const code = codeShown(me);
+    me.ui.page.classList.toggle("is-source", code);   // 22.12 B: the page's column, or the full width
     me.revision = file.revision;
     me.readOnly = !!file.read_only;
     me.sep = file.line_ending === "crlf" ? "\r\n" : "\n";
     if (file.mains) me.mains = file.mains;
     if (file.links) me.links = new Map(file.links.filter((l) => l.path).map((l) => [includeKey(l.command, l.args), l]));
+    if (file.links) me.format = file.format || null;   // 22.12: the main file's facts, for a writable file
+    hookEditView(me);
     const extensions = [
-      CM.history(), CM.drawSelection(), CM.highlightSpecialChars(), CM.EditorView.lineWrapping,
-      returnKeys(CM), CM.keymap.of([].concat(CM.defaultKeymap, CM.historyKeymap)),
-      CM.StreamLanguage.define(CM.stex), CM.syntaxHighlighting(highlight(CM)), includeLinks(CM, me),
+      me.wordComp.of(code ? [] : wordExtensions(CM, { say: (s) => sayEdit(me, s) })),   // first, so its keys come first
+      historyOf(CM), CM.drawSelection(), CM.EditorView.lineWrapping,
+      returnKeys(CM), formatKeys(CM, me), CM.keymap.of([].concat(CM.defaultKeymap, CM.historyKeymap)),
+      me.codeComp.of(code ? codeLook(CM) : []), includeLinks(CM, me),
       CM.EditorView.contentAttributes.of({ "aria-label": t("LaTeX 源码"), spellcheck: "false" }),
-      CM.EditorView.updateListener.of((update) => { changed(me, update); if (update.selectionSet || update.docChanged || update.geometryChanged) placeLinkButton(me); }),
-      passageField(CM).field, me.wordComp.of(sourceShown.has(me.path) ? [] : wordExtensions(CM)),
+      CM.EditorView.updateListener.of((update) => {
+        changed(me, update);
+        if (update.docChanged) { scheduleUnsure(me); scheduleWords(me); drawSaveState(me); pdfUnsafe(me, update); }
+        if (update.selectionSet || update.docChanged || update.geometryChanged) placeLinkButton(me);
+        syncFormat(me);
+      }),
+      passageField(CM).field,
       CM.EditorView.domEventHandlers({ click: (event) => {
         const hit = event.target && event.target.closest && event.target.closest("[data-passage]");
         if (hit) openPassage(me, hit.getAttribute("data-passage"));
@@ -772,12 +5162,9 @@
     if (me.readOnly) extensions.push(CM.EditorState.readOnly.of(true));
     else extensions.push(CM.EditorState.lineSeparator.of(me.sep), breakFilter(CM, me.sep));
     let state = CM.EditorState.create({ doc: file.text, extensions: extensions });
-    // the first cursor is where the body starts: one at 0 would sit before the folded preamble, typing into it unseen
+    // the first cursor is where the body starts (in the edit view, at the edge of what is hidden there)
     const first = bodyStart(state.doc, readLatex(state.doc.toString()));
     if (first) state = state.update({ selection: { anchor: first } }).state;
-    // like Word, nothing shows its source until the editor is clicked or reached by keyboard (a reload keeps the focus)
-    const focused = !!(me.view && me.view.hasFocus);
-    if (!sourceShown.has(me.path) && !focused) state = state.update({ effects: wordField(CM).live.of(false) }).state;
     const top = me.view ? me.view.scrollDOM.scrollTop : 0;
     if (me.view) me.view.setState(state);
     else me.view = new CM.EditorView({ state: state, parent: me.ui.box });
@@ -792,26 +5179,106 @@
     me.lastAct = null; me.ui.undoLink.classList.add("hidden");   // an entry's 撤销 is offered until the file is reloaded
     if (me.panel === "link") keepLinkPanel(me, state.doc);   // a passage's panel stays; loadPassages drops it if gone
     placeLinkButton(me);
+    if (me.picker) closePicker(me);   // a picker was for the text before the reload
+    if (me.ui.format) me.ui.format.optionsFor = null;
+    me.layoutCustom = {};
+    me.note = null;
+    drawSwitch(me);
+    formatAvailability(me);
+    loadCites(me);
+    drawWords(me);
+    drawSaveState(me);
     loadPassages(me, false);
   }
 
-  // 显示源码 (22.1): like Word off, or on again, for this file while Research OS runs. KaTeX is loaded the first time a
-  // file is shown like Word; until it is in, and if it fails, formulas stay as written (22.0.1).
+  // 显示代码 (22.1, B1; the researcher, 2026-11-14): the whole file as its LaTeX code, typed and pasted as it is, or the
+  // edit view, which shows no code. Per file while Research OS runs; switching keeps the cursor's place and is no step
+  // of ⌘Z. A file the edit view cannot show safely stays code: read-only (`me.forced`), or while the reader is unsure of
+  // it (`me.unsure`, the switch disabled and saying why until the text is sure again).
+  // KaTeX is loaded the first time a file is shown in the edit view (22.0.1).
   const sourceShown = new Set();
-  function toggleSource(me) {
-    if (ed !== me || !me.view) return;
-    if (sourceShown.has(me.path)) sourceShown.delete(me.path); else sourceShown.add(me.path);
-    const on = sourceShown.has(me.path);
-    me.ui.source.setAttribute("aria-pressed", String(on));
-    me.view.dispatch({ effects: me.wordComp.reconfigure(on ? [] : wordExtensions(me.CM)) });
-    if (!on && !me.view.hasFocus) me.view.dispatch({ effects: wordField(me.CM).live.of(false) });   // as a file loads
+  function codeShown(me) { return !!me.forced || sourceShown.has(me.path); }
+  // Whether the text can be shown in the edit view, read again after each change: in the edit view at once (⌘Z may bring
+  // back a text it cannot show: the code is turned on, saying why), in the code a moment after typing stops (the switch
+  // is disabled, saying why, while the text is unsure, and free again once it is not).
+  function scheduleUnsure(me) {
+    if (me.readOnly) return;
+    clearTimeout(me.unsureTimer);
+    const code = codeShown(me);
+    me.unsureTimer = setTimeout(() => checkUnsure(me), code ? 300 : 0);
+  }
+  function checkUnsure(me) {
+    if (ed !== me || !me.view || me.readOnly) return;
+    const st = me.view.state, value = st.field(wordField(me.CM).field, false), text = st.doc.toString();
+    const why = unsureWhy(text, value ? value.read : readLatex(text));
+    if (why === me.unsure && (!why || codeShown(me))) return;
+    me.unsure = why;
+    if (why && !codeShown(me)) {
+      sourceShown.add(me.path);
+      me.ui.page.classList.add("is-source");
+      me.view.dispatch({ effects: [me.wordComp.reconfigure([]), me.codeComp.reconfigure(codeLook(me.CM))].concat(scrollTo(me, st.selection.main.head)) });
+      closePicker(me);
+    }
+    me.codeNote = null;
+    drawSwitch(me);
+    formatAvailability(me);
+  }
+  // A character pdfLaTeX cannot set (a Chinese one, a Greek letter, ≥, ①, ✓ …: outside the Latin letters and the
+  // punctuation LaTeX's UTF-8 input knows) typed into a document the export compiles with pdfLaTeX: said in ochre, as a
+  // line the main file needs is, since its PDF would not come out.
+  const PDF_UNSAFE = /[^\u0000-\u024f\u2010-\u2027\u2030-\u203a\u20ac\u2122\u2190-\u2193]/u;
+  function pdfUnsafe(me, update) {
+    let bad = null;
+    update.changes.iterChanges((fa, ta, fb, tb, ins) => { if (!bad && ins.length) { const m = PDF_UNSAFE.exec(ins.toString()); if (m) bad = m[0]; } });
+    if (!bad || ed !== me) return;
+    const f = panelFacts(me), pre = (me.format && me.format.preamble) || "";
+    if (f.engine !== "pdflatex" || f.cjk || /\\usepackage\s*(?:\[[^\]]*\])?\s*\{[^}]*\b(?:fontspec|unicode-math)\b/.test(pre + me.view.state.doc.sliceString(0, Math.min(me.view.state.doc.length, 20000)))) return;
+    sayFormat(me, t("“{ch}” 用 pdfLaTeX 导出时排不出来：中文请用中文文稿或 XeLaTeX 导出，数学符号请写成公式。", { ch: bad }), true);
+  }
+  // The cursor kept in sight when the page changes how it shows the text (the code or the edit view, 22.1).
+  function scrollTo(me, pos) { return me.CM.EditorView.scrollIntoView ? [me.CM.EditorView.scrollIntoView(pos, { y: "center" })] : []; }
+  function toggleSource(me, on) {
+    if (ed !== me || !me.view || me.forced) return;
+    const want = on == null ? !sourceShown.has(me.path) : !!on;
+    me.codeNote = null;
+    if (!want) {   // back to the edit view: only when the text can be shown safely
+      const text = me.view.state.doc.toString(), why = unsureWhy(text, readLatex(text));
+      me.unsure = why;
+      if (why) { drawSwitch(me); return; }
+    }
+    if (want) sourceShown.add(me.path); else sourceShown.delete(me.path);
+    me.ui.page.classList.toggle("is-source", want);
+    me.view.dispatch({ effects: [me.wordComp.reconfigure(want ? [] : wordExtensions(me.CM, { say: (s) => sayEdit(me, s) })),
+      me.codeComp.reconfigure(want ? codeLook(me.CM) : [])].concat(scrollTo(me, me.view.state.selection.main.head)) });
+    // the edit view's filter moves the cursor out of what is hidden; either way it stays in sight
+    if (!want) me.view.dispatch({ selection: me.view.state.selection, effects: scrollTo(me, me.view.state.selection.main.head) });
+    me.note = null;
+    drawSwitch(me);
+    formatAvailability(me);   // 22.12: 格式 is for the edit view; 版式 works in both
     mathWhenShown(me);
   }
+  // 显示代码 on, the cursor at `pos` (a table's, a formula's or a construct's start): where it is changed.
+  function codeAt(me, pos) {
+    if (!me.view) return;
+    if (!codeShown(me)) toggleSource(me, true);
+    me.view.dispatch({ selection: { anchor: Math.min(pos, me.view.state.doc.length) }, scrollIntoView: true });
+    if (typeof me.view.focus === "function") me.view.focus();
+  }
   function mathWhenShown(me) {
-    if (sourceShown.has(me.path) || window.katex || typeof document === "undefined") return;
+    if (codeShown(me) || window.katex || typeof document === "undefined") return;
     loadMath().then(() => { if (ed === me && me.view) me.view.dispatch({ effects: wordField(me.CM).mathOn.of(true) }); }, () => {});
   }
 
+  // The code's own look in 显示代码 (22.12 M, F3 -- browser acceptance 2026-11-14: a number in the edit view carried the
+  // code's gray-brown): its language and colours are in a compartment of their own, given only while the code is shown,
+  // so no word of the edit view is ever coloured as code.
+  let looks = null;
+  function codeLook(CM) {
+    // (and CodeMirror's red marks of control and invisible characters -- a zero-width space or a soft hyphen pasted from a
+    // PDF --, which are the code's: in the edit view they are the text's own, drawn as the PDF draws them, 22.12 R)
+    if (!looks || looks.CM !== CM) looks = { CM: CM, ext: [CM.StreamLanguage.define(CM.stex), CM.syntaxHighlighting(highlight(CM)), CM.highlightSpecialChars()] };
+    return looks.ext;
+  }
   // Colours from the palette's own tokens (8): commands olive, comments the quiet gray, the rest ink.
   function highlight(CM) {
     const tags = CM.tags;
@@ -886,19 +5353,23 @@
       return;
     }
     me.busy = true; me.ui.save.disabled = true; me.sinceSent = me.CM.ChangeSet.empty(doc.length);
+    me.inSave = true;
     setStatus(me.ui.status, "", t("正在保存…"));
+    drawSaveState(me);
     let r;
     try {
       r = await apiPost("/api/latex/save", body);
     } catch (err) {
       if (ed !== me) return;
       me.busy = false; me.ui.save.disabled = false; me.sinceSent = null;
+      me.inSave = false; drawSaveState(me);
       if (err.state === "workspace_conflict") conflict(me);
       else setStatus(me.ui.status, "err", t("没能保存，当前内容已保留。"), err);
       return;
     }
     if (ed !== me) return;
     me.savedDoc = doc; me.revision = r.revision; me.pending = me.sinceSent; me.sinceSent = null;
+    me.inSave = false; drawSaveState(me);
     if (lastShown && lastShown.path === me.path) lastShown = null;   // an export's answer is about the text before this save
     clearNotice(me);   // a conflict's notice and folded text are over once a save goes through
     const emptied = checkPassages(me);
@@ -908,7 +5379,26 @@
     // passage act runs on a list about to be replaced
     if (emptied) { await loadPassages(me, true); if (ed !== me) return; }
     me.busy = false; me.ui.save.disabled = false;
+    me.inSave = false; drawSaveState(me);
     setStatus(me.ui.status, "", dirty() ? t("尚未保存") : t("已保存"));
+  }
+
+  // 22.12 B: the status line under the text. The word count is drawn when a file loads and a moment after typing
+  // stops, so a key never waits for it; the save state follows the save (正在保存 while one is under way).
+  function drawWords(me) {
+    if (ed !== me || !me.view || !me.ui.words) return;
+    const st = me.view.state, value = st.field(wordField(me.CM).field, false), text = st.doc.toString();
+    me.ui.words.textContent = t("{n} 字", { n: bodyWords(text, value ? value.read : readLatex(text)) });
+  }
+  function scheduleWords(me) {
+    clearTimeout(me.wordsTimer);
+    me.wordsTimer = setTimeout(() => { me.wordsTimer = null; drawWords(me); }, 400);
+  }
+  function drawSaveState(me) {
+    const el = me.ui.saveState;
+    if (!el || ed !== me) return;
+    el.textContent = me.readOnly ? "" : me.inSave ? t("正在保存") : dirty() ? t("有未保存的改动") : t("已保存");
+    el.classList.toggle("is-unsaved", !me.readOnly && !me.inSave && dirty());
   }
 
   // 409: the file changed elsewhere. What the editor holds stays in it and, folded, under the notice; 载入新版本 reads the
@@ -1038,7 +5528,8 @@
         return s;
       }
     }
-    const mapped = (changes, r) => r.from == null ? r : Object.assign({}, r, { from: changes.mapPos(r.from, -1), to: Math.max(changes.mapPos(r.from, -1), changes.mapPos(r.to, 1)) });
+    // a tool's block (a figure, a table …) written at a passage's end goes after it, never into it (typing there does)
+    const mapped = (changes, r, tool) => r.from == null ? r : Object.assign({}, r, { from: changes.mapPos(r.from, -1), to: Math.max(changes.mapPos(r.from, -1), changes.mapPos(r.to, tool ? -1 : 1)) });
     const decorate = (list) => CM.Decoration.set([].concat.apply([], list.filter((p) => p.from != null && p.to > p.from).map((p) => [
       CM.Decoration.mark({ class: "latex-passage" + (p.state === "found" && !p.pending ? "" : " latex-wait"), attributes: { "data-passage": p.key } }).range(p.from, p.to),
       CM.Decoration.widget({ widget: new Count(p), side: -1 }).range(p.from),
@@ -1048,7 +5539,8 @@
       update(value, tr) {
         let list = null;
         for (const e of tr.effects) if (e.is(set)) list = e.value;
-        if (!list && tr.docChanged) list = value.list.map((p) => Object.assign(mapped(tr.changes, p), { candidates: p.candidates.map((c) => mapped(tr.changes, c)) }));
+        const tool = tr.isUserEvent("input.format");
+        if (!list && tr.docChanged) list = value.list.map((p) => Object.assign(mapped(tr.changes, p, tool), { candidates: p.candidates.map((c) => mapped(tr.changes, c, tool)) }));
         return list ? { list: list, deco: decorate(list) } : value;
       },
       provide: (f) => CM.EditorView.decorations.from(f, (v) => v.deco),
@@ -1212,6 +5704,15 @@
     });
   }
 
+  // A passage's words as the column quotes them: in the edit view as it shows them (no markup, 22.1), in 显示代码 as
+  // the code. `text` (a quote the server keeps, a candidate) is read as the edit view would show it.
+  function shownQuote(me, from, to, text) {
+    if (codeShown(me)) return text != null ? text : me.view.state.sliceDoc(from, to);
+    const w = wordField(me.CM);
+    if (text == null) { const v = me.view.state.field(w.field, false); return v ? plainOf(v, from, to, true) : me.view.state.sliceDoc(from, to); }
+    const st = me.CM.EditorState.create({ doc: String(text), extensions: [w.field] });
+    return plainOf(st.field(w.field), 0, st.doc.length, true);
+  }
   function quoted(text) {
     const chars = Array.from(text);
     return mk("blockquote", "latex-quote", chars.length > 200 ? chars.slice(0, 200).join("") + t("…（共 {n} 个字符）", { n: chars.length }) : text);
@@ -1226,7 +5727,7 @@
     me.linkRange = { from: sel.from, to: sel.to };
     me.linkQuote = me.view.state.doc.sliceString(sel.from, sel.to);
     me.panel = "link";
-    const side = me.ui.side, chosen = [], picked = mk("ul", "latex-files latex-picked"), results = mk("div", "latex-results");
+    const chosen = [], picked = mk("ul", "latex-files latex-picked"), results = mk("div", "latex-results");
     const search = mk("input", "ws-input");
     search.setAttribute("placeholder", t("搜索项目里的文件"));
     search.setAttribute("aria-label", t("搜索项目里的文件"));
@@ -1249,7 +5750,7 @@
     const showPicked = () => {
       picked.replaceChildren(...chosen.map((file) => {
         const li = mk("li", null);
-        li.append(mk("span", "mono", file), mkButton(t("移除"), "ws-text-link", () => { chosen.splice(chosen.indexOf(file), 1); showPicked(); }));
+        li.append(mk("span", "latex-file-name", file), mkButton(t("移除"), "ws-text-link", () => { chosen.splice(chosen.indexOf(file), 1); showPicked(); }));
         return li;
       }));
       go.disabled = sending || !chosen.length;
@@ -1268,14 +5769,16 @@
         const files = (data.files || []).filter((f) => f.group === group);
         if (!files.length) return;
         out.push(mk("div", "latex-group", { figure: t("图和表"), data: t("数据"), script: t("脚本"), document: t("文档") }[group]));
-        files.forEach((f) => out.push(mkButton(f.path, "latex-result mono", () => { if (!chosen.includes(f.path)) { chosen.push(f.path); showPicked(); } })));
+        files.forEach((f) => out.push(mkButton(f.path, "latex-result latex-file-name", () => { if (!chosen.includes(f.path)) { chosen.push(f.path); showPicked(); } })));
       });
       if (!out.length) out.push(mk("p", "node-sub", t("没有找到这样的文件")));
       results.replaceChildren(...out);
     };
     search.addEventListener("input", find);
-    side.replaceChildren(mk("h3", "latex-side-title", t("关联依据文件")), quoted(me.view.state.sliceDoc(sel.from, sel.to)),
-      search, results, picked, note, go, closeLink(me));
+    closePicker(me);   // one primary at a time in the column
+    const title = mk("h3", "latex-side-title", t("关联依据文件"));
+    fillSide(me, [title, quoted(shownQuote(me, sel.from, sel.to)), search, results, picked, note, go, closeLink(me)]);
+    inSight(title);   // under the 格式 panel: the column scrolls to it (review, 22.7)
     find();
   }
 
@@ -1286,15 +5789,15 @@
     const p = passagesOf(me).find((x) => x.key === key);
     if (!p) return;
     me.panel = key;
-    const side = me.ui.side, head = mk("div", "latex-side-head");
+    const head = mk("div", "latex-side-head");
     head.appendChild(mk("h3", "latex-side-title", t("依据文件")));
     if (p.pending) head.append(mk("span", "status-label tone-ochre", t("待批准")));
     if (p.state !== "found") head.append(mk("span", "status-label tone-ochre", t("待复核")), mk("span", "node-sub-inline", p.state === "deleted" ? t("段落已被删掉") : t("依据已变化")));
     const files = mk("ul", "latex-files");
     p.links.forEach((l) => {
       const li = mk("li", null), line = mk("div", null);
-      if (l.file_missing) line.append(mk("span", "mono", l.file.replace(/^[a-z]+:/, "")), mk("span", "status-label tone-ochre", t("这个文件现在不在项目里")));
-      else line.appendChild(mkButton(l.file.replace(/^[a-z]+:/, ""), "ws-text-link mono", () => { if (window.RONode) RONode.openNode(l.file); }));
+      if (l.file_missing) line.append(mk("span", "latex-file-name", l.file.replace(/^[a-z]+:/, "")), mk("span", "status-label tone-ochre", t("这个文件现在不在项目里")));
+      else line.appendChild(mkButton(l.file.replace(/^[a-z]+:/, ""), "ws-text-link latex-file-name", () => { if (window.RONode) RONode.openNode(l.file); }));
       li.appendChild(line);
       if (l.note) li.appendChild(mk("p", "latex-note-text", l.note));
       const when = window.RODesk && RODesk.whenWords ? RODesk.whenWords(l.at, new Date()) : "";
@@ -1307,7 +5810,7 @@
       li.appendChild(withdraw);
       files.appendChild(li);
     });
-    const parts = [head, quoted(p.from != null && p.state !== "deleted" ? me.view.state.sliceDoc(p.from, p.to) : p.quote), files];
+    const parts = [head, quoted(p.from != null && p.state !== "deleted" ? shownQuote(me, p.from, p.to) : shownQuote(me, 0, 0, p.quote)), files];
     if (p.state === "changed" && p.candidates.length) {
       parts.push(mk("p", "node-sub", p.candidates[0].still ? t("这段的文字改过了。依据文件还支持它吗？") : t("原来的文字找不到了。是下面哪一段？")));
       p.candidates.slice(0, 3).forEach((c) => {
@@ -1318,19 +5821,19 @@
           if (!await act(me, "reanchor", (conv) => p.links.map((l) => ({ link: l.link, from: conv.toServer(c.from), to: conv.toServer(c.to) })),
             c.still ? t("已记录：仍然成立") : t("已记录：是这段"))) here.disabled = false;
         });
-        row.append(quoted(c.text), here);
+        row.append(quoted(shownQuote(me, 0, 0, c.text)), here);
         parts.push(row);
       });
     }
     parts.push(closeLink(me));
-    side.replaceChildren(...parts);
+    fillSide(me, parts);
   }
 
   // The side of the editor with no panel open: how many passages have supporting files, those 待复核 listed.
   function renderSide(me) {
     if (me.panel === "link") return;
     if (me.panel) { openPassage(me, me.panel); return; }
-    const side = me.ui.side, ev = me.evidence || {}, list = me.view ? passagesOf(me) : [];
+    const ev = me.evidence || {}, list = me.view ? passagesOf(me) : [];
     const parts = [];
     if (ev.failed) parts.push(mk("p", "notice-status err", t("没能读到这份文稿的依据文件")));
     if (ev.message) parts.push(mk("p", "notice-status err", ev.message));
@@ -1343,10 +5846,978 @@
       if (waiting.length) add(mk("span", "status-label tone-ochre", t("{n} 段待复核", { n: waiting.length })));
       if (pending.length) add(mk("span", "status-label tone-ochre", t("{n} 段待批准", { n: pending.length })));
       parts.push(counts);
-      waiting.concat(pending).forEach((p) => parts.push(mkButton(Array.from(words(p.quote)).slice(0, 40).join(""), "ws-text-link latex-waiting", () => openPassage(me, p.key))));
+      waiting.concat(pending).forEach((p) => parts.push(mkButton(Array.from(words(shownQuote(me, 0, 0, p.quote))).slice(0, 40).join(""), "ws-text-link latex-waiting", () => openPassage(me, p.key))));
     } else if (me.mayLink) parts.push(mk("p", "node-sub", t("选中一段文字，可以关联依据文件。")));
-    side.replaceChildren(...parts);
+    fillSide(me, parts);
   }
+
+  // -- 格式与插入: the panel (22.12) ----------------------------------------------------------------------------------
+  //
+  // At the top of the right column, above the passages: 「显示代码」, then two tabs, 「格式」 (this panel) and 「版式」 (A2).
+  // 「格式」 has four quiet groups -- 文字, 章节标题, 段落, 插入 -- whose controls run the tools above through `applyFormat`,
+  // the editor's own dispatch. Disabled, with its reason, in a read-only file and while 显示代码 shows the code. A picker
+  // (图片, 表格, 文献引用, 交叉引用, 网址) opens inside the panel, one at a time, with 「插入」 its one primary button and
+  // 「取消」 a link.
+
+  // What the panel knows of the main file: the open file's own preamble when it is the main file (or has its own
+  // \documentclass and no main file is known), else what GET /api/latex/file said of the main file (`format`).
+  function panelFacts(me) {
+    const f = me.format || {}, state = me.view.state, value = state.field(wordField(me.CM).field, false);
+    const read = value ? value.read : readLatex(state.doc.toString());
+    const own = read.preamble ? state.doc.sliceString(0, read.preamble.to) : "";
+    const isMain = f.main ? f.main === me.path : !!preambleFacts(own).cls;
+    const facts = preambleFacts(isMain ? own : f.preamble || "");
+    const folder = typeof f.folder === "string" ? f.folder : me.path.slice(0, Math.max(me.path.lastIndexOf("/"), 0));
+    return Object.assign(facts, { isMain: isMain, main: f.main || (isMain ? me.path : null), folder: folder,
+      engine: f.engine || (facts.ctex ? "xelatex" : "pdflatex") });
+  }
+
+  // 「插入」, the one primary button of an open picker (22.7).
+  function insertButton(run) { return mkButton(t("插入"), "btn btn-primary", run); }
+
+  function formatPanel(me) {
+    const box = mk("section", "latex-format"), strip = mk("div", "latex-tabs"), tabs = {};
+    const panes = { format: mk("div", "latex-tab-pane"), layout: mk("div", "latex-tab-pane hidden") };
+    strip.setAttribute("role", "tablist");
+    const pick = (key) => {
+      Object.keys(tabs).forEach((k) => {
+        tabs[k].setAttribute("aria-selected", String(k === key));
+        tabs[k].classList.toggle("is-on", k === key);
+        panes[k].classList.toggle("hidden", k !== key);
+      });
+      if (key === "layout" && ui.layout) drawLayout(me, true);   // 版式's rows are drawn while it is shown
+    };
+    [["format", t("格式")], ["layout", t("版式")]].forEach(([key, label]) => {
+      const b = mkButton(label, "latex-tab", () => pick(key));
+      b.setAttribute("role", "tab");
+      tabs[key] = b;
+      strip.appendChild(b);
+      panes[key].setAttribute("role", "tabpanel");
+    });
+    pick("format");
+
+    const ui = { box: box, tabs: tabs, panes: panes, pick: pick, controls: [], styles: {} };
+    const keep = (el) => { el.addEventListener("mousedown", (event) => event.preventDefault()); return el; };   // the selection stays
+    const tool = (label, run, key, aria) => {
+      const b = keep(mkButton(label, "btn btn-small latex-tool", run));
+      if (key) { b.append(" ", mk("span", "latex-key", key)); b.setAttribute("aria-keyshortcuts", aria); }
+      ui.controls.push(b);
+      return b;
+    };
+    const row = (...kids) => { const r = mk("div", "latex-format-row"); r.append(...kids); return r; };
+    const group = (title, ...rows) => { const g = mk("div", "latex-format-group"); g.append(mk("h4", "latex-format-title", title), ...rows); return g; };
+    const choice = (label, onChange) => {
+      const field = mk("label", "latex-format-field"), select = mk("select", "ws-input latex-format-select");
+      field.append(mk("span", "latex-format-label", label), select);
+      select.addEventListener("change", () => onChange(select.value));
+      ui.controls.push(select);
+      return { field: field, select: select };
+    };
+    const run = (make) => () => applyFormat(me, make);
+
+    ui.reason = mk("p", "node-sub latex-format-reason hidden");
+    ui.note = mk("p", "node-sub latex-format-note hidden");
+    ui.note.setAttribute("role", "status");
+    ui.styles.textbf = tool(t("加粗"), run((st) => styleSpec(st, "textbf")), "⌘B", "Meta+B");
+    ui.styles.textit = tool(t("斜体"), run((st) => styleSpec(st, "textit")), "⌘I", "Meta+I");
+    ui.styles.underline = tool(t("下划线"), run((st) => styleSpec(st, "underline", panelFacts(me))), "⌘U", "Meta+U");
+    ui.font = choice(t("字体"), (v) => applyFormat(me, (st) => fontSpec(st, v)));
+    ui.size = choice(t("字号"), (v) => applyFormat(me, (st) => sizeSpec(st, v)));
+    ui.heading = choice(t("级别"), (v) => applyFormat(me, (st) => headingSpec(st, v, panelFacts(me).chapters)));
+    ui.align = choice(t("对齐"), (v) => applyFormat(me, (st) => alignSpec(st, v)));
+    ui.align.select.replaceChildren(...[["", t("两端对齐")], ["flushleft", t("左对齐")], ["center", t("居中")], ["flushright", t("右对齐")]]
+      .map(([value, label]) => { const o = mk("option", null, label); o.value = value; return o; }));
+    ui.quote = tool(t("引文块"), run(quoteSpec));
+    ui.openers = {
+      image: tool(t("图片"), () => openPicker(me, "image")),
+      table: tool(t("表格"), () => openPicker(me, "table")),
+      cite: tool(t("文献引用"), () => openPicker(me, "cite")),
+      ref: tool(t("交叉引用"), () => openPicker(me, "ref")),
+      url: tool(t("网址"), () => openPicker(me, "url")),
+    };
+    Object.keys(ui.openers).forEach((k) => ui.openers[k].setAttribute("aria-expanded", "false"));
+    // 表格 (22.12 T): shown while the cursor is in a table's cell; each action one step of ⌘Z
+    const gridTool = (label, act) => tool(label, run((st) => gridSpec(st, act)));
+    ui.grid = { box: mk("div", "latex-format-group latex-grid-tools hidden"), header: gridTool(t("第一行是表头"), "header") };
+    ui.grid.header.setAttribute("aria-pressed", "false");
+    // a group named by its title (22.12 R); from a cell, Escape and then Tab reach it (Tab in a cell goes to the next cell)
+    const gridTitle = mk("h4", "latex-format-title", t("表格"));
+    gridTitle.setAttribute("id", "latex-grid-title");
+    ui.grid.box.setAttribute("role", "group");
+    ui.grid.box.setAttribute("aria-labelledby", "latex-grid-title");
+    ui.grid.box.append(gridTitle,
+      row(gridTool(t("在上方插入行"), "rowAbove"), gridTool(t("在下方插入行"), "rowBelow")),
+      row(gridTool(t("在左侧插入列"), "colLeft"), gridTool(t("在右侧插入列"), "colRight")),
+      row(gridTool(t("删除行"), "rowDelete"), gridTool(t("删除列"), "colDelete")), row(ui.grid.header));
+    ui.picker = mk("div", "latex-picker hidden");
+    // 22.1 (B1): 「显示代码」 heads the column, above the tabs; under it what the edit view says about where the cursor is
+    ui.code = mkButton(t("显示代码"), "latex-switch", () => toggleSource(me));
+    ui.code.setAttribute("aria-pressed", "false");
+    ui.code.addEventListener("mousedown", (event) => event.preventDefault());
+    ui.codeWhy = mk("p", "node-sub latex-code-why hidden");
+    ui.context = mk("div", "latex-context hidden");
+    ui.context.setAttribute("role", "status");
+    const head = mk("div", "latex-switch-row");
+    head.append(ui.code);
+    panes.format.append(ui.reason, ui.note, ui.grid.box,
+      group(t("文字"), row(ui.styles.textbf, ui.styles.textit, ui.styles.underline), row(ui.font.field, ui.size.field)),
+      group(t("章节标题"), row(ui.heading.field)),
+      group(t("段落"), row(ui.align.field, ui.quote)),
+      group(t("插入"), row(ui.openers.image, ui.openers.table, ui.openers.cite, tool(t("脚注"), () => { if (applyFormat(me, footnoteSpec)) focusNote(me); })),
+        row(ui.openers.ref, ui.openers.url, tool(t("分页"), run(pageBreakSpec)), tool(t("目录"), run(tocSpec))),
+        row(mk("span", "latex-format-label", t("公式")), tool(t("行内"), () => formulaTool(me, false)), tool(t("独立"), () => formulaTool(me, true))),
+        row(mk("span", "latex-format-label", t("列表")), tool(t("项目符号"), run((st) => listSpec(st, "itemize"))), tool(t("数字编号"), run((st) => listSpec(st, "enumerate"))))),
+      ui.picker);
+    box.append(head, ui.codeWhy, ui.context, strip, panes.format, panes.layout);
+    ui.layout = layoutPane(me, ui);   // 版式 (A2)
+    return ui;
+  }
+
+  // The choices of 字体, 字号 and 标题 for this document: 宋体, 黑体, 楷体 and 仿宋 where ctex is loaded (its commands),
+  // 衬线 for pdfLaTeX, 章 where the class has \chapter. Filled again only when what they depend on changed: the main
+  // file's facts, or the open file's preamble (typed into, a package added by a tool).
+  function fillFormatOptions(me) {
+    const ui = me.ui.format;
+    if (!ui || !me.view) return;
+    const value = me.view.state.field(wordField(me.CM).field, false), read = value ? value.read : null;
+    const key = JSON.stringify(me.format || null) + "\u0000" + (read && read.preamble ? me.view.state.doc.sliceString(0, read.preamble.to) : "");
+    if (key === ui.optionsFor && read) return;
+    ui.optionsFor = key;
+    const facts = panelFacts(me);
+    const fill = (select, list) => {
+      const was = select.value;
+      select.replaceChildren(...list.map(([value, label, off]) => { const o = mk("option", null, label); o.value = value; if (off) o.disabled = true; return o; }));
+      select.value = was;
+    };
+    fill(ui.font.select, [["", t("默认")]].concat(facts.ctex ? [["songti", t("宋体")], ["heiti", t("黑体")], ["kaishu", t("楷体")], ["fangsong", t("仿宋")]] : [],
+      [["textsf", t("无衬线")], ["texttt", t("等宽")]], facts.engine === "pdflatex" ? [["textrm", t("衬线")]] : []));
+    fill(ui.size.select, [["small", t("小")], ["", t("正常")], ["large", t("大")], ["Large", t("更大")]]);
+    fill(ui.heading.select, [["", t("正文段落")]].concat(facts.chapters ? [["chapter", t("章")]] : [],
+      [["section", t("节")], ["subsection", t("小节")], ["subsubsection", t("小小节")], ["other", t("其它标题"), true]]));
+  }
+
+  // Disabled, saying why, where the tools would not make sense: a read-only file, and 显示代码 (the code as written).
+  function formatOff(me) {
+    if (me.readOnly) return t("这个文件只能查看，不能改格式和版式。");
+    return codeShown(me) ? t("正在显示代码。关掉「显示代码」后可以用格式工具。") : "";
+  }
+  // 「显示代码」: pressed while the code shows; disabled and pressed, with why, for a file the edit view cannot show.
+  function drawSwitch(me) {
+    const ui = me.ui.format;
+    if (!ui || !ui.code) return;
+    const on = codeShown(me), why = me.forced || me.unsure || me.codeNote || "";
+    ui.code.setAttribute("aria-pressed", String(on));
+    ui.code.classList.toggle("is-on", on);
+    ui.code.disabled = !!me.forced || !!me.unsure;
+    ui.codeWhy.textContent = why;
+    ui.codeWhy.classList.toggle("hidden", !why);
+  }
+  // A sentence of the edit view's (a refusal of what was typed or deleted, where a tool put the cursor): quiet, under
+  // the switch, until the cursor moves on.
+  function sayEdit(me, text) {
+    me.said = text ? { text: text, at: me.view ? me.view.state.selection.main.head : 0 } : null;
+    drawContext(me);
+  }
+  // What the edit view's blocks do when clicked: the title block opens 版式's 文档信息, the 导言区 line 版式.
+  function hookEditView(me) {
+    const hooks = wordField(me.CM).hooks;
+    hooks.title = () => { if (ed !== me || !me.ui.format) return; me.ui.format.pick("layout"); const f = me.ui.format.layout.info && me.ui.format.layout.info.title; if (f && typeof f.focus === "function") f.focus(); };
+    hooks.preamble = () => { if (ed !== me || !me.ui.format) return; me.ui.format.pick("layout"); };
+    hooks.cites = me.cites || null;
+    // what the PDF prints (22.12 M): a chapter file is numbered from its main file's preamble and what the main file reads
+    // before it; a main file from its own text, with the project's own .sty and .cls it loads
+    const f = me.format;
+    hooks.doc = f ? { pre: typeof f.preamble === "string" && !f.cut ? f.preamble : null, local: f.local || null,
+      before: typeof f.before === "string" ? f.before : null } : null;
+  }
+  // \cite chips say author and year: the project's .bib entries are read once a file with a citation is open (a moment
+  // after it loads, so opening never waits), then the chips are drawn again.
+  function loadCites(me) {
+    if (me.readOnly || me.citesAsked || typeof setTimeout !== "function") return;
+    const text = me.view.state.doc.toString();
+    if (!/\\(?:cite|citep|citet|parencite|textcite|autocite)\b/.test(text)) return;
+    me.citesAsked = true;
+    setTimeout(async () => {
+      let data = null;
+      try { data = await apiGet("/api/latex/insert?what=bib&path=" + encodeURIComponent(me.path)); } catch (err) { return; }
+      if (ed !== me || !data || !Array.isArray(data.entries)) return;
+      const map = new Map();
+      data.entries.forEach((e) => {
+        if (!e || !e.key) return;
+        const authors = String(e.author || "").split(/\s+and\s+/i).map((a) => a.trim()).filter(Boolean);
+        const first = authors.length ? (authors[0].indexOf(",") >= 0 ? authors[0].split(",")[0] : authors[0].split(/\s+/).pop()).replace(/[{}]/g, "") : "";
+        const second = authors.length === 2 ? (authors[1].indexOf(",") >= 0 ? authors[1].split(",")[0] : authors[1].split(/\s+/).pop()).replace(/[{}]/g, "") : "";
+        const who = first ? (authors.length > 2 ? t("{author} 等", { author: first }) : second ? t("{a} 和 {b}", { a: first, b: second }) : first) : "";
+        const said = [who, e.year].filter(Boolean).join(" ");
+        if (said) map.set(e.key, said);
+      });
+      me.cites = map;
+      hookEditView(me);
+      if (!codeShown(me)) me.view.dispatch({ effects: wordField(me.CM).refresh.of(true) });
+    }, 0);
+  }
+  // Under the switch, in the edit view: where what the cursor is at (or has selected) is changed -- a table, a
+  // formula, anything shown as a chip: 「…要在「显示代码」里改」 with a link that turns the code on there; a footnote:
+  // its words, changed here; and a sentence the edit view said, until the cursor moves.
+  const CHANGED_IN_CODE = new Set(["table", "math", "unit", "verbatim", "verb", "url"]);
+  function changedInCode(kind) {   // looked up when said (13.6)
+    return kind === "table" ? t("表格内容要在「显示代码」里改。") : kind === "math" ? t("公式要在「显示代码」里改。") : t("这部分要在「显示代码」里改。");
+  }
+  function unitAt(me) {
+    const st = me.view.state, v = st.field(wordField(me.CM).field, false);
+    if (!v) return null;
+    const sel = st.selection.main, got = [];
+    v.atoms.between(sel.from, sel.to, (from, to, d) => {
+      const k = d.spec.kind;
+      if (!d.spec.atom || !(k === "footnote" || CHANGED_IN_CODE.has(k))) return;
+      if (sel.empty ? from === sel.head || to === sel.head : from <= sel.from && sel.to <= to || (sel.from <= from && to <= sel.to)) got.push({ from: from, to: to, kind: k });
+    });
+    return got.find((x) => x.to === sel.head) || got[0] || null;
+  }
+  function drawContext(me) {
+    const ui = me.ui.format;
+    if (!ui || !ui.context || !me.view) return;
+    const parts = [];
+    if (me.said && me.said.at !== me.view.state.selection.main.head) me.said = null;
+    if (me.said && me.said.text) parts.push(mk("p", "node-sub", me.said.text));
+    const u = codeShown(me) ? null : unitAt(me);
+    if (u && u.kind === "footnote") {
+      const kept = me.note && me.note.from === u.from && me.note.box &&
+        (typeof ui.context.contains === "function" ? ui.context.contains(me.note.box) : (ui.context.children || []).includes(me.note.box));
+      if (kept && !parts.length) return;   // being typed in: the same field stays
+      parts.push(noteEditor(me, u));
+    } else {
+      me.note = null;
+      if (u) {
+        const go = mkButton(t("在「显示代码」里改"), "ws-text-link", () => codeAt(me, u.from));
+        go.addEventListener("mousedown", (event) => event.preventDefault());
+        const p = mk("p", "node-sub latex-context-line");
+        p.append(mk("span", null, changedInCode(u.kind)), " ", go);
+        parts.push(p);
+      }
+    }
+    ui.context.replaceChildren(...parts);
+    ui.context.classList.toggle("hidden", !parts.length);
+  }
+  // A footnote's words, read and changed here when they are plain words (escaped as typing is; each change one step of
+  // ⌘Z with the others typed after it); a footnote holding LaTeX is changed in 显示代码.
+  function noteEditor(me, u) {
+    const value = me.view.state.field(wordField(me.CM).field), text = value.info.text;
+    const c = value.read.cmds.find((x) => x.from === u.from && x.name === "footnote"), a = c ? c.args.filter((x) => !x.opt).pop() : null;
+    const box = mk("div", "latex-note");
+    box.appendChild(mk("h4", "latex-format-title", t("脚注")));
+    const inner = a ? text.slice(a.from + 1, a.to - 1) : "", plain = a ? unescapeTex(inner) : null;
+    if (plain == null) {
+      const go = mkButton(t("在「显示代码」里改"), "ws-text-link", () => codeAt(me, u.from));
+      box.append(mk("p", "node-sub", t("这个脚注里有 LaTeX 命令，要在「显示代码」里改。")), go);
+      me.note = null;
+      return box;
+    }
+    const area = mk("textarea", "ws-input latex-note-text");
+    area.value = plain;
+    area.setAttribute("aria-label", t("脚注"));
+    area.addEventListener("input", () => {
+      const v2 = me.view.state.field(wordField(me.CM).field), c2 = v2.read.cmds.find((x) => x.from === u.from && x.name === "footnote");
+      const a2 = c2 ? c2.args.filter((x) => !x.opt).pop() : null;
+      if (!a2 || readOnlyNow(me)) return;
+      const ins = escapeTyped(area.value);
+      // the cursor stays beside the footnote, so this panel stays
+      me.view.dispatch({ changes: { from: a2.from + 1, to: a2.to - 1, insert: ins }, selection: { anchor: c2.to + ins.length - (a2.to - a2.from - 2) }, userEvent: "input.type.made" });
+    });
+    box.appendChild(area);
+    me.note = { from: u.from, box: box, area: area };
+    return box;
+  }
+  function readOnlyNow(me) { return !!me.readOnly || codeShown(me); }
+  // After 脚注 inserts one, its words are typed in the right column.
+  function focusNote(me) {
+    drawContext(me);
+    if (me.note && me.note.area && typeof me.note.area.focus === "function") me.note.area.focus();
+  }
+  // Words typed in a field of the right column, as LaTeX that prints them (one line).
+  function escapeTyped(s) { return String(s || "").replace(/\r\n?|\n/g, " ").replace(/[%$&#_{}~^\\<>|]/g, (c) => TYPE_ESCAPES[c]); }
+  // The words of LaTeX that holds only words and escapes, unescaped; null when it holds any other command or markup.
+  function unescapeTex(src) {
+    let s = String(src);
+    Object.keys(TYPE_ESCAPES).forEach((k) => { s = s.split(TYPE_ESCAPES[k]).join("\u0000" + k.charCodeAt(0) + "\u0000"); });
+    s = s.replace(/\\\^\{\}/g, "\u0000" + 94 + "\u0000").replace(/\\~\{\}/g, "\u0000" + 126 + "\u0000").replace(/~/g, "\u00a0");
+    if (/[\\{}$&#^_%]/.test(s)) return null;
+    return s.replace(/\u0000(\d+)\u0000/g, (m, n) => String.fromCharCode(Number(n))).replace(/\u00a0/g, " ");
+  }
+
+  // 版式 edits the preamble, so it works in 显示代码 too: off only in a file that cannot be changed.
+  function layoutOff(me) { return me.readOnly ? t("这个文件只能查看，不能改格式和版式。") : ""; }
+  function formatAvailability(me) {
+    const ui = me.ui.format;
+    if (!ui) return;
+    const why = formatOff(me);
+    ui.controls.forEach((c) => { c.disabled = !!why; });
+    ui.reason.textContent = why;
+    // a read-only file: the switch above already says it can only be viewed (one sentence, not two)
+    ui.reason.classList.toggle("hidden", !why || !!me.readOnly);
+    if (why) { closePicker(me); sayFormat(me, ""); }
+    drawFormatState(me);
+  }
+
+  // A sentence of the panel's: a refusal (quiet) or a line the main file needs (a warning, in ochre).
+  function sayFormat(me, text, warn) {
+    const note = me.ui.format && me.ui.format.note;
+    if (!note) return;
+    note.textContent = text || "";
+    note.className = "node-sub latex-format-note" + (warn ? " latex-export-warn" : "") + (text ? "" : " hidden");
+    me.formatSaid = text && me.view ? { doc: me.view.state.doc, head: me.view.state.selection.main.head } : null;
+    if (text) inSight(note);
+  }
+
+  // Runs a tool: its transaction goes through the editor's dispatch (so it is undone by ⌘Z, saved, mapped through the
+  // passages and filtered for line breaks like typing); a refusal is said in the panel. The editor regains focus.
+  // `layout`: a 版式 setting, which edits the preamble and works in 显示代码 too.
+  function applyFormat(me, make, layout) {
+    if (ed !== me || !me.view || (layout ? layoutOff(me) : formatOff(me))) return false;
+    if (me.view.composing) { sayFormat(me, t("输入法还在输入。先确认文字，再用这个工具。")); return false; }
+    const r = make(me.view.state);
+    // a tool gives the editor the focus back; 版式 and 文档信息 keep it in the column (Tab goes on to the next field)
+    const focus = () => { if (!layout && typeof me.view.focus === "function") me.view.focus(); };
+    if (!r) { drawFormatState(me); focus(); return false; }
+    if (r.refused) { sayFormat(me, r.refused); drawFormatState(me); return false; }
+    me.view.dispatch({ changes: r.changes, selection: r.selection, scrollIntoView: true, userEvent: "input.format" });
+    me.toolCaret = me.view.state.selection.main.head;   // where the tool put it, before the edit view moves it (公式)
+    // in the edit view a tool's cursor that lands in what is hidden (a footnote's braces) moves to its edge
+    if (!codeShown(me)) me.view.dispatch({ selection: me.view.state.selection });
+    sayFormat(me, r.note || "", !!r.note);
+    focus();
+    return true;
+  }
+  // 公式 (22.12) in the edit view: a formula is written in 显示代码 (22.1, B1), so the tool puts it there, the cursor
+  // in it; with words selected it asks for none (they would become its code).
+  function formulaTool(me, display) {
+    if (formatOff(me) || !me.view) return;
+    if (!me.view.state.selection.main.empty) { sayFormat(me, t("公式在「显示代码」里写：先不要选文字，再点「行内」或「独立」。")); return; }
+    if (!applyFormat(me, (st) => mathSpec(st, display))) return;
+    codeAt(me, me.toolCaret);
+    sayEdit(me, t("公式在「显示代码」里写；写好后关掉「显示代码」。"));
+  }
+
+  // ⌘B, ⌘I, ⌘U in the editor: the same as the buttons (they come before CodeMirror's own Mod-i and Mod-u).
+  function formatKeys(CM, me) {
+    const key = (name) => (view) => {
+      if (view.composing) return false;
+      if (formatOff(me)) return true;   // in 显示代码 or a read-only file they do nothing, not CodeMirror's own ⌘I / ⌘U (22.12)
+      applyFormat(me, (st) => styleSpec(st, name, panelFacts(me)));
+      return true;
+    };
+    return CM.keymap.of([{ key: "Mod-b", run: key("textbf") }, { key: "Mod-i", run: key("textit") }, { key: "Mod-u", run: key("underline") }]);
+  }
+
+  // The buttons' state where the cursor is (aria-pressed), the font, the size and the paragraph's level: drawn at the
+  // next frame after a change, so a key never waits for it.
+  function syncFormat(me) {
+    if (me.formatQueued) return;
+    me.formatQueued = true;
+    const later = () => { me.formatQueued = false; if (ed === me && me.view) drawFormatState(me); };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(later); else later();
+  }
+  function drawFormatState(me) {
+    const ui = me.ui.format;
+    if (!ui || !me.view) return;
+    // a sentence of the panel's goes once the text or the cursor moves on, as the edit view's own do (22.12 R)
+    const was = me.formatSaid;
+    if (was && (was.doc !== me.view.state.doc || was.head !== me.view.state.selection.main.head)) sayFormat(me, "");
+    fillFormatOptions(me);
+    const off = !!formatOff(me), value = me.view.state.field(wordField(me.CM).field, false);
+    const read = off ? null : value ? value.read : readLatex(me.view.state.doc.toString());
+    const st = off ? { pressed: {}, font: "", size: "", heading: "" } : formatState(me.view.state, read);
+    const para = off ? { align: "", quote: false } : paragraphState(me.view.state, read);
+    ui.align.select.value = para.align;
+    ui.quote.setAttribute("aria-pressed", String(para.quote));
+    ui.quote.classList.toggle("is-on", para.quote);
+    TEXT_STYLE_NAMES.forEach((name) => {
+      ui.styles[name].setAttribute("aria-pressed", String(!!st.pressed[name]));
+      ui.styles[name].classList.toggle("is-on", !!st.pressed[name]);
+    });
+    const offered = (select, value) => Array.from(select.options || select.children || []).some((o) => o.value === value && !o.disabled);
+    ui.font.select.value = offered(ui.font.select, st.font) ? st.font : "";
+    ui.size.select.value = offered(ui.size.select, st.size) ? st.size : "";
+    ui.heading.select.value = offered(ui.heading.select, st.heading || "") ? st.heading || "" : "other";
+    // 表格: while the cursor is in a cell of a table drawn as a grid
+    const cell = off || !value ? null : cellNear(value.info.text, value.read, me.view.state.selection.main.head);
+    ui.grid.box.classList.toggle("hidden", !cell);
+    if (cell) {
+      const head = gridHeader(value.info.text, cell.g);
+      ui.grid.header.setAttribute("aria-pressed", String(head));
+      ui.grid.header.classList.toggle("is-on", head);
+      // (a one-row table: pressed, it says why it cannot be -- DESIGN 22.12 T's sentence, never a silent gray button)
+      ui.grid.header.disabled = false;
+    }
+    drawContext(me);
+    drawLayout(me);
+  }
+
+  function closePicker(me) {
+    const ui = me.ui.format;
+    if (!ui) return;
+    me.picker = null;
+    me.pickerSeq = (me.pickerSeq || 0) + 1;
+    ui.picker.replaceChildren();
+    ui.picker.classList.add("hidden");
+    Object.keys(ui.openers).forEach((k) => ui.openers[k].setAttribute("aria-expanded", "false"));
+  }
+  // 图片, 表格, 文献引用, 交叉引用 or 网址 opens its picker in the panel (pressed again, it closes). The link panel closes: one primary at a time.
+  function openPicker(me, kind) {
+    const ui = me.ui.format;
+    if (!ui || formatOff(me)) return;
+    if (me.picker === kind) { closePicker(me); return; }
+    closePicker(me);
+    if (me.panel === "link") { me.panel = null; me.linkRange = null; renderSide(me); }
+    me.picker = kind;
+    ui.openers[kind].setAttribute("aria-expanded", "true");
+    ui.picker.classList.remove("hidden");
+    sayFormat(me, "");
+    inSight(ui.picker);
+    const seq = me.pickerSeq;
+    ({ image: imagePicker, table: tablePicker, cite: citePicker, ref: refPicker, url: urlPicker })[kind](me, ui.picker, () => ed === me && me.picker === kind && me.pickerSeq === seq);
+    if (kind === "image" || kind === "table") setTimeout(() => takenLabels(me), 0);
+  }
+  // The \label keys of the paper's other files (A2's labels read), so a new figure's or table's label is not one of them.
+  async function takenLabels(me) {
+    let data = null;
+    try { data = await apiGet("/api/latex/insert?what=labels&path=" + encodeURIComponent(me.path)); } catch (err) { return; }
+    if (ed === me && data && Array.isArray(data.labels)) me.takenLabels = data.labels.map((x) => x && x.key).filter(Boolean);
+  }
+  const fieldOf = (label, input) => { const f = mk("label", "latex-format-field"); f.append(mk("span", "latex-format-label", label), input); return f; };
+  function cancelLink(me) { return mkButton(t("取消"), "ws-text-link", () => { closePicker(me); if (me.view && typeof me.view.focus === "function") me.view.focus(); }); }
+  function textInput(label) { const i = mk("input", "ws-input"); i.type = "text"; i.setAttribute("aria-label", label); return i; }
+  function pickerActions(go, me) { const r = mk("div", "latex-format-row"); r.append(go, cancelLink(me)); return r; }
+  const folded = (s) => String(s || "").toLowerCase();
+
+  // 图片: the project's images (GET /api/latex/insert), a search, thumbnails where the asset route serves them, 图注
+  // and 宽度; the path is written as the export compiles it (`figurePath`), and graphicx is seen to (`needs`).
+  async function imagePicker(me, host, current) {
+    const search = textInput(t("搜索图片")), list = mk("div", "latex-images"), caption = textInput(t("图注")), said = mk("p", "node-sub hidden");
+    search.setAttribute("placeholder", t("搜索图片"));
+    const width = mk("select", "ws-input latex-format-select");
+    [["full", t("整栏")], ["half", t("半栏")]].forEach(([value, label]) => { const o = mk("option", null, label); o.value = value; width.appendChild(o); });
+    let chosen = null, images = [];
+    const go = insertButton(() => {
+      if (!chosen) return;
+      const facts = panelFacts(me);
+      const exists = (path) => images.some((x) => x.path === path);
+      if (applyFormat(me, (st) => figureSpec(st, { path: figurePath(chosen, facts.folder, facts.graphicspath, exists), file: chosen, caption: caption.value,
+        half: width.value === "half", graphicx: facts.graphicx, isMain: facts.isMain, main: facts.main, taken: me.takenLabels }))) closePicker(me);
+    });
+    go.disabled = true;
+    const form = [fieldOf(t("图注"), caption), fieldOf(t("宽度"), width)];
+    host.replaceChildren(mk("h4", "latex-format-title", t("插入图片")), search, list, said, ...form, pickerActions(go, me));
+    let more = false;
+    const show = () => {
+      const q = folded(search.value), all = images.filter((x) => folded(x.path).indexOf(q) >= 0), shown = all.slice(0, 60);
+      list.replaceChildren(...shown.map((x) => {
+        const b = mk("button", "latex-image");
+        b.type = "button";
+        b.setAttribute("aria-pressed", String(chosen === x.path));
+        if (x.thumb) {
+          const img = mk("img", "latex-thumb");
+          img.alt = ""; img.loading = "lazy";
+          img.src = (DRAWN.test(x.path) ? "/api/latex/thumb?path=" : "/api/workspace/asset?path=") + encodeURIComponent(x.path);
+          img.addEventListener("error", () => { if (img.remove) img.remove(); });
+          b.appendChild(img);
+        }
+        b.appendChild(mk("span", "latex-file-name", x.path));   // quiet sans words, as on the page (22.12 B2)
+        if (IMAGE_UNSAFE.test(x.path)) { b.disabled = true; b.appendChild(mk("span", "node-sub-inline", t("文件名里有 LaTeX 不能用的字符"))); }
+        b.addEventListener("click", () => {
+          chosen = x.path;
+          go.disabled = false;
+          said.textContent = /\.eps$/i.test(x.path) ? t(".eps 图片导出时可能排不出来，换成 .pdf 或 .png 更稳妥。") : "";
+          said.classList.toggle("hidden", !said.textContent);
+          show();
+        });
+        return b;
+      }));
+      if (!shown.length) list.appendChild(mk("p", "node-sub", t("没有找到这样的图片")));
+      // (the engine's list cut short: a search here only looks through what it sent -- 22.12 R)
+      else if (more) list.appendChild(mk("p", "node-sub", t("项目里的图片太多，这里没有全部列出；不在这里的图片可以在「显示代码」里写上路径插入。")));
+      else if (all.length > shown.length) list.appendChild(mk("p", "node-sub", t("只列出了一部分，请用搜索找其余的。")));
+    };
+    search.addEventListener("input", show);
+    list.replaceChildren(mk("p", "node-sub", t("载入中…")));
+    let data;
+    try { data = await apiGet("/api/latex/insert?what=images&path=" + encodeURIComponent(me.path)); } catch (err) {
+      if (current()) list.replaceChildren(mk("p", "notice-status err", t("没能列出项目里的图片")));
+      return;
+    }
+    if (!current()) return;
+    images = data.images || [];
+    more = !!data.more;
+    if (!images.length && more) { list.replaceChildren(mk("p", "node-sub", t("项目里的文件太多，没能列出图片。"))); return; }
+    if (!images.length) {
+      host.replaceChildren(mk("h4", "latex-format-title", t("插入图片")), mk("p", "node-sub", t("项目里还没有图片。把图片放进项目文件夹后，这里就能选。")), cancelLink(me));
+      return;
+    }
+    show();
+  }
+
+  // 表格: 行 and 列 (number fields, the keyboard's way) and a grid up to 8 by 8 that sets them, 第一行是表头, 表注.
+  function tablePicker(me, host) {
+    const number = (label, max) => { const i = mk("input", "ws-input latex-number"); i.type = "number"; i.min = "1"; i.max = String(max); i.value = "3"; i.setAttribute("aria-label", label); return i; };
+    const rows = number(t("行"), 20), cols = number(t("列"), 10), caption = textInput(t("表注"));
+    const header = mk("input");
+    header.type = "checkbox"; header.checked = true;
+    const headerField = mk("label", "latex-format-check");
+    headerField.append(header, " " + t("第一行是表头"));
+    const grid = mk("div", "latex-grid"), cells = [];
+    grid.setAttribute("aria-hidden", "true");
+    const light = (r, c) => cells.forEach((x) => x.el.classList.toggle("is-on", x.r <= r && x.c <= c));
+    for (let r = 1; r <= 8; r++) for (let c = 1; c <= 8; c++) {
+      const cell = mk("button", "latex-grid-cell");
+      cell.type = "button";
+      cell.setAttribute("tabindex", "-1");
+      cell.addEventListener("mouseenter", () => light(r, c));
+      cell.addEventListener("click", () => { rows.value = String(r); cols.value = String(c); light(r, c); });
+      cells.push({ el: cell, r: r, c: c });
+      grid.appendChild(cell);
+    }
+    grid.addEventListener("mouseleave", () => light(Number(rows.value) || 0, Number(cols.value) || 0));
+    [rows, cols].forEach((i) => i.addEventListener("input", () => light(Number(rows.value) || 0, Number(cols.value) || 0)));
+    light(3, 3);
+    const go = insertButton(() => {
+      const facts = panelFacts(me);
+      if (applyFormat(me, (st) => tableSpec(st, { rows: rows.value, cols: cols.value, header: header.checked, caption: caption.value,
+        booktabs: facts.booktabs, isMain: facts.isMain, taken: me.takenLabels }))) closePicker(me);   // in the edit view the cursor is beside it, and the column says where its cells are filled in
+    });
+    const size = mk("div", "latex-format-row");
+    size.append(fieldOf(t("行"), rows), fieldOf(t("列"), cols));
+    host.replaceChildren(mk("h4", "latex-format-title", t("插入表格")), size, grid, headerField, fieldOf(t("表注"), caption), pickerActions(go, me));
+  }
+
+  // 引用文献 (22.1's promise): a search over the project's .bib entries; the keys picked go in one \cite{…}.
+  async function citePicker(me, host, current) {
+    const search = textInput(t("搜索文献")), list = mk("div", "latex-bibs"), picked = mk("p", "node-sub hidden"), keys = [];
+    search.setAttribute("placeholder", t("搜索文献"));
+    let entries = [], entriesMore = false;
+    const go = insertButton(() => { if (keys.length && applyFormat(me, (st) => citeSpec(st, keys))) closePicker(me); });
+    go.disabled = true;
+    host.replaceChildren(mk("h4", "latex-format-title", t("插入文献引用")), search, list, picked, pickerActions(go, me));
+    const show = () => {
+      const q = folded(search.value);
+      const all = entries.filter((e) => [e.key, e.author, e.year, e.title].some((x) => folded(x).indexOf(q) >= 0)), shown = all.slice(0, 60);
+      list.replaceChildren(...shown.map((e) => {
+        const b = mk("button", "latex-bib");
+        b.type = "button";
+        b.setAttribute("aria-pressed", String(keys.includes(e.key)));
+        b.append(mk("span", "mono", e.key), mk("span", "node-sub-inline", [e.author, e.year].filter(Boolean).join(" ")));
+        if (e.title) b.appendChild(mk("span", "latex-bib-title", e.title));
+        b.addEventListener("click", () => {
+          const at = keys.indexOf(e.key);
+          if (at >= 0) keys.splice(at, 1); else keys.push(e.key);
+          go.disabled = !keys.length;
+          picked.textContent = keys.length ? t("已选：{keys}", { keys: keys.join(", ") }) : "";
+          picked.classList.toggle("hidden", !keys.length);
+          show();
+        });
+        return b;
+      }));
+      if (!shown.length) list.appendChild(mk("p", "node-sub", t("没有找到这样的文献")));
+      else if (entriesMore) list.appendChild(mk("p", "node-sub", t("项目里的文献太多，这里没有全部列出；不在这里的文献可以在「显示代码」里用它的键引用。")));
+      else if (all.length > shown.length) list.appendChild(mk("p", "node-sub", t("只列出了一部分，请用搜索找其余的。")));
+    };
+    search.addEventListener("input", show);
+    list.replaceChildren(mk("p", "node-sub", t("载入中…")));
+    let data;
+    try { data = await apiGet("/api/latex/insert?what=bib&path=" + encodeURIComponent(me.path)); } catch (err) {
+      if (current()) list.replaceChildren(mk("p", "notice-status err", t("没能读到项目里的文献")));
+      return;
+    }
+    if (!current()) return;
+    entries = data.entries || [];
+    entriesMore = !!data.more;
+    if (!entries.length) {
+      const words = (data.files || []).length ? t("项目的 .bib 文件里没有读到文献条目。") : t("项目里没有 .bib 文件，没有可以引用的文献。");
+      host.replaceChildren(mk("h4", "latex-format-title", t("插入文献引用")), mk("p", "node-sub", words), cancelLink(me));
+      return;
+    }
+    show();
+  }
+
+  // 文档信息 (22.12, B1): the main file's \title, \author and \date, read before written as every 版式 setting is: one
+  // of them written in a form this does not take (twice, in a macro or a condition, holding a command such as \thanks
+  // or \and) is the person's own, shown with its line and never written.
+  const INFO_KEYS = ["title", "author", "date"];
+  function docInfoOf(pre) {
+    const code = masked(pre), out = {}, found = { title: [], author: [], date: [] };
+    const lineOf = (pos) => pre.slice(0, pos).split("\n").length;
+    for (const c of scanCommands(code)) {
+      if (!Object.prototype.hasOwnProperty.call(found, c.name)) continue;
+      found[c.name].push({ c: c, a: readArgs(code, c.nameTo, "m"), line: lineOf(c.from), top: c.depth === 0 && c.cond === 0 });
+    }
+    INFO_KEYS.forEach((k) => {
+      const f = found[k], x = f[0];
+      if (!f.length) { out[k] = { value: k === "date" ? "today" : "", absent: true }; return; }
+      if (f.length > 1 || !x.a || !x.top || code[skipBlank(code, x.c.nameTo)] === "[") { out[k] = { mine: { line: x.line } }; return; }
+      const arg = x.a.args[0], inner = pre.slice(arg.inner[0], arg.inner[1]).trim();
+      if (k === "date" && /^\\today$/.test(inner)) { out[k] = { value: "today", arg: arg }; return; }
+      if (k === "date" && !inner) { out[k] = { value: "none", arg: arg }; return; }
+      const w = unescapeTex(inner);
+      out[k] = w == null ? { mine: { line: x.line } } : k === "date" ? { value: "custom", text: w, arg: arg } : { value: w, arg: arg };
+    });
+    return out;
+  }
+  // One of them written: {changes} for the editor's dispatch, null when it already is so, or {refused}. `value`: the
+  // words of the title or the author; for the date {kind: today | none | custom, text}.
+  function docInfoSpec(state, key, value) {
+    const text = state.doc.toString(), read = readLatex(text);
+    if (!read.preamble) return { refused: t("主文件里没有 {command}，版式还不能设置。", { command: "\\begin{document}" }) };
+    const pre = text.slice(0, read.preamble.to), all = docInfoOf(pre), info = all[key];
+    if (info.mine) return { refused: t("导言区第 {n} 行已有自己写的设置", { n: info.mine.line }) };
+    const arg = key === "date" ? (value.kind === "today" ? "\\today" : value.kind === "none" ? "" : escapeTyped(value.text)) : escapeTyped(value);
+    if (info.arg) {
+      if (pre.slice(info.arg.inner[0], info.arg.inner[1]) === arg) return null;
+      return { changes: state.changes({ from: info.arg.inner[0], to: info.arg.inner[1], insert: arg }) };
+    }
+    if (key === "date" && value.kind === "today") return null;   // no \date: LaTeX prints the day of the export
+    const r = readPreamble(pre);
+    if (!r.dc) return { refused: t("主文件里没有找到 {command}。", { command: "\\documentclass" }) };
+    const line = "\\" + key + "{" + arg + "}", there = INFO_KEYS.map((k) => all[k].arg).filter(Boolean).sort((a, b) => b.to - a.to)[0];
+    const spec = there ? { from: r.lineEnd(there.to), insert: "\n" + line } : newLines(r, [line], false);
+    return { changes: state.changes({ from: spec.from, to: spec.to == null ? spec.from : spec.to, insert: spec.insert.split("\n").join(state.lineBreak) }) };
+  }
+
+  // 版式 (22.12, A2): the document's settings, each a select showing what the main file's preamble says. In a chapter
+  // file they are shown and cannot be changed, with a link that opens the main file; a setting written in a form 版式
+  // does not take shows 「自定义」, cannot be changed, and says on which line (with a link that shows it).
+  function layoutChoices(key, layout) {
+    const ctex = !!(layout && (layout.ctexClass || layout.ctexPkg)), set = layout && !layout.why ? layout.settings : null;
+    switch (key) {
+      case "margin": return [unable("", t("默认"), set && set.margin.stays && set.margin.value ? t("geometry 还有别的设置") : null), ["2", t("窄（2 厘米）")], ["2.5", t("适中（2.5 厘米）")], ["3", t("宽（3 厘米）")], ["custom", t("自定义")]];
+      case "columns": return [["", t("单栏")], ["twocolumn", t("双栏")]];
+      case "pagestyle": return [["", t("默认")], ["plain", t("页脚居中")], ["empty", t("不显示")]];
+      case "hyperref": return [["off", t("关")], ["on", t("开")]];
+      case "size": return [["", t("默认")], ["10pt", "10pt"], ["11pt", "11pt"], ["12pt", "12pt"]].concat(ctex ? [["zihao=5", t("五号")], ["zihao=-4", t("小四")]] : []);
+      case "spacing": return [["", t("默认")], ["1", t("单倍")], ["1.25", t("1.25 倍")], ["1.5", t("1.5 倍")], ["2", t("双倍")], ["custom", t("自定义")]];
+      case "indent": return [["", t("默认")], ["0pt", t("无")], ["2em", t("2 字")]];
+      case "parskip": return [["", t("无")], ["half", t("半行")], ["one", t("一行")]];
+      // A3: a choice the document cannot take is shown, disabled, with why
+      case "secnum": return [["", "1 / 1.1 / 1.1.1"], unable("zh", t("一、（一）1."), set ? layout.zhNumbersWhy : null),
+        unable("none", t("不编号"), set && set.capnum.value === "within" && !set.capnum.mine && set.secnum.value !== "none" ? t("图表按章或节编号时不能选") : null)];
+      case "capname": return [unable("zh", t("图 / 表"), set && !layout.cjk ? t("中文图表名需要中文文档类") : null), ["en", "Figure / Table"]];
+      case "capnum": {
+        // in the document's own word (22.12 M, F4): 「连续编号（Figure 1）」 in an English paper, as its captions print
+        const fig = (set && !set.capname.mine ? set.capname.value : layout ? layout.capDefault : "zh") === "en" ? DOC_EN.figure : DOC_ZH[0];
+        const within = unable("within", t("按章或节编号（{fig} 2-3）", { fig: fig }), set && set.secnum.value === "none" && !set.secnum.mine && set.capnum.value !== "within" ? t("章节不编号时不能选") : null);
+        return layout && layout.chapters ? [["continuous", t("连续编号（{fig} 1）", { fig: fig })], ["", t("按章编号（{fig} 2.3）", { fig: fig })], within]
+          : [["", t("连续编号（{fig} 1）", { fig: fig })], within];
+      }
+      default: return [];
+    }
+  }
+  function unable(value, label, why) { return why ? [value, t("{choice}：{why}", { choice: label, why: why }), true] : [value, label]; }
+  function layoutLabel(key) {
+    return { secnum: t("章节编号"), capname: t("图表名称"), capnum: t("图表编号"), margin: t("页边距"), columns: t("分栏"), pagestyle: t("页码"), hyperref: t("超链接"), size: t("正文字号"),
+      spacing: t("行距"), indent: t("首行缩进"), parskip: t("段间距") }[key];
+  }
+
+  function layoutPane(me, ui) {
+    const L = { rows: {}, head: mk("div", "latex-layout-head hidden"), note: mk("p", "node-sub latex-format-note hidden") };
+    L.note.setAttribute("role", "status");
+    const number = (label, step, min, max) => { const i = mk("input", "ws-input latex-number"); i.type = "number"; i.step = step; i.min = min; i.max = max; i.setAttribute("aria-label", label); return i; };
+    const control = (key) => {
+      const field = mk("label", "latex-format-field"), select = mk("select", "ws-input latex-format-select");
+      field.append(mk("span", "latex-format-label", layoutLabel(key)), select);
+      select.addEventListener("change", () => chooseLayout(me, key, select.value));
+      const row = mk("div", "latex-layout-item"), extra = mk("div", "latex-format-row hidden"), note = mk("p", "node-sub latex-layout-note hidden");
+      row.append(field, extra, note);
+      L.rows[key] = { select: select, extra: extra, note: note, row: row, shape: "" };
+      return row;
+    };
+    const rows = {};
+    LAYOUT_KEYS_ORDER.forEach((k) => { rows[k] = control(k); });
+    // 自定义 页边距: 上, 下, 左, 右 in cm; 自定义 行距: the number of lines
+    L.margins = {};
+    [["top", t("上")], ["bottom", t("下")], ["left", t("左")], ["right", t("右")]].forEach(([k, label]) => {
+      const i = number(label, "0.1", "0", "10");
+      i.addEventListener("change", () => applyLayout(me, "margin", Object.assign({ preset: "custom" }, marginInputs(L))));
+      L.margins[k] = i;
+      L.rows.margin.extra.append(fieldOf(label, i));
+    });
+    L.rows.margin.extra.append(mk("span", "latex-format-label", t("厘米")));
+    L.stretch = number(t("行距"), "0.05", "0.5", "4");
+    L.stretch.addEventListener("change", () => applyLayout(me, "spacing", "custom", { n: Number(L.stretch.value) }));
+    L.rows.spacing.extra.append(L.stretch, mk("span", "latex-format-label", t("倍")));
+    const group = (title, keys) => { const g = mk("div", "latex-format-group"); g.append(mk("h4", "latex-format-title", title), ...keys.map((k) => rows[k])); return g; };
+    // 文档信息 (B1): 标题, 作者 and 日期, each written when changed (one step of ⌘Z)
+    const info = { title: textInput(t("标题")), author: textInput(t("作者")), date: mk("select", "ws-input latex-format-select"), dateText: textInput(t("日期")),
+      note: mk("p", "node-sub latex-layout-note hidden") };
+    info.date.setAttribute("aria-label", t("日期"));
+    info.date.replaceChildren(...[["today", t("今天")], ["none", t("不显示")], ["custom", t("自定义")]].map(([v, label]) => { const o = mk("option", null, label); o.value = v; return o; }));
+    info.title.addEventListener("change", () => applyInfo(me, "title", info.title.value));
+    info.author.addEventListener("change", () => applyInfo(me, "author", info.author.value));
+    info.date.addEventListener("change", () => {
+      if (info.date.value === "custom") { info.dateText.classList.remove("hidden"); if (info.dateText.value.trim()) applyInfo(me, "date", { kind: "custom", text: info.dateText.value }); return; }
+      applyInfo(me, "date", { kind: info.date.value });
+    });
+    info.dateText.addEventListener("change", () => applyInfo(me, "date", { kind: "custom", text: info.dateText.value }));
+    const infoGroup = mk("div", "latex-format-group");
+    infoGroup.append(mk("h4", "latex-format-title", t("文档信息")), fieldOf(t("标题"), info.title), fieldOf(t("作者"), info.author), fieldOf(t("日期"), info.date), info.dateText, info.note);
+    L.info = info;
+    ui.panes.layout.replaceChildren(L.head, L.note, infoGroup, group(t("页面"), ["margin", "columns", "pagestyle", "hyperref"]),
+      group(t("文字与段落"), ["size", "spacing", "indent", "parskip"]), group(t("章节与图表"), ["secnum", "capname", "capnum"]));
+    return L;
+  }
+  function marginInputs(L) { const v = {}; Object.keys(L.margins).forEach((k) => { v[k] = Number(L.margins[k].value); }); return v; }
+
+  // 文档信息 written as the editor's own transaction; a refusal said in the tab.
+  function applyInfo(me, key, value) {
+    const L = me.ui.format && me.ui.format.layout;
+    if (!L || !layoutState(me).writable) return;
+    let refused = null;
+    const done = applyFormat(me, (st) => { const r = docInfoSpec(st, key, value); if (r && r.refused) { refused = r.refused; return null; } return r; }, true);
+    L.note.textContent = refused || "";
+    L.note.classList.toggle("hidden", !refused);
+    if (!done) drawLayout(me, true);
+  }
+  // A select's choice: 自定义 shows its fields (written when one of them changes); any other is written at once.
+  function chooseLayout(me, key, v) {
+    me.layoutCustom = me.layoutCustom || {};
+    if ((key === "margin" || key === "spacing") && v === "custom") { me.layoutCustom[key] = true; drawLayout(me, true); return; }
+    if (key === "margin" || key === "spacing") me.layoutCustom[key] = false;
+    applyLayout(me, key, key === "margin" ? (v ? { preset: v } : null) : v);
+  }
+  // A setting written as the editor's own transaction (22.12's one rule), a refusal said in the tab.
+  function applyLayout(me, key, value, extra) {
+    const L = me.ui.format && me.ui.format.layout;
+    if (!L || !layoutState(me).writable) return;
+    let refused = null;
+    let said = null;
+    const done = applyFormat(me, (st) => {
+      const r = layoutSpec(st, key, value, Object.assign({ local: (me.format && me.format.local) || [] }, extra || {}));
+      if (r && r.refused) { refused = r.refused; return null; }
+      if (r && r.note) { said = r.note; delete r.note; }
+      return r;
+    }, true);
+    L.note.textContent = refused || said || "";
+    L.note.classList.toggle("hidden", !refused && !said);
+    if (!done) drawLayout(me, true);
+  }
+
+  // The page's first-line indent (22.12 B2), as the PDF has it: 版式's 首行缩进 (无 none, 2 字 2em), else the class's own
+  // (ctex 2em, the others 1.5em); the parskip package without its indent option sets none. After a heading only ctex
+  // and the indentfirst package indent. With no main file read, 1.5em and none after a heading.
+  function pageIndent(layout, pre) {
+    if (!layout) return { all: "1.5em", first: "0" };
+    const S = layout.settings && layout.settings.indent, code = (pre || "").split("\n").map(codePart).join("\n");
+    let all = layout.ctex ? "2em" : "1.5em";
+    if (S && !S.mine && S.value === "0pt") all = "0";
+    else if (S && !S.mine && S.value === "2em") all = "2em";
+    else if (S && S.mine) {
+      // the person's own: a plain length in em (or ctex's \ccwd) read as it is; the parskip package without indent none
+      const own = [...code.matchAll(/\\setlength\s*\{?\s*\\parindent\s*\}?\s*\{\s*(\d*\.?\d+)\s*(em|\\ccwd)\s*\}/g)].pop();
+      const pk = /\\usepackage\s*(?:\[([^\]]*)\])?\s*\{\s*parskip\s*\}/.exec(code);
+      if (pk && !/(?:^|,)\s*indent\s*(?:,|$)/.test(pk[1] || "")) all = "0";
+      else if (own) all = Number(own[1]) ? Math.min(Number(own[1]), 6) + "em" : "0";
+    }
+    const first = layout.ctex || /\\usepackage\s*(?:\[[^\]]*\])?\s*\{[^}]*\bindentfirst\b[^}]*\}/.test(code) ? all : "0";
+    return { all: all, first: first };
+  }
+
+  // 段间距 on the page: a line is 1.8em times 行距's stretch (the page's line height, 22.12 A2)
+  const PARSKIP_GAP = { half: "calc(0.9em * var(--latex-stretch, 1))", one: "calc(1.8em * var(--latex-stretch, 1))" };
+  // A hand-written 行距 and 段间距 (22.12 R: they were drawn as none): the last \renewcommand{\baselinestretch}{1.5} or
+  // \linespread{1.5}, as a number; the last \setlength{\parskip}{…} (or \parskip=…) of a plain length or a multiple of
+  // \baselineskip, its stretch left out, as lines of the page (the PDF's line is 1.2em of its body size, 10pt unless
+  // the class's option says 11pt or 12pt), at most three. Anything else: the page's own (none, a single line).
+  function ownStretch(code) {
+    const m = [...code.matchAll(/\\(?:renewcommand\s*\{?\s*\\baselinestretch\s*\}?\s*\{\s*(\d*\.?\d+)\s*\}|linespread\s*\{\s*(\d*\.?\d+)\s*\}|setstretch\s*\{\s*(\d*\.?\d+)\s*\})/g)].pop();
+    const v = m ? Number(m[1] || m[2] || m[3]) : 0;
+    return v > 0 ? Math.min(Math.max(v, 0.8), 2.5) : null;
+  }
+  function ownParskip(code) {
+    const m = [...code.matchAll(/\\(?:setlength\s*\{?\s*\\parskip\s*\}?\s*\{([^{}]*)\}|parskip\s*=?\s*([^\s\\%][^\n\\%]*))/g)].pop();
+    if (!m) return "0";
+    const v = (m[1] != null ? m[1] : m[2]).replace(/\s(?:plus|minus)\s[\s\S]*$/, "").trim();
+    const size = Number(((/\\documentclass\s*\[([^\]]*)\]/.exec(code) || [])[1] || "").match(/\b(1[012])pt\b/)?.[1] || 10);
+    let lines = null;
+    const x = /^(\d*\.?\d+)?\s*\\baselineskip$/.exec(v), d = /^(\d*\.?\d+)\s*(pt|bp|mm|cm|em|ex)$/.exec(v);
+    if (x) lines = x[1] == null ? 1 : Number(x[1]);
+    else if (d) lines = Number(d[1]) * { pt: 1, bp: 1.004, mm: 2.845, cm: 28.45, em: size, ex: size * 0.43 }[d[2]] / (1.2 * size);
+    if (!(lines > 0)) return "0";
+    return "calc(" + Math.round(Math.min(lines, 3) * 1.8 * 1000) / 1000 + "em * var(--latex-stretch, 1))";
+  }
+  // Where the settings come from: the open file's preamble when it is the main file, else the main file's (`format`).
+  function layoutState(me) {
+    const facts = panelFacts(me), off = layoutOff(me);
+    let pre = null, why = off || "";
+    if (why) return { facts: facts, pre: null, why: why, writable: false };
+    if (facts.isMain) {
+      const value = me.view.state.field(wordField(me.CM).field, false), read = value ? value.read : readLatex(me.view.state.doc.toString());
+      if (read.preamble) pre = me.view.state.doc.sliceString(0, read.preamble.to);
+      else if (!why) why = t("主文件里没有 {command}，版式还不能设置。", { command: "\\begin{document}" });
+    } else if (me.format && me.format.cut) why = t("主文件的导言区太长，版式读不全。");   // never defaults read from part of it
+    else if (me.format && typeof me.format.preamble === "string") pre = me.format.preamble;
+    else if (!why) why = t("没有找到主文件。版式在主文件的导言区里设置。");
+    return { facts: facts, pre: pre, why: why, writable: !why && facts.isMain && pre != null };
+  }
+
+  // Drawn with the panel's state (every change of the text or the cursor, at the next frame): the preamble is read
+  // again only when it or the main file's facts changed; the rows only while 版式 is shown.
+  function drawLayout(me, force) {
+    const L = me.ui.format && me.ui.format.layout;
+    if (!L || !me.view) return;
+    const st = layoutState(me), local = (me.format && me.format.local) || [];
+    if (L.formatRef !== me.format || !("cacheKey" in L)) { L.formatRef = me.format; L.cacheKey = undefined; }
+    const key = st.pre == null ? null : st.pre;
+    if (key !== L.cacheKey) { L.cacheKey = key; L.layout = key == null ? null : layoutOf(st.pre, local); force = true; }
+    const layout = L.layout, why = st.why || (layout && layout.why) || "";
+    // like Word (22.1, A2's C): the editor's lines follow 行距, roughly
+    const sp = layout && !layout.why ? layout.settings.spacing : null, code = st.pre ? masked(st.pre) : "";
+    const n = sp && !sp.mine && sp.n ? sp.n : sp && sp.mine ? ownStretch(code) || 1 : 1;
+    if (me.ui.box.style && typeof me.ui.box.style.setProperty === "function") {
+      me.ui.box.style.setProperty("--latex-stretch", String(Math.min(Math.max(n, 0.8), 2.5)));
+      // and its paragraphs' first lines follow 首行缩进 (22.12 B2)
+      const ind = pageIndent(layout && !layout.why ? layout : null, st.pre);
+      me.ui.box.style.setProperty("--latex-indent", ind.all);
+      me.ui.box.style.setProperty("--latex-indent-first", ind.first);
+      // and the space between paragraphs follows 段间距 (22.12 M, F5): none, half a line or a line of the page's own
+      const ps = layout && !layout.why ? layout.settings.parskip : null;
+      me.ui.box.style.setProperty("--latex-parskip", ps && !ps.mine ? PARSKIP_GAP[ps.value] || "0" : ps && ps.mine ? ownParskip(code) : "0");
+    }
+    if (me.ui.format.panes.layout.classList.contains("hidden") && !force) return;
+    const main = st.facts.main;
+    drawInfo(me, L, st, st.why);
+    // the head: why nothing can be set, or that a chapter's layout is its main file's
+    if (why) L.head.replaceChildren(mk("p", "node-sub", why));
+    else if (!st.facts.isMain) L.head.replaceChildren(mk("p", "node-sub", t("版式在主文件 {main} 里设置。", { main: main })),
+      mkButton(t("打开 {file}", { file: main }), "ws-text-link", () => open(main)));
+    L.head.classList.toggle("hidden", !why && st.facts.isMain);
+    LAYOUT_KEYS_ORDER.forEach((k) => {
+      const row = L.rows[k], S = layout && !layout.why ? layout.settings[k] : null, custom = me.layoutCustom && me.layoutCustom[k];
+      const choices = layoutChoices(k, layout).concat(S && S.mine ? [["mine", t("自己写的设置"), true]] : []);   // not 自定义, which is 版式's own fields
+      const shape = JSON.stringify(choices);
+      if (shape !== row.shape) {
+        row.shape = shape;
+        row.select.replaceChildren(...choices.map(([value, label, off]) => { const o = mk("option", null, label); o.value = value; if (off) o.disabled = true; return o; }));
+      }
+      row.select.value = !S ? choices[0][0] : S.mine ? "mine" : custom ? "custom" : S.value;
+      row.select.disabled = !S || !!why || !st.writable || !!S.mine;
+      // 自定义's fields: the margins or the stretch the file has, filled when they are first shown or the file changed
+      const open = !!S && !S.mine && (S.value === "custom" || !!custom);
+      if (open && (force || row.extra.classList.contains("hidden"))) {
+        if (k === "margin") Object.keys(L.margins).forEach((x) => { L.margins[x].value = S.value ? String(S[x]) : "2.5"; });
+        if (k === "spacing") L.stretch.value = String(S.n || 1);
+      }
+      row.extra.classList.toggle("hidden", !open);
+      (k === "margin" ? Object.values(L.margins) : k === "spacing" ? [L.stretch] : []).forEach((i) => { i.disabled = row.select.disabled; });
+      // a setting the person wrote: where, with a link that shows the line; 不编号's one consequence (A3)
+      const hint = k === "secnum" && S && !S.mine && S.value === "none" ? t("不编号时，交叉引用章节印不出编号。")
+        : k === "capnum" && S && !S.mine && S.value === "within" && !layout.chapters ? t("按节编号时，第一节之前的图表会印成 0-1。") : "";
+      if (S && S.mine) {
+        const said = S.mine.why || (S.mine.file ? t("{file} 第 {n} 行已有自己写的设置", { file: S.mine.file, n: S.mine.line }) : t("导言区第 {n} 行已有自己写的设置", { n: S.mine.line }));
+        const parts = [mk("span", null, said)];
+        if (!S.mine.file && S.mine.line) parts.push(" ", mkButton(t("看这一行"), "ws-text-link", () => (st.facts.isMain ? goToLine(me, S.mine.line) : openAt(main, S.mine.line))));
+        row.note.replaceChildren(...parts);
+      } else if (hint) row.note.replaceChildren(mk("span", null, hint));
+      else row.note.replaceChildren();
+      row.note.classList.toggle("hidden", !(S && S.mine) && !hint);
+    });
+  }
+
+  // 文档信息's fields from the preamble: never over what is being typed in one of them.
+  function drawInfo(me, L, st, why) {
+    const I = L.info;
+    if (!I) return;
+    const got = st.pre == null ? null : docInfoOf(st.pre), off = !!why || !st.writable;
+    const typing = (el) => typeof document !== "undefined" && document.activeElement === el;
+    const mine = [];
+    [["title", I.title], ["author", I.author]].forEach(([k, input]) => {
+      const x = got ? got[k] : null;
+      if (!typing(input)) input.value = x && !x.mine ? x.value : "";
+      input.disabled = off || !x || !!x.mine;
+      if (x && x.mine) mine.push(x.mine.line);
+    });
+    const d = got ? got.date : null;
+    I.date.value = d && !d.mine ? d.value : "today";
+    I.date.disabled = off || !d || !!d.mine;
+    if (d && d.mine) mine.push(d.mine.line);
+    if (!typing(I.dateText) && d && d.value === "custom") I.dateText.value = d.text;
+    I.dateText.classList.toggle("hidden", !(d && !d.mine && (d.value === "custom" || I.date.value === "custom")));
+    I.dateText.disabled = I.date.disabled;
+    if (mine.length) {
+      const n = Math.min(...mine), parts = [mk("span", null, t("导言区第 {n} 行已有自己写的设置", { n: n }))];
+      if (st.facts.isMain) parts.push(" ", mkButton(t("看这一行"), "ws-text-link", () => goToLine(me, n)));
+      I.note.replaceChildren(...parts);
+    } else I.note.replaceChildren();
+    I.note.classList.toggle("hidden", !mine.length);
+  }
+
+  // 交叉引用 (A2): the \label keys of the open file and of the other files of its paper (GET /api/latex/insert, what=labels),
+  // grouped as 图, 表, 公式, 节 and 其它 (13.4's word); the one picked goes in as \ref{…} (\eqref for a formula where amsmath is loaded).
+  const labelGroups = () => [["figure", t("图")], ["table", t("表")], ["equation", t("公式")], ["section", t("节")], ["other", t("其它")]];
+  async function refPicker(me, host, current) {
+    const search = textInput(t("搜索标签")), list = mk("div", "latex-bibs"), said = mk("p", "node-sub hidden");
+    search.setAttribute("placeholder", t("搜索标签"));
+    const own = labelsOf(me.view.state.doc.toString(), readLatex(me.view.state.doc.toString())).map((x) => Object.assign({ file: me.path }, x));
+    let labels = own, chosen = null;
+    const go = insertButton(() => {
+      if (!chosen) return;
+      if (applyFormat(me, (st) => refSpec(st, chosen.key, chosen.kind === "equation" && panelFacts(me).amsmath))) closePicker(me);
+    });
+    go.disabled = true;
+    host.replaceChildren(mk("h4", "latex-format-title", t("插入交叉引用")), search, list, said, pickerActions(go, me));
+    const show = () => {
+      const q = folded(search.value), shown = labels.filter((x) => folded(x.key).indexOf(q) >= 0 || folded(x.file).indexOf(q) >= 0);
+      const parts = [];
+      let cut = false;
+      labelGroups().forEach(([kind, word]) => {
+        const all = shown.filter((x) => x.kind === kind), of = all.slice(0, 60);
+        if (all.length > of.length) cut = true;
+        if (!of.length) return;
+        parts.push(mk("p", "latex-group", word));
+        of.forEach((x) => {
+          const b = mk("button", "latex-bib");
+          b.type = "button";
+          b.setAttribute("aria-pressed", String(chosen === x));
+          b.append(mk("span", "mono", x.key));
+          if (x.file !== me.path) b.append(mk("span", "node-sub-inline", t("在 {file}", { file: x.file })));
+          b.addEventListener("click", () => { chosen = x; go.disabled = false; show(); });
+          parts.push(b);
+        });
+      });
+      if (cut) parts.push(mk("p", "node-sub", t("只列出了一部分，请用搜索找其余的。")));
+      list.replaceChildren(...(parts.length ? parts : [mk("p", "node-sub", labels.length ? t("没有找到这样的标签") : t("还没有可以引用的图、表、公式或章节：加了标签的才能引用。"))]));
+    };
+    search.addEventListener("input", show);
+    show();
+    let data = null;
+    try { data = await apiGet("/api/latex/insert?what=labels&path=" + encodeURIComponent(me.path)); } catch (err) {
+      if (!current()) return;
+      said.textContent = t("没能读到主文件和其他章节里的标签");
+      said.classList.remove("hidden");
+      return;
+    }
+    if (!current()) return;
+    const seen = new Set(own.map((x) => x.key));
+    labels = own.concat((data.labels || []).filter((x) => x && x.key && !seen.has(x.key)));
+    show();
+  }
+
+  // 网址 (A2): an address typed (the selection, when it is one, filled in) goes in as \url{…}.
+  function urlPicker(me, host) {
+    const input = textInput(t("网址")), sel = me.view.state.selection.main, picked = me.view.state.doc.sliceString(sel.from, sel.to);
+    input.setAttribute("placeholder", "https://");
+    if (picked && picked.length <= 300 && !/\s/.test(picked)) input.value = picked;
+    const go = insertButton(() => {
+      const facts = panelFacts(me);
+      if (applyFormat(me, (st) => urlSpec(st, input.value, { url: facts.url, isMain: facts.isMain, main: facts.main }))) closePicker(me);
+    });
+    host.replaceChildren(mk("h4", "latex-format-title", t("插入网址")), fieldOf(t("网址"), input), pickerActions(go, me));
+  }
+
+  // What opens or is said in the right column is scrolled into its view (the column scrolls, never the page): the link
+  // panel and a picker open under the 格式 panel, a sentence above the tools pressed.
+  function inSight(el) {
+    if (el && typeof el.scrollIntoView === "function") requestFrame(() => el.scrollIntoView({ block: "nearest" }));
+  }
+  function requestFrame(f) { if (typeof requestAnimationFrame === "function") requestAnimationFrame(f); else f(); }
+  // The right column: 格式与插入 at the top, then what the column shows (the passages, a link or a passage's panel).
+  function fillSide(me, parts) { (me.ui.sideRest || me.ui.side).replaceChildren(...parts); }
 
   // -- export to PDF (22.4, B2b) ------------------------------------------------------------------------------------
 
@@ -1367,10 +6838,10 @@
     return ed === me && !me.busy && !dirty();
   }
 
+  // A line of the file (an export error's, 版式's 看这一行): lines are the code's, so 显示代码 is turned on first.
   function goToLine(me, n) {
     const doc = me.view.state.doc, line = doc.line(Math.min(Math.max(1, n), doc.lines));
-    me.view.dispatch({ selection: { anchor: line.from }, scrollIntoView: true });
-    if (typeof me.view.focus === "function") me.view.focus();
+    codeAt(me, line.from);
   }
   // An error's file:line: the open draft moves to the line; another file opens in the editor there.
   function openAt(path, n) { if (ed && ed.path === path && ed.view) goToLine(ed, n); else open(path, { line: n }); }
@@ -1709,6 +7180,16 @@
     renderSupported: renderSupported, paperCounts: paperCounts, refresh: refresh, exporter: exporter, loadDrafts: loadDrafts,
     _vendorScripts: VENDOR_SCRIPTS, _passages: () => (ed && ed.view ? passagesOf(ed) : null),
     _pure: Object.freeze({ cpLength: cpLength, serverEdits: serverEdits, breakFilter: breakFilter, includeMatches: includeMatches, positions: positions,
-      readLatex: readLatex, bodyStart: bodyStart, returnSpec: returnSpec, wordField: wordField, wordExtensions: wordExtensions, onReturn: onReturn, mathDOM: mathDOM }),
+      readLatex: readLatex, bodyStart: bodyStart, returnSpec: returnSpec, wordField: wordField, wordExtensions: wordExtensions, onReturn: onReturn, mathDOM: mathDOM,
+      preambleFacts: preambleFacts, figurePath: figurePath, escapeTex: escapeTex, crosses: crosses, styleSpec: styleSpec, fontSpec: fontSpec,
+      sizeSpec: sizeSpec, headingSpec: headingSpec, headingLevel: headingLevel, figureSpec: figureSpec, tableSpec: tableSpec, mathSpec: mathSpec,
+      listSpec: listSpec, footnoteSpec: footnoteSpec, citeSpec: citeSpec, formatState: formatState,
+      readPreamble: readPreamble, layoutOf: layoutOf, layoutSpec: layoutSpec, alignSpec: alignSpec, quoteSpec: quoteSpec,
+      paragraphState: paragraphState, pageBreakSpec: pageBreakSpec, tocSpec: tocSpec, refSpec: refSpec, urlSpec: urlSpec, labelsOf: labelsOf,
+      bodyWords: bodyWords, tabularGrid: tabularGrid, columnsOf: columnsOf, inlineInto: inlineInto, preambleWords: preambleWords,
+      unsureWhy: unsureWhy, enterSpec: enterSpec, backSpec: backSpec, plainOf: plainOf, numbersOf: numbersOf, plainWords: plainWords,
+      docInfoOf: docInfoOf, docInfoSpec: docInfoSpec, unescapeTex: unescapeTex, escapeTyped: escapeTyped,
+      quietLine: quietLine, paraReach: paraReach, pageIndent: pageIndent, historyOf: historyOf, heldIn: heldIn, newLabel: newLabel, passageField: passageField,
+      codeLook: codeLook, gridOf: gridOf, gridAt: gridAt, cellAt: cellAt, cellCaret: cellCaret, docFacts: docFacts, gridSpec: gridSpec, gridHeader: gridHeader, specItems: specItems, floatWord: floatWord }),
   });
 })();

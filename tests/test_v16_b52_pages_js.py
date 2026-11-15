@@ -38,7 +38,16 @@ def _source(name: str) -> str:
 #: A size in `em` or per cent is a fraction of the text around it, so it is read only where it is listed: these two are inline code set
 #: at 0.85 of the text it sits in (the markdown preview's, 0.9rem and more; the stopped note's, 1rem).
 _RELATIVE_SIZES_OK = {".ws-preview code": "inline code in the preview, 0.85 of text of at least 0.9rem",
-                      ".stopped-note code": "inline code in a note of 1rem text"}
+                      ".stopped-note code": "inline code in a note of 1rem text",
+                      # 22.12 B and B1: the paper's own text in the editor's page, sized as LaTeX sizes it, relative to its
+                      # 1rem body; none below 0.75 of it (12 px)
+                      ".latex-tt": "\\texttt in the page, 0.9 of the 1rem body",
+                      ".latex-s-small": "{\\small …} in the page, 0.9 of the body",
+                      ".latex-s-large": "{\\large …} in the page", ".latex-s-larger": "{\\Large …} in the page",
+                      ".latex-editor .cm-content.latex-word .cm-line.latex-abstract-line": "an abstract's lines, 0.94 of the body",
+                      ".latex-note-mark": "a footnote's number, 0.75 of the body",
+                      ".latex-editor .cm-content.latex-word .cm-line.latex-figure-line": "a figure's caption line, 0.9 of the body",
+                      ".latex-sup": "\\textsuperscript, 0.75 of the body", ".latex-sub": "\\textsubscript, 0.75 of the body"}
 
 
 def _styles() -> dict[str, str]:

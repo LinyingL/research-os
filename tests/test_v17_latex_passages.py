@@ -312,6 +312,7 @@ evidenceAnswer = () => EV;
 const view = () => viewsMade[viewsMade.length - 1];
 const linkHidden = () => byClass('latex-link-button').classList.contains('hidden');
 const side = () => byClass('latex-side');
+const rest = () => byClass('latex-side-rest');
 const texts = (el) => typeof el === 'string' ? [el] : [el.textContent].concat(...el.children.filter(Boolean).map(texts));
 const status = () => byClass('latex-act').children[0].textContent;
 const open = async (path, extra, at) => { L.open(path, at); await tick(); gets.shift().res(f(path, extra)); await tick(); await tick(); await tick(); };
@@ -332,7 +333,8 @@ for (const d of V.state.facet(real.EditorView.decorations)) {
   if (typeof d === 'function') continue;   // the include links' plugin, which needs a real view
   d.between(0, V.state.doc.length, (from, to, value) => {
     const w = value.spec.widget;
-    drawn.push(w ? {at: from, count: w.toDOM().textContent, cls: w.toDOM().className} : {from, to, cls: value.spec.class});
+    const got = w ? {at: from, count: w.toDOM().textContent, cls: w.toDOM().className} : {from, to, cls: value.spec.class};
+    if (/latex-(passage|count)/.test(got.cls || '')) drawn.push(got);   // the edit view's own pieces (B1: a line break shown as a space) aside
   });
 }
 out.drawn = drawn;
@@ -401,10 +403,11 @@ EV = {revision: 'r1', links: [link('pl-5', {pending: true}), link('pl-6', {quote
 await open('p.tex');
 const P = view(), marks = [];
 for (const d of P.state.facet(real.EditorView.decorations)) {
-  if (typeof d !== 'function') d.between(0, P.state.doc.length, (from, to, value) => { if (!value.spec.widget) marks.push([from, value.spec.class]); });
+  // the underlines only: the edit view's own line classes (B2: a paragraph's first line, latex-para) aside
+  if (typeof d !== 'function') d.between(0, P.state.doc.length, (from, to, value) => { if (!value.spec.widget && /latex-passage/.test(value.spec.class || '')) marks.push([from, value.spec.class]); });
 }
 out.pendingMarks = marks;
-out.pendingCounts = texts(side().children.find((c) => c.classList.contains('latex-counts'))).join('|');
+out.pendingCounts = texts(rest().children.find((c) => c.classList.contains('latex-counts'))).join('|');
 all.filter((e) => e.classList.contains('latex-waiting')).pop().fire('click'); await tick();
 out.pendingPanel = texts(side()).includes('待批准');
 const row4 = mk('div');
@@ -417,7 +420,7 @@ out.pendingPage = texts(page2.children[0]);
 // every link 待批准: the count line starts with its one label, no space before it
 EV = {revision: 'r1', links: [link('pl-5', {pending: true})]};
 await open('p.tex');
-const only = side().children.find((c) => c.classList.contains('latex-counts'));
+const only = rest().children.find((c) => c.classList.contains('latex-counts'));
 out.onlyPending = [only.textContent].concat(only.children.map((k) => typeof k === 'string' ? k : k.textContent));
 console.log(JSON.stringify(out));
 """
