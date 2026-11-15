@@ -339,7 +339,7 @@ def test_a_figure_is_its_files_and_its_editable_caption_and_a_bare_includegraphi
                         "hidden", "plot=latex-i", "hidden", "hidden"]       # the caption's words in between, editable
     assert f["two"][1] == ('span.latex-figure-part[span.latex-graphic[span.latex-graphic-name"a.png"],'
                            'span.latex-graphic[span.latex-graphic-name"b.pdf"],span.latex-caption-word"Figure 1: "]')
-    assert f["sub"] == ['div.latex-chip.latex-chip-unit.latex-chip-block"Figure: Sub"']   # subfigures: a chip with the caption's words (22.12 M: the article's word, no number)
+    assert f["sub"] == ['div.latex-chip.latex-chip-unit.latex-chip-block"Figure 1: Sub"']   # subfigures: a chip with the caption's words (22.12 R: and its number, as printed)
     assert f["none"] == ['div.latex-figure-preview[div.latex-graphic[span.latex-graphic-name"a.png"]]']   # no caption: one block
     g = look["graphic"]
     assert g["away"] == [['span.latex-graphic[span.latex-graphic-name"figs/a.png"]', False]]

@@ -256,7 +256,8 @@ def test_each_action_of_the_table_group_writes_its_exact_source_as_one_undo_step
     assert a["rowBelow"]["body"] == head + "A & B \\\\\n\\midrule\n1 & 2 \\\\\n& \\\\\n" + tail and a["rowBelow"]["at"] == [2, 0, False]
     assert a["colLeft"]["body"] == "\\begin{tabular}{lll}\n\\toprule\n& A & B \\\\\n\\midrule\n& 1 & 2 \\\\\n" + tail and a["colLeft"]["at"] == [1, 0, False]
     assert a["colRight"]["body"] == "\\begin{tabular}{lll}\n\\toprule\nA & & B \\\\\n\\midrule\n1 & & 2 \\\\\n" + tail and a["colRight"]["at"] == [1, 1, False]
-    assert a["rowDelete"]["body"] == head + "A & B \\\\\n\\midrule\n" + tail and a["rowDelete"]["at"] == [0, 0, False]
+    # the last row between \midrule and \bottomrule: the rule above it goes with it, so no double line prints (22.12 R)
+    assert a["rowDelete"]["body"] == head + "A & B \\\\\n" + tail and a["rowDelete"]["at"] == [0, 0, False]
     assert a["colDelete"]["body"] == "\\begin{tabular}{l}\n\\toprule\n B \\\\\n\\midrule\n 2 \\\\\n" + tail and a["colDelete"]["at"] == [1, 0, False]
     assert a["header"]["body"] == head + "A & B \\\\\n1 & 2 \\\\\n" + tail
     for name, x in a.items():

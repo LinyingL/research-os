@@ -7483,7 +7483,9 @@ nothing to type between, they are one). What each construct is shown as:
 - **headings**: the markup hidden (a short title `[…]` said after it in quiet words), the words editable in the
   heading's style, after the number the PDF prints -- 1 / 1.1, 一、（一）1., Chapter 1, 第一章, A after `\appendix` -- as
   版式's 章节编号 has it, shown and never text (*22.12 M, F6, found at acceptance 2026-11-14*; none where it is not
-  sure, never a wrong one);
+  sure, never a wrong one; *22.12 R*: none for a chapter of `\frontmatter` or `\backmatter`, the appendix package's
+  `appendices` as `\appendix`, `\setcounter` followed); words after a heading on its line are its first paragraph, on a
+  line of their own (`\paragraph` runs in);
 - **lists**: `\begin`/`\end` hidden, each `\item` a bullet, a number or a description's term; the items' words
   editable;
 - **quote, center, flushleft, flushright, abstract** and the other environments of running text: the markers hidden,
@@ -7491,7 +7493,8 @@ nothing to type between, they are one). What each construct is shown as:
   under its title);
 - **figures**: the images (21.5's thumbnails; a PDF's or an EPS's first page, *22.12 M, F9*) and the caption's label as
   the PDF prints it -- "Figure 1: ", 「图 1: 」, the document's word (*22.12 M, F4*) -- before the caption, whose words are editable; the rest
-  hidden and atomic. A figure the reader doubts (subfigures, no caption) is one unit, its caption's words in a chip;
+  hidden and atomic. A figure the reader doubts (subfigures, no caption) is one unit, its caption's words in a chip
+  (*R*: its own caption, not a subfigure's, with its number); a longtable a chip of its caption as printed, else its cells' words;
 - **tables** (*amended by T of 22.12, browser acceptance 2026-11-14: the researcher restricted only formulas to the code*):
   a table the grid reader is sure of is **filled in like Word** -- a grid whose cells are the text itself, each cell's
   words typed in place, the caption's words editable after its label as the PDF prints it ("Table 1: ", 「表 1: 」), the markup (`\begin`/`\end`, the column spec, `&`,
@@ -7504,7 +7507,8 @@ nothing to type between, they are one). What each construct is shown as:
   reaches the page's text), each **one atomic unit**; one KaTeX cannot typeset, or before KaTeX has loaded, a quiet
   「公式」 -- never the code. A click selects it, and the right column says 「公式要在「显示代码」里改。」 with the link;
 - `\cite` a chip with author and year from the project's `.bib`, else the key; `\ref` the number alone, as the PDF prints
-  it (*22.12 M, F4*: "Table~\ref{t}" reads "Table 1"), and its like (`\autoref`, `\cref` …) 「第 N 节」, 「图 N」, 「表 N」, where
+  it (*22.12 M, F4*: "Table~\ref{t}" reads "Table 1"), `\autoref` and `\cref` as hyperref and cleveref print them where
+  the document's language is English or ctex's ("Figure 1", "section 1", "fig. 1" -- *22.12 R*), else 「第 N 节」, 「图 N」, 「表 N」, where
   the number is known cheaply (a main file, or a chapter file from its place in the main file; 22.12 B1, M), else 「引用：key」; `\label` hidden; `\footnote` a small
   superscript number whose words are shown, and changed, in the right column; `\url` and `\href` a chip with the address
   or the link's words; `\maketitle` the title block; `\begin{document}` and `\end{document}` the quiet labels 「正文开始」
@@ -7515,13 +7519,17 @@ nothing to type between, they are one). What each construct is shown as:
 - **comments** are hidden entirely (a line or a paragraph of them leaves no trace) and never lost: only a deletion
   that spans them removes them;
 - **escapes and accents** (`\%`, `\&`, `~`, `\'e`, `\LaTeX{}` …) are their characters, each one unit; `\\` a line break;
+  TeX's own spacing (`\vskip 1em plus 2pt`, `\hskip`, `\kern1pt`, `\penalty10000`, `\hrule height 1pt`, `\parindent=0pt`)
+  hidden with its length (*22.12 R*); colour commands (`\rowcolor`, `\cellcolor`, `\color`) hidden with their arguments;
 - **anything the reader does not know** (an unknown command or environment, `\verb`, verbatim, tikz, a definition in
   the body): one atomic quiet chip, 「LaTeX 内容」 or, for a command whose arguments are plain words, those words read-only
   -- never the command's name. A researcher's words are never hidden without being shown somewhere: verbatim text is
   shown as it is, in its own quiet block;
 - **line structure**: a paragraph's single line breaks are spaces (none between two CJK characters); paragraphs are
-  TeX's own (*22.12 M, F7*): a blank line or `\par` ends one, text after a float in a paragraph goes on with it, text
-  after a float between paragraphs starts one. **Blank lines take no room** (*22.12 M, F5*): however many separate two
+  TeX's own (*22.12 M, F7*): a blank line or `\par` ends one (and, *R*, `\vskip`, `\vfill` and `\hrule`, as TeX ends it),
+  text after a float in a paragraph goes on with it, text after a float between paragraphs starts one; words after a
+  float's `\end` on its line are on a line of their own, never the caption's (*R*); `\noindent` on a line of its own, or
+  after `\par`, is the next words' (*R*). **Blank lines take no room** (*22.12 M, F5*): however many separate two
   paragraphs, the next starts on the next line, apart by what 段间距 says (none, half a line, a line); a third and more
   between are the empty paragraphs Return makes, a line each where the cursor stands; between two things that are not
   words (a float and `\end{document}`) they stay, a place to type after the float.
@@ -7529,7 +7537,8 @@ nothing to type between, they are one). What each construct is shown as:
 **Typing and pasting** are plain text and keep the source literal: `% $ & # _ { } ~ ^ \ < > |` are written escaped (`\%`, `\$`,
 `\&`, `\#`, `\_`, `\{`, `\}`, `\textasciitilde{}`, `\textasciicircum{}`, `\textbackslash{}`, and -- 22.12 B3, so they print as typed
 without the T1 font encoding -- `\textless{}`, `\textgreater{}`, `\textbar{}`); words typed at the edge of what is
-hidden go where the cursor shows them (after a bullet, inside the list, at the end of an environment's last line, before
+hidden go where the cursor shows them (between two pieces that draw something -- an escape's character, a formula, a chip
+-- or one and a style's edge, the place is one of its own, as between two characters: `\%Z$x$`, never `\%$x$Z` -- 22.12 R; after a bullet, inside the list, at the end of an environment's last line, before
 a hidden comment, never into one, never before `\documentclass`; on the empty line after a float, after a blank line
 written first, so they start a paragraph as the page shows -- *22.12 M, F7*); a letter -- any letter: XeLaTeX reads a CJK character as
 one -- never runs into a command's name, and a `[` or `*` typed after `\item`, `\\` or a `\begin{…}` never becomes their
@@ -7939,6 +7948,12 @@ emoji, arrow or glyph (⌘ beside 加粗, 斜体 and 下划线 is the key's own 
   highlight style are given to the editor only while 显示代码 shows the code, so no word of the edit view (a number, a
   bracket) is coloured as code. A heading's number (F6) is in the heading's face and size, a space after it but none after
   一、 or （一）; an empty paragraph line (F5) has the paragraph's indent; no new word, glyph or primary.
+- Found by the reviews (22.12 R): **the disabled 「显示代码」 switch looks disabled** -- gray words, no fill, a `--line`
+  edge, as the column's disabled buttons; still pressed, it says so in `aria-pressed` and the sentence under it. 导出 PDF,
+  disabled while an export runs, the same. A focused button of the column or the switch has a 1 px ink ring
+  (`--ink`, as the sidebar's), not the browser's blue. CodeMirror's red marks of invisible characters (a zero-width space,
+  a soft hyphen pasted from a PDF) are the code's: given with the code's colours, never in the edit view. *Not done:* the
+  text selection keeps CodeMirror's own tint (no token is named for it here; the researcher's pick).
 
 ### 22.8 Batches and acceptance
 
@@ -8704,7 +8719,8 @@ opens:*
   partial rule (`\cline`, `\cmidrule`), a column type not read here, more than 20
   columns or 200 rows, anything else in the float (`\resizebox`, a note), two
   captions, a tabular inside a float that is not alone on its lines. A tabular
-  in a float is drawn only as part of it.
+  in a float is drawn only as part of it. *(T, below: a table the grid reader is sure of is filled in like Word, its caption
+  after the label the PDF prints -- "Table 1: " (M); this read-only grid is what is left for the tables it is unsure of.)*
 - **Figures.** A `figure` float holding one to four `\includegraphics` (and
   only `\centering`, a size switch, one `\caption`, `\label`, comments; no
   environment inside) is its files -- each a line with the file's name and, for a
@@ -8790,6 +8806,8 @@ typeset in the edit view and changed only in the code. 22.1 states the rule; how
   (`1.2`); footnotes; and what each `\label` names (a float after its caption, a numbered heading). Anything after an
   `\input` or `\appendix`, a form not read here (titlesec, `\ctexset`, `secnumdepth`, `\numberwithin`), an equation, an
   enumerate item: unknown, said 「引用：key」, 「图：」, 「注」. A chapter file's numbers are its main file's: unknown there.
+  *(M and R, below: headings are numbered after `\appendix` too, a chapter file from its place in its main file, and
+  every float form, `\setcounter`, the matter commands and the appendix package are read as TeX reads them.)*
   A change that touches no command, no environment's `\begin` or `\end` and not the preamble, after which every command
   and environment reads as before, keeps the numbers it had (`numbersKept`: only where each figure, table and footnote
   starts has moved), so a key in a long paper does not count it again.
@@ -9019,7 +9037,8 @@ said nothing of tables -- the edit view is where a paper's words are written, an
   size and a quiet fill (`--paper-alt`). Rules as the PDF draws them: `\toprule`, `\bottomrule` heavy, `\midrule`,
   `\hline` light, above or below the row; a column rule where the spec has `|`. The caption's line is centred over (or
   under) the grid, its words after 「表 N：」 (`floatWord`, the one helper for the figure's 「图 N：」 too, so the document's
-  own words can be put there in one place). A formula, a style, a citation or an escape in a cell is drawn as in the text,
+  own words can be put there in one place) -- *M: the label the PDF prints, "Table 1: " or 「表 1: 」; 「表 N：」 only for a
+  file with no main file; R: none at all where the document's word is not known.* A formula, a style, a citation or an escape in a cell is drawn as in the text,
   the formula still one atomic unit. Whenever a change reaches a table it is drawn again whole.
 - **The cursor.** Every place it stops in a table is in a cell or the caption, or at the table's two edges, where typed
   words go to the caption (or first cell) and to the last cell; between a row's last cell and the next row's first the
@@ -9029,13 +9048,22 @@ said nothing of tables -- the edit view is where a paper's words are written, an
   last row, to the caption or the line beside the table): CodeMirror's own vertical motion does not follow a row laid out
   as a table, so the edit view moves by rows -- a long cell's wrapped lines are passed over. **Return** in a cell goes to
   the cell below, as a spreadsheet (in the last row it stays); ⇧Return there is refused (「表格的格子里不能换行。」: a line
-  break would end the row); Return at the very start of a table makes an empty paragraph above it, as Word does.
+  break would end the row), and at the table's first place (*R*); Return at the very start of a table makes an empty
+  paragraph above it, as Word does -- also the way to a paragraph between two tables on adjacent lines, where ↓ from the
+  first goes into the second, as Word does (*R*, kept). The hidden indent and rules before a row's first cell are that
+  cell's: a first cell emptied keeps the cursor in it (*R*). → from the last cell's end goes to the next line (the table's
+  end, drawn at the same place, is no stop of its own -- *R*). Tab in a cell is the table's: Escape and then Tab leave the
+  editor for the right column (CodeMirror's own), where 「表格」 is a group named by its title (`role="group"`, *R*).
 - **Typing and pasting** in a cell are plain text, escaped as anywhere (`& % $ # _ { } ~ ^ \ < > |`), a line break a
-  space; typed into an empty cell, the words are set apart from the `&` on each side (`a & b & c`). A paste holding tabs
+  space; typed into an empty cell, the words are set apart from the `&` on each side (`a & b & c`; after a rule's name on
+  the row's line, `{}` before a `[` or `*`, which the rule would read as its option -- *R*). A paste holding tabs
   or line breaks -- a spreadsheet's or a table's -- fills the cells from the cursor's, as a spreadsheet does: each line a
   row, each tab the next cell, each value in place of that cell's words; values past the last column go into the row's
-  last cell, a space between; rows past the last are added; one step of ⌘Z. Copying a table gives its words with a tab
-  between cells.
+  last cell, a space between; rows past the last are added; one step of ⌘Z. *R:* only a paste holding a tab, or one into
+  an empty cell or over a cell's words whole, is spread; lines pasted into a cell's words (a sentence copied from a PDF)
+  are that cell's words, a space for each line break; a spreadsheet's quoted value (`"multi\nline"`) is one cell,
+  unquoted. Tab selects a cell's words without the markup round them (`\textbf{…}`, `\cellcolor{…}`), so typing over them
+  keeps the cell's style, as Word does (*R*). Copying a table gives its words with a tab between cells.
 - **Deleting.** A selection inside one cell edits that cell. A selection over several cells clears the words it covers in
   each (each made whole as anywhere) and keeps every `&`, `\\`, rule and line; the line break beside the table is never
   deleted with text before or after it, so the table stays on lines of its own. A selection over the whole table deletes
@@ -9052,7 +9080,9 @@ said nothing of tables -- the edit view is where a paper's words are written, an
   column is an empty cell in every row and an `l` in the spec next to its neighbour, with `|` when every column is
   ruled; the researcher's letters for the other columns are kept, and deleting a column takes its letter (and its rule
   where every column is ruled). Refused, with a sentence: deleting the last row or column, a 21st column or a 201st row,
-  a header in a one-row table. The group goes with the edit view (显示代码 hides it); no primary (22.7).
+  a header in a one-row table (the button stays enabled so the sentence is said -- *R*). A row deleted between two rules
+  takes the rules under it (the last row, those above it), so no double line prints (*R*). A sentence of the column's goes
+  once the text or the cursor moves on (*R*). The group goes with the edit view (显示代码 hides it); no primary (22.7).
 - **Insert.** 表格 now leaves the cursor in the new table's first cell, so "Var" typed at once goes there.
 - **Measured** (`tests/test_v17_table_edit.py`, node on the vendored CodeMirror and KaTeX): seven tables (表格's own with and
   without booktabs and with one column, a hand-written one with `|l|c|r|`, `\hline` after `\\`, `\\[2pt]`, a comment
@@ -9185,6 +9215,108 @@ and by pdftotext).** F1 (tables filled in like Word) is T, above. The others, ea
   PDF's picture in the picker), `test_v9_language.py` (the ctex words allowed outside t()), `test_engine_session.py` (the
   GET audit's kind `draws` for the thumbnail route).
 - *Not done in M:* a babel language other than English shows the interface's words; `\autoref` and `\cref` keep the
-  interface's kind words; figures, tables and footnotes after `\appendix` are not numbered (headings are); `\part` shows
+  interface's kind words (*both done in R, below*); figures, tables and footnotes after `\appendix` are not numbered (headings are); `\part` shows
   no number; a chapter file brought in through another chapter file has no numbers; the place after a float before
   `\end{document}` is an empty line of the page.
+
+**What the reviews of T and M found (R; three adversarial reviews, 2026-11-14/15: tables and the text's integrity, the
+edit view against the PDF, behaviour and design).** Each finding was reproduced on the commit before R (node on the
+vendored CodeMirror and KaTeX, the engine's functions, latexmk and pdftotext, a real Chromium) and fixed with a test that
+failed before (`tests/test_v17_review_r.py`, 32 tests: all failed on the code before R). Tables:
+
+- **A first cell emptied** (high): Backspace after "x" in `    x & 1 & 2 \\` left the cursor in the hidden indent, and the
+  next Return broke the row over two lines (the table one unit again). The hidden indent and rules before a row's first
+  cell are now that cell's (`cellAt`), and a deletion in a table puts the cursor where its cell is drawn (`snapCell`):
+  Return goes to the cell below, ⇧Return is refused, Tab goes on; seen in Chromium too ("Qy" typed after Backspace and
+  Return, three rows kept).
+- **Lines pasted into a cell's words** (high) overwrote that cell and the one below. Only a paste holding a tab, or one
+  into an empty cell or over a cell's words whole, is spread; else its line breaks are spaces; a spreadsheet's quoted
+  value is one cell, unquoted (`tabRows`).
+- **Words typed between two drawn pieces** (high, in the edit view since B1): "%" then "Z" before a formula gave
+  `\%$x_1$Z`. Between two pieces that draw something (an escape's character, a formula, a chip, a footnote's number) or
+  one and a style's edge, the place is now one of its own (`slotBetween`, no bridge): `\%Z$x_1$`, `\%Z\textbf{Total}`.
+- **⇧Return at a table's first place** wrote a `\\` line; refused now. **"[" typed after a rule's name** (`\toprule&`)
+  wrote `\toprule [1]`, which stops pdfLaTeX; `{}` now (`padBefore`), compiled. **删除行 between two rules** left a double
+  line; the rules under the row go (above the last row). **→ from the last cell** stopped at the table's end drawn at the
+  same place; it goes to the next line now (a bridge). **Colours** (`\rowcolor`, `\cellcolor`, `\columncolor`) are hidden
+  with their arguments, and words are never typed before `\rowcolor`; Tab selects a cell's words without the markup round
+  them, so typing over them keeps `\textbf` or `\cellcolor`. **A longtable** is a chip of its caption as printed
+  ("Table 1: Long one"), else its cells' words.
+- *Kept, decided:* two tables on adjacent lines -- ↓ from the first goes into the second, and Return at the second's start
+  makes the paragraph between them, as Word does with a table after a table.
+- *Found by the edit view's own fuzz while R was made:* a deletion that left `\CJKunderline{a}{\heiti b}` read the group as
+  a second argument, both words a read-only chip; a wrapper now takes as many arguments as it has (the reader).
+
+The edit view against the PDF (each case compiled and read back, `test_r10_to_r15_…`):
+
+- **Front and back matter** (high): a chapter of `\frontmatter` or `\backmatter` is not numbered and steps nothing (book:
+  Preface, Chapter 1, 1.1, Figure 1.1, Afterword; ctexbook 第一章).
+- **Every float form** (high): a subfigure's `\caption` is its own (not the figure's); a longtable steps the table counter
+  at its start; sidewaysfigure, sidewaystable, wrapfigure, wraptable and `\captionof{figure|table}` step theirs; a
+  `\caption` in a float not read here makes the later numbers of both unknown. A float drawn as a chip says its own
+  caption (not a subfigure's) with its number; with two captions, the first, no number.
+- **Counters set by hand** (high): `\setcounter` and `\addtocounter` of a heading's, a float's or the footnote counter are
+  followed when the value is a number (in the body, the preamble, and what a main file reads before a chapter file);
+  another value, or `secnumdepth` in the body: unknown after it.
+- **The appendix package** (high): `appendices` numbers as `\appendix` does (A, A.1); with its `title` options the heading
+  numbers are unknown; after it, and after `subappendices`, all is unknown.
+- **`\iffalse` before a chapter file's `\input`** (medium-high): `text_before` gives none when what it gives holds a
+  conditional (the page's own `UNSURE_CMDS`): no numbers, never wrong ones.
+- **Footnotes** (medium-high): `\footnotemark` steps the counter; `\footnote[7]` prints 7 and steps nothing; a minipage's
+  footnote is its own (printed a, b): 「注」 and not counted.
+- **TeX's own spacing** (medium-high, a breach of 22.1): `\vskip 1em plus 2pt`, `\hskip`, `\kern1pt`, `\penalty10000`,
+  `\hrule height …` and a register set by hand (`\parindent=0pt`) are hidden with their lengths (`skipLen`); `\vskip`,
+  `\vfill` and `\hrule` end the paragraph as `\par` does (`VPAR`).
+- **Words after a heading on its line** (medium): drawn on a line of their own as its first paragraph (the heading's hidden
+  end draws the break, `ParW` first), the paragraph after them an ordinary one; `\paragraph` runs in.
+- **`\noindent` on a line of its own or after `\par`** (medium): the next words are not indented.
+- **Words after a float's `\end` on its line** (medium): a line of their own in the body's face and size, indented only
+  where TeX starts a paragraph there (`latex-after-float`), never in the caption's centred line.
+- **The document's names** (medium): `scheme=plain` is English; `\renewcommand*` is read; with babel a preamble
+  `\renewcommand` of a name counts only inside `\addto\captions…` or `\AtBeginDocument`; the caption package's
+  `labelsep` (period, colon, space, quad, endash), `labelformat=empty` and a type's `name=` are read, anything else it sets
+  unknown; a word not known (a German paper, `name=` with no type) draws no word and no number -- the caption's words alone,
+  no abstract heading -- never the interface's 图, 表 or 摘要; the ctex package leaves the class's "Chapter 1" (its 附录 A
+  for an appendix chapter); `\autoref` prints hyperref's English ("Figure 1", "section 1", "subsection 1.1", "Appendix A"
+  -- in a ctex document too, measured) and `\cref`/`\Cref` cleveref's, unknown with a babel language other than English.
+- **Hand-written 段间距 and 行距** (medium-low): `\setlength{\parskip}{…}` of a plain length or a multiple of
+  `\baselineskip` (its stretch left out) is drawn as lines of the page (1em of a 10pt body is 10/12 of a line), at most
+  three; `\renewcommand{\baselinestretch}{1.5}` (and `\linespread`, `\setstretch` written by hand) as the stretch.
+- **A figure that cannot be drawn** (medium-low): the converters together run at most 10 s, none after one ran out of
+  time; the failure is remembered (`<key>.fail`) until the file changes; the cache is pruned, oldest first, past 64 MB
+  or 4,000 files; the route lets the page keep a picture a minute (`private, max-age=60`).
+- **The picker's cap** (low): with more images than the engine lists, it says the list is cut and how to insert one not
+  listed (in 显示代码), since its search only looks through what was sent; the same for the bibliography.
+- **Build folders** (low): a document's PDF in `build/`, `out/`, `output/` or `_build/` beside it is no image. *Rejected:*
+  a literature PDF stays listed -- `\includegraphics` takes any PDF's page, and nothing cheap tells a figure from a paper
+  by its bytes; drawing one is bounded as above.
+
+Behaviour and design:
+
+- The disabled 显示代码 switch and 导出 PDF while it runs look disabled (22.7); CodeMirror's marks of invisible characters
+  are the code's; a figure's PDF page is drawn at the figure's 14rem (`span.latex-graphic`'s 4rem had won); a picture is
+  unseen until it loads; 第一行是表头 stays enabled in a one-row table so its sentence is said; a sentence of the column's
+  goes once the text or the cursor moves on; 「表格」 is `role="group"` named by its title, a focused button has an ink
+  ring. *Rejected:* the table picker's 8 by 8 grid is no tab stop and hidden from screen readers already (`tabindex=-1`,
+  `aria-hidden`; 行 and 列 are its keyboard's way).
+- **A wide table** (medium): a table whose longest words do not fit the measure is drawn compact (0.8rem, 12.8 px, less
+  padding), each column its longest word's share, and a cell breaks a word only when its column cannot hold it (it broke
+  anywhere). *Measured in Chromium:* a 7-column table at 900 px no longer breaks "0.007" over five lines or "R squared" one
+  letter a line, but at 376 px of text its longest words still break once or twice; at 1,280 px the rows are 48 and 90 px.
+  *Not done:* a table wider than the measure scrolling sideways in its own box -- each row is a line of the editor.
+- *Seen in a browser* (Chromium, the engine's own page on a scratch project and home, port 8823, 900 and 1,280 px): no
+  `cm-specialChar` in the edit view of a text holding U+200B and U+00AD; the figure's PDF page 157 by 222 px (max-height
+  224 px); "Head" then "Words on the heading's line." on the line under it; "Two after the skip." indented; "After the
+  figure on its line." on a line of its own, 16 px, left; the disabled switch gray (115, 111, 99) on no fill with a
+  `--line` edge; no sideways scroll.
+- **Typing** (three runs): see the commit's report; 22.1's 2 MB key and the cell keys as before R.
+- **Tests changed on purpose:** `test_v17_table_edit.py` (删除行 of the last row between `\midrule` and `\bottomrule` takes
+  the `\midrule`), `test_v17_page_look.py` (a figure with subfigures says its number), `test_v17_review_fixes.py` (the
+  engine's cut list says so), `test_v17_no_code_view.py` (its fuzz's bound on refusals: the stops between drawn pieces
+  changed the random sequence; on the same 2,383 edits the code before R refused exactly as many).
+- **Words** (13.4 rows): 项目里的图片太多，这里没有全部列出；不在这里的图片可以在「显示代码」里写上路径插入。 The project has too many
+  images to list them all here; insert one not listed by writing its path in “Show code”. 项目里的文献太多，这里没有全部列出；
+  不在这里的文献可以在「显示代码」里用它的键引用。 The project has too many references to list them all here; cite one not
+  listed by its key in “Show code”.
+- *Not done in R:* a table wider than the measure scrolling in its own box; the text selection's tint; figures, tables and
+  footnotes after `\appendix` stay unknown; `\part` shows no number.

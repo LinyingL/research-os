@@ -2207,6 +2207,8 @@
     "不编号时，交叉引用章节印不出编号。": "Without numbers, a cross-reference to a heading prints no number.",
     "按节编号时，第一节之前的图表会印成 0-1。": "Numbered by section, a figure or table before the first section prints as 0-1.",
     "只列出了一部分，请用搜索找其余的。": "Only some are listed; search to find the others.",
+    "项目里的图片太多，这里没有全部列出；不在这里的图片可以在「显示代码」里写上路径插入。": "The project has too many images to list them all here; insert one not listed by writing its path in “Show code”.",
+    "项目里的文献太多，这里没有全部列出；不在这里的文献可以在「显示代码」里用它的键引用。": "The project has too many references to list them all here; cite one not listed by its key in “Show code”.",
     "项目里的文件太多，没能列出图片。": "The project has too many files to list its images.",
     "还没有可以引用的图、表、公式或章节：加了标签的才能引用。": "There is no figure, table, formula or heading to refer to yet: only labelled ones can be referred to.",
     "自己写的设置": "Your own setting",

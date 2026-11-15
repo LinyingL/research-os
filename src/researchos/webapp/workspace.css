@@ -508,13 +508,21 @@ div.latex-graphic { display: flex; flex-direction: column; margin: .2rem 0; }
 .latex-graphic-name { font-family: var(--font-sans); font-size: .76rem; color: var(--gray); }   /* quiet words, never code (B2) */
 .latex-graphic-thumb { max-width: 100%; max-height: 14rem; object-fit: contain; background: var(--paper); border: 1px solid var(--line); }
 span.latex-graphic .latex-graphic-thumb { max-height: 4rem; }
+.latex-graphic-thumb.latex-thumb-loading { visibility: hidden; border-color: transparent; }
+/* a figure's own images (a PDF's first page too) are drawn at the figure's size, not the inline 4rem (22.12 R) */
+.latex-figure-part span.latex-graphic .latex-graphic-thumb { max-height: 14rem; }
 /* The edit view shows no LaTeX code (DESIGN.md 22.1, 22.12 B1; the researcher, 2026-11-14): 「显示代码」 heads the right
    column as a switch (aria-pressed), words with an ink edge when on, never a glyph; what is hidden is replaced by quiet
    words, chips and blocks in the palette's tokens. */
 .latex-switch-row { display: flex; align-items: center; gap: .5rem; }
 .latex-switch { font: inherit; font-size: .84rem; color: var(--ink-soft); background: var(--paper); border: 1px solid var(--line-strong); border-radius: 3px; padding: .15rem .6rem; cursor: pointer; }
 .latex-switch[aria-pressed="true"] { color: var(--ink); border-color: var(--ink); }
-.latex-switch:disabled { cursor: default; }
+/* disabled (a file the edit view cannot show): gray words on no fill, a faint edge -- as the right column's disabled
+   buttons (22.12 R); still pressed, it says so in aria-pressed and in the sentence under it */
+.latex-side .btn:focus-visible, .latex-switch:focus-visible { outline: 1px solid var(--ink); outline-offset: 1px; }
+/* 导出 PDF while an export runs: as the right column's disabled buttons, not the app's ink-soft on paper-alt (22.12 R) */
+.latex-tools .btn:disabled:not(.btn-primary) { color: var(--gray); background: transparent; border-color: var(--line); cursor: default; }
+.latex-switch:disabled, .latex-switch:disabled[aria-pressed="true"] { cursor: default; color: var(--gray); background: transparent; border-color: var(--line); }
 .latex-code-why, .latex-context p { margin: 0; }
 .latex-context { display: flex; flex-direction: column; gap: .3rem; width: 100%; }
 .latex-note { display: flex; flex-direction: column; gap: .3rem; width: 100%; }
@@ -557,6 +565,12 @@ span.latex-abstract-head { display: block; }
 .latex-editor .cm-content.latex-word .cm-line.latex-para, .latex-editor .cm-content.latex-word .cm-line.latex-para-first { padding-top: var(--latex-parskip, 0); }
 .latex-word .latex-parbreak-line { display: block; }
 .latex-word .latex-parbreak-indent { display: inline-block; width: var(--latex-indent, 1.5em); }
+.latex-word .latex-parbreak-first .latex-parbreak-indent { width: var(--latex-indent-first, 0); }
+/* 22.12 R: words after a figure's \end on its line -- not the centred caption line: a line of the body's own */
+.latex-word .latex-after-float { display: block; text-align: left; font-size: 1rem; color: var(--ink); }
+.latex-word .latex-after-float-para { text-indent: var(--latex-indent, 1.5em); }
+.latex-word .latex-after-float-first { text-indent: var(--latex-indent-first, 0); }
+.latex-word .latex-after-float * { text-indent: 0; }
 .latex-editor .cm-content.latex-word .latex-env-head, .latex-editor .cm-content.latex-word span.latex-abstract-head,
 .latex-editor .cm-content.latex-word span.latex-math-display { display: inline-block; width: 100%; vertical-align: top; }
 .latex-editor .cm-content.latex-word .latex-env-head { padding-top: .3rem; font-size: .84rem; color: var(--ink); }
@@ -580,6 +594,11 @@ span.latex-abstract-head { display: block; }
 .latex-editor .cm-content.latex-word .cm-line.latex-trow > br { display: none; }
 .latex-editor .cm-content.latex-word .cm-line.latex-trow > :not(.latex-cell) { position: absolute; }
 .latex-word .latex-cell { display: table-cell; box-sizing: border-box; height: 1.9em; padding: .15rem .6rem; vertical-align: top; text-align: left; }
+/* 22.12 R: a word or a number is never broken letter by letter in a cell (CodeMirror's wrapping breaks anywhere); a
+   table too wide for the page's measure is drawn compact */
+.latex-editor .cm-content.latex-word .latex-cell { overflow-wrap: break-word; word-break: normal; }
+.latex-editor .cm-content.latex-word .cm-line.latex-trow-compact { font-size: .8rem; }
+.latex-editor .cm-content.latex-word .cm-line.latex-trow-compact .latex-cell { padding: .15rem .2rem; }
 .latex-word .latex-cell.latex-col-c { text-align: center; } .latex-word .latex-cell.latex-col-r { text-align: right; }
 .latex-word .latex-cell-empty { background: var(--paper-alt); background-clip: content-box; }
 .latex-word .latex-cell-bl { border-left: 1px solid var(--line-strong); } .latex-word .latex-cell-br { border-right: 1px solid var(--line-strong); }

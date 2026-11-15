@@ -4331,7 +4331,8 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "image/png")
                 self.send_header("Content-Length", str(len(raw)))
                 self.send_header("X-Content-Type-Options", "nosniff")
-                self.send_header("Cache-Control", "no-store")
+                # kept a minute by the page (22.12 R): a figure is drawn again on every redraw and page open
+                self.send_header("Cache-Control", "private, max-age=60")
                 self.end_headers()
                 self.wfile.write(raw)
             elif path == "/api/workspace/exists":

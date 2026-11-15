@@ -386,7 +386,10 @@
         if (g > 0) { cmd.args.push({ from: at, to: g, opt: false }); argStarts.add(at); cmd.raw = g; at = g; }
       }
       if (role === "other") {   // a command it does not know: the groups right after it are its arguments
+        // (a wrapper's are counted: "\uline{a}{\heiti b}" is a wrapper and a group of its own, as TeX reads it)
+        const most = WRAPPERS.has(name) ? WRAPPERS.get(name)[1] : 9;
         while (cmd.args.length < 9 && (text[at] === "{" || text[at] === "[")) {
+          if (text[at] === "{" && cmd.args.filter((x) => !x.opt).length >= most) break;
           const g = skipGroup(text, at, false);
           if (g < 0) break;
           cmd.args.push({ from: at, to: g, opt: text[at] === "[" });
@@ -819,11 +822,16 @@
     const tail = codePart(text.slice(endLine, tab.endFrom));
     if (!rows.length || tail.slice(eatRules(tail, 0, acc)).trim()) return null;
     rows[rows.length - 1].below = acc.rule;
-    const widths = cols.map(() => 5);   // an empty column still a cell's width
-    rows.forEach((r) => r.cells.forEach((c, k) => { widths[k] = Math.min(30, Math.max(widths[k], shownWidth(text.slice(c[0], c[1])))); }));
+    const widths = cols.map(() => 5), words = cols.map(() => 2);   // an empty column still a cell's width
+    rows.forEach((r) => r.cells.forEach((c, k) => {
+      const src = text.slice(c[0], c[1]);
+      widths[k] = Math.min(30, Math.max(widths[k], shownWidth(src)));
+      // its longest word (a number, a Latin word; CJK breaks anywhere): a column is never drawn narrower than it if it can be
+      src.split(/\s+|~/).forEach((w) => { if (!CJK_ONE.test(w)) words[k] = Math.min(20, Math.max(words[k], shownWidth(w))); });
+    }));
     const items = specItems(specText);
     return { env: e, tab: tab, from: from, to: to, cols: cols, spec: spec, items: items, bars: items ? barsOf(items, cols.length) : null, rows: rows,
-      caption: caption, widths: widths, booktabs: /\\(?:toprule|midrule|bottomrule)(?![A-Za-z])/.test(bodyCode) };
+      caption: caption, widths: widths, words: words, booktabs: /\\(?:toprule|midrule|bottomrule)(?![A-Za-z])/.test(bodyCode) };
   }
   // The grid `pos` is in (a table float's, or a tabular's alone), or null.
   function gridAt(text, read, pos) {
@@ -851,8 +859,16 @@
       const row = g.rows[r];
       if (pos < row.from || pos > row.to) continue;
       for (let c = 0; c < row.cells.length; c++) if (row.cells[c][0] <= pos && pos <= row.cells[c][1]) return { g: g, r: r, c: c, cell: row.cells[c] };
+      // the hidden indent and rules before a row's first cell are that cell's (a first cell emptied leaves its space
+      // there: the cursor is never left outside every cell)
+      if (pos < row.lead) return { g: g, r: r, c: 0, cell: row.cells[0] };
     }
     return null;
+  }
+  // `pos` where it is drawn in a grid's cell: one in the hidden part before a row's first cell at that cell's place.
+  function snapCell(text, read, pos) {
+    const c = cellAt(text, read, pos);
+    return c && (pos < c.cell[0] || pos > c.cell[1]) ? cellCaret(text, c.cell) : pos;
   }
   // The cell the cursor at `pos` is in, or at the table's last place (the end of its last row's line: words typed there
   // go to its last cell) that last cell.
@@ -871,16 +887,32 @@
     return cell[0] + (s.trim() ? lead : Math.min(1, s.length));
   }
   // Tab's selection in a cell, as Word: its words selected, or the cursor in it when it is empty.
-  function cellSelection(text, cell) {
-    const s = text.slice(cell[0], cell[1]), a = cell[0] + (s.length - s.trimStart().length), b = cell[1] - (s.length - s.trimEnd().length);
+  // The markup the edit view hides at the words' edges (a style's \textbf{ and }, \cellcolor{red}) is left out of it, as
+  // Word keeps a cell's formatting when its words are typed over (`value`: the edit view's, when there is one).
+  function cellSelection(text, cell, value) {
+    const s = text.slice(cell[0], cell[1]);
+    let a = cell[0] + (s.length - s.trimStart().length), b = cell[1] - (s.length - s.trimEnd().length);
+    for (let n = 0; value && n < 20 && b > a; n++) {
+      let moved = false;
+      value.atoms.between(a, b, (f, t2, v) => {
+        if (!v.spec.atom || v.spec.widget || moved) return;
+        if (f === a && t2 < b) { a = t2; moved = true; } else if (t2 === b && f > a) { b = f; moved = true; }
+      });
+      while (b > a && (text[a] === " " || text[a] === "\t")) a += 1;
+      while (b > a && (text[b - 1] === " " || text[b - 1] === "\t")) b -= 1;
+      if (!moved) break;
+    }
     return b > a ? { anchor: a, head: b } : { anchor: cellCaret(text, cell) };
   }
   // The words before a figure's or a table's caption, one helper for both: as the PDF prints them (22.12 M, F4) --
   // "Figure 1: ", 「图 1: 」, the document's own name (`words`, numbersOf's) and the number where it is known; with no
   // document to read them from (a file with no main file), 「图 N：」 and 「表 N：」 in the interface's words (22.1).
+  // A document whose word or separator is not known here (a babel language, the caption package's own name or label):
+  // "" -- no word and no number, the caption's words alone (22.12 R), never the interface's.
   function floatWord(kind, n, words) {
-    const name = words ? words[kind === "table" ? "table" : "figure"] : null;
-    if (name) return name + (n ? " " + n : "") + (words.sep || ": ");
+    const k = kind === "table" ? "table" : "figure", name = words ? words[k] : null, sep = words ? words[k === "table" ? "sepTab" : "sepFig"] : null;
+    if (name && sep) return name + (n ? " " + n : "") + sep;
+    if (words) return "";
     if (kind === "table") return n ? t("表 {n}：", { n: n }) : t("表：");
     return n ? t("图 {n}：", { n: n }) : t("图：");
   }
@@ -988,8 +1020,10 @@
   function graphicDOM(path, tag) {
     const line = mk(tag, "latex-graphic"), src = assetOf(path);
     if (src) {
-      const img = mk("img", "latex-graphic-thumb");
+      // unseen until it has loaded (22.12 R: a framed 2-pixel dot while the engine drew a PDF's page)
+      const img = mk("img", "latex-graphic-thumb latex-thumb-loading");
       img.alt = ""; img.loading = "lazy"; img.src = src;
+      img.addEventListener("load", () => { if (img.classList) img.classList.remove("latex-thumb-loading"); });
       img.addEventListener("error", () => { if (img.remove) img.remove(); });
       line.appendChild(img);
     }
@@ -1005,7 +1039,7 @@
   // `word`: what stands before the caption, 「表 N：」 where the number is known (22.1), else 「表：」.
   function tableDOM(model, word) {
     const box = mk("div", "latex-table-preview"), table = mk("table", "latex-table"), body = mk("tbody");
-    if (model.caption != null) box.appendChild(captionDOM(word || t("表："), model.caption));
+    if (model.caption != null) box.appendChild(captionDOM(word != null ? word : t("表："), model.caption));
     const cols = model.grid.cols;
     model.grid.rows.forEach((r) => {
       const tr = mk("tr", [r.above ? "latex-rule-" + r.above : "", r.below ? "latex-rule-below-" + r.below : ""].filter(Boolean).join(" ") || null);
@@ -1023,7 +1057,7 @@
   function figureDOM(model, word) {
     const box = mk("div", "latex-figure-preview");
     model.paths.forEach((p) => box.appendChild(graphicDOM(p, "div")));
-    if (model.caption != null) box.appendChild(captionDOM(word || t("图："), model.caption));
+    if (model.caption != null) box.appendChild(captionDOM(word != null ? word : t("图："), model.caption));
     return box;
   }
   // \maketitle: the title large in the serif face, the author and the date under it. An empty \author{} is left out; a
@@ -1130,9 +1164,30 @@
     "rmfamily", "sffamily", "ttfamily", "songti", "heiti", "kaishu", "fangsong", "nobreak", "nolinebreak", "allowbreak", "frenchspacing",
     "sloppy", "fussy", "xspace", "unskip", "leavevmode", "hline", "toprule", "midrule", "bottomrule", "maketitle"]);
   // commands whose arguments are lengths, colours or styles, never words: hidden with them
-  const SILENT_ARGS = new Set(["vspace", "hspace", "addvspace", "vskip", "hskip", "color", "pagecolor", "thispagestyle", "pagenumbering",
+  const SILENT_ARGS = new Set(["vspace", "hspace", "addvspace", "vskip", "hskip", "color", "pagecolor", "rowcolor", "cellcolor", "columncolor", "arrayrulecolor", "thispagestyle", "pagenumbering",
     "linespread", "fontsize", "selectfont", "phantom", "hphantom", "vphantom", "enlargethispage", "setstretch"]);
   const BREAKS = new Set(["newline", "linebreak"]);
+  // TeX's own spacing, with the length it reads after it (22.12 R: "\vskip 1em" showed "1em"): \vskip 1em plus 2pt,
+  // \hskip, \kern1pt, \penalty10000, \hrule height 1pt, a register set by hand (\parindent=0pt) -- hidden whole, never
+  // words. Those that are vertical (\par, \vskip, \vfill, \hrule) end the paragraph, as TeX does in running text.
+  const DIMEN = String.raw`(?:[-+]\s*)*(?:(?:\d+(?:[.,]\d*)?|[.,]\d+)\s*(?:true\s*)?(?:pt|pc|in|bp|cm|mm|dd|cc|sp|em|ex|px|mu|fil{1,3})(?![A-Za-z])|(?:(?:\d+(?:[.,]\d*)?|[.,]\d+)\s*)?\\[A-Za-z@]+)`;
+  const GLUE = String.raw`\s*=?\s*` + DIMEN + String.raw`(?:\s*plus\s*` + DIMEN + String.raw`)?(?:\s*minus\s*` + DIMEN + ")?";
+  const RULE_SPEC = String.raw`(?:\s*(?:height|width|depth)\s*` + DIMEN + ")*";
+  const TEX_SKIPS = { par: "", vskip: GLUE, hskip: GLUE, kern: String.raw`\s*=?\s*` + DIMEN, penalty: String.raw`\s*=?\s*-?\s*\d+`, hrule: RULE_SPEC,
+    vrule: RULE_SPEC, vfill: "", vfil: "", vfilneg: "", vss: "", hfil: "", hfilneg: "", hss: "" };
+  const REGISTERS = new Set(["parindent", "parskip", "baselineskip", "lineskip", "lineskiplimit", "leftskip", "rightskip", "parfillskip",
+    "emergencystretch", "tolerance", "pretolerance", "hfuzz", "vfuzz", "hbadness", "vbadness", "clubpenalty", "widowpenalty"]);
+  const VERTICAL = new Set(["par", "vskip", "vfill", "vfil", "vfilneg", "vss", "hrule"]);
+  const skipRes = new Map();
+  // How much after a spacing command's name is its length (0: none), or -1 when `name` is none or reads none here.
+  function skipLen(name, rest) {
+    const own = Object.prototype.hasOwnProperty.call(TEX_SKIPS, name) ? TEX_SKIPS[name] : REGISTERS.has(name) ? String.raw`\s*=?\s*(?:` + DIMEN + String.raw`|-?\d+)` : null;
+    if (own == null) return -1;
+    if (!own) return /^[A-Za-z@]/.test(rest) ? -1 : 0;
+    if (!skipRes.has(name)) skipRes.set(name, new RegExp("^(?![A-Za-z@])(?:" + own + ")"));
+    const m = skipRes.get(name).exec(rest.slice(0, 200));
+    return m && m[0].length ? m[0].length : REGISTERS.has(name) || /^[A-Za-z@]/.test(rest) ? -1 : 0;
+  }
   // definitions in the body: one chip, their whole extent read by shape (n: \cs or {…}; c: \cs; o: an optional […]; b:
   // {…}; p: a parameter text up to "{"; e: an optional "=" and a \cs or a character)
   const DEFINITIONS = new Map([["newcommand", "noob"], ["renewcommand", "noob"], ["providecommand", "noob"], ["DeclareRobustCommand", "noob"],
@@ -1170,6 +1225,16 @@
   const TYPE_ESCAPES = { "%": "\\%", "$": "\\$", "&": "\\&", "#": "\\#", "_": "\\_", "{": "\\{", "}": "\\}",
     "~": "\\textasciitilde{}", "^": "\\textasciicircum{}", "\\": "\\textbackslash{}", "<": "\\textless{}", ">": "\\textgreater{}", "|": "\\textbar{}" };
 
+  // Pieces of the edit view that draw something in the line (an escape's character, a formula, a chip, a footnote's
+  // number): between two of them, or between one and a style's edge, is a place where words go, as between two
+  // characters -- typed there, they stay there (never past the next piece, never into the style). Only pieces that draw
+  // nothing are one with what they touch.
+  const DRAWN_KINDS = new Set(["text", "math", "cite", "ref", "url", "footnote", "unit", "graphic", "verb", "space"]);
+  function drawnPiece(p) { return !!p.widget && !p.block && DRAWN_KINDS.has(p.kind); }
+  function slotBetween(a, b) {
+    const da = a.drawn != null ? a.drawn : drawnPiece(a), db = b.drawn != null ? b.drawn : drawnPiece(b);
+    return (da && (db || b.kind === "open")) || (db && a.kind === "close");
+  }
   // Where an environment's \begin ends with the options it takes ([…], {…}): ENV_ARGS, or a theorem's [title].
   function envArgsEnd(text, e) {
     let end = e.beginTo;
@@ -1267,8 +1332,15 @@
     if (factsKept && factsKept.pre === pre && factsKept.local === local) return factsKept.facts;
     const code = masked(pre), f = preambleFacts(pre), L = layoutOf(pre, local || []);
     const S = L.settings || {};
+    // ctex's words and heading style: a ctex class, or the ctex package (its words; its headings only with heading=true);
+    // none with scheme=plain (measured: ctexart with scheme=plain prints Figure 1 and Abstract, report with the ctex
+    // package Chapter 1 and 图 1.1)
+    const ctexClass = !!f.cls && /^ctex/.test(f.cls), clsOpts = (/\\documentclass\s*\[([^\]]*)\]/.exec(code) || [])[1] || "";
+    const pkgOpts = (/\\usepackage\s*\[([^\]]*)\]\s*\{[^}]*\bctex\b[^}]*\}/.exec(code) || [])[1] || "";
+    const ctex = f.ctex && !/(?:^|,)\s*scheme\s*=\s*plain\s*(?:,|$)/.test(ctexClass ? clsOpts : pkgOpts);
+    const ctexHeads = ctex && (ctexClass || /(?:^|,)\s*heading\s*(?:=\s*true\s*)?(?:,|$)/.test(pkgOpts));
     // the language: babel's last option or polyglossia's main language
-    let lang = f.ctex ? "zh" : "en";
+    let lang = ctex ? "zh" : "en";
     const babel = /\\usepackage\s*(?:\[([^\]]*)\])?\s*\{[^}]*\b(babel|polyglossia)\b[^}]*\}/.exec(code);
     if (babel) {
       const main = babel[2] === "babel" ? (babel[1] || "").split(",").map((x) => x.trim()).filter((x) => x && !/=/.test(x)).pop()
@@ -1277,20 +1349,56 @@
     }
     const words = {};
     Object.keys(DOC_NAMES).forEach((k) => { words[k] = lang === "zh" ? DOC_ZH_WORDS[k] : lang === "en" ? DOC_EN[k] : null; });
+    if (lang === "zh" && !ctexHeads) words.chapter = DOC_EN.chapter;   // the ctex package leaves the class's chapter heading
+    // babel and polyglossia set the names again at \begin{document}: a name set in the preamble counts only inside
+    // \addto\captions…{…} or \AtBeginDocument{…}
+    const kept = [];
+    if (babel) for (const m of code.matchAll(/\\(?:addto|appto|gappto)\s*\\captions[A-Za-z]+\s*\{|\\AtBeginDocument\s*\{/g)) {
+      const g = skipGroup(code, m.index + m[0].length - 1, false);
+      if (g > 0) kept.push([m.index, g]);
+    }
     // a name the preamble sets, as it sets it (only plain words; anything else unknown)
     Object.keys(DOC_NAMES).forEach((k) => {
       const name = DOC_NAMES[k];
-      const re = new RegExp("\\\\(?:renewcommand|def)\\s*\\{?\\s*\\\\" + name + "(?![A-Za-z@])\\s*\\}?\\s*\\{([^{}]*)\\}|\\b" + name + "\\s*=\\s*(?:\\{([^{}]*)\\}|([^,{}\\]]*))", "g");
+      const re = new RegExp("\\\\(?:renewcommand|def)\\s*\\*?\\s*\\{?\\s*\\\\" + name + "(?![A-Za-z@])\\s*\\}?\\s*\\{([^{}]*)\\}|\\b" + name + "\\s*=\\s*(?:\\{([^{}]*)\\}|([^,{}\\]]*))", "g");
       let m = null;
-      for (let x = re.exec(code); x; x = re.exec(code)) m = x;
+      for (let x = re.exec(code); x; x = re.exec(code)) if (!babel || x[1] == null || kept.some((r) => r[0] < x.index && x.index < r[1])) m = x;
       if (m) { const v = m[1] != null ? m[1] : m[2] != null ? m[2] : m[3]; words[k] = plainWords(v) || null; }
     });
-    // the caption package's own names: unknown
-    if (/\\(?:captionsetup|usepackage)\s*(?:\[[^\]]*\b(?:name|figurename|tablename)\s*=[^\]]*\])/.test(code) || /\\captionsetup\s*(?:\[[^\]]*\])?\s*\{[^}]*\bname\s*=/.test(code)) { words.figure = null; words.table = null; }
+    // the caption package (its options and \captionsetup, for both kinds or one): a name= as it is set, the separator
+    // after the number by labelsep, no label at all with labelformat=empty; anything else it changes unknown
+    const base = /^ams/.test(f.cls || "") ? ". " : ": ";
+    words.sepFig = base; words.sepTab = base;
+    const setups = [];
+    const capPkg = /\\usepackage\s*\[([^\]]*)\]\s*\{[^}]*\bcaption\b[^}]*\}/.exec(code);
+    if (capPkg) setups.push([null, capPkg[1]]);
+    for (const m of code.matchAll(/\\captionsetup\s*(?:\[([^\]]*)\])?\s*\{/g)) {
+      const open = m.index + m[0].length - 1, g = skipGroup(code, open, false);
+      setups.push([m[1] ? m[1].trim() : null, g > 0 ? code.slice(open + 1, g - 1) : "\u0000"]);
+    }
+    const SEPS = { colon: ": ", period: ". ", space: " ", quad: " ", endash: " – " };
+    for (const [type, opts] of setups) {
+      const kinds = type === "figure" ? ["figure"] : type === "table" ? ["table"] : type ? [] : ["figure", "table"];
+      for (const raw of opts.split(",")) {
+        const o = /^\s*([A-Za-z]+)\s*(?:=\s*\{?([^{}]*?)\}?\s*)?$/.exec(raw);
+        if (!o || !raw.trim()) { if (raw.trim()) kinds.forEach((k) => { words[k] = null; }); continue; }
+        const key = o[1], v = o[2] == null ? "" : o[2].trim();
+        if (key === "name") kinds.forEach((k) => { words[k] = type ? plainWords(v) || null : null; });
+        else if (key === "labelsep") kinds.forEach((k) => { words[k === "figure" ? "sepFig" : "sepTab"] = SEPS[v] || null; });
+        else if (key === "labelformat" && v !== "simple" && v !== "default") kinds.forEach((k) => { words[k] = v === "empty" ? "" : null; });
+      }
+    }
     words.refs = f.chapters ? words.bib : words.ref;
-    words.sep = /^ams/.test(f.cls || "") ? ". " : ": ";   // what follows a caption's number
+    words.sep = words.sepFig;
+    // what \autoref prints (hyperref's own English names; unknown with babel or polyglossia) and \cref (cleveref's)
+    words.auto = !babel || lang === "en";
+    const cref = /\\usepackage\s*(?:\[([^\]]*)\])?\s*\{[^}]*\bcleveref\b[^}]*\}/.exec(code);
+    words.cref = words.auto && cref ? { cap: /\bcapitali[sz]e\b/.test(cref[1] || ""), full: /\bnoabbrev\b/.test(cref[1] || "") } : null;
     const numbered = !!f.cls && NUMBER_CLASSES.has(f.cls) && !L.why && S.secnum && !S.secnum.mine && !(f.chapters && CHAPTER_OWN.test(code));
-    const facts = { cls: f.cls, chapters: !!f.cls && CHAPTER_CLASSES.has(f.cls), ctex: f.ctex, heads: numbered ? S.secnum.value : null, words: words };
+    // the appendix package: its appendices environment numbers as \appendix does, unless its titles add a word
+    const appx = /\\usepackage\s*(?:\[([^\]]*)\])?\s*\{[^}]*\bappendix\b[^}]*\}/.exec(code);
+    const facts = { cls: f.cls, chapters: !!f.cls && CHAPTER_CLASSES.has(f.cls), ctex: ctexHeads, heads: numbered ? S.secnum.value : null, words: words,
+      appxTitles: !!appx && (/\btitle\b|\btitletoc\b/.test(appx[1] || "") || /\\appendixtitle(?:toc)?on\b/.test(code)) };
     factsKept = { pre: pre, local: local, facts: facts };
     return facts;
   }
@@ -1302,6 +1410,8 @@
   // (null), said in words instead; after \appendix the headings go on (A, A.1, 附录 A), the figures, tables and
   // footnotes are unknown. `words`: the document's own names (docFacts).
   const beforeKept = new Map();
+  const FIGURE_COUNTED = /^(?:figure|sidewaysfigure|wrapfigure)\*?$/, TABLE_COUNTED = /^(?:table|sidewaystable|wraptable)\*?$/;
+  const COUNTED = new Set(["chapter", "section", "subsection", "subsubsection", "figure", "table", "footnote"]);
   function numbersOf(text, read, doc) {
     const out = { fig: new Map(), tab: new Map(), notes: new Map(), labels: new Map(), heads: new Map(), words: null, sig: "" };
     const pre = read.preamble ? text.slice(0, read.preamble.to) : doc && typeof doc.pre === "string" ? doc.pre : null;
@@ -1329,7 +1439,7 @@
     // the number a heading prints and the one a \ref to it prints (measured, 22.12 M): {text, ref, tight}
     const headLabel = (C, lvl) => {
       const k = levels.indexOf(lvl);
-      if (k < 0 || F.heads == null || F.heads === "none") return null;
+      if (k < 0 || F.heads == null || F.heads === "none" || C.headsLost) return null;
       const ch = C.appx && chapters ? letterOf(C.chapter) : String(C.chapter), sec = C.appx && !chapters ? letterOf(C.section) : String(C.section);
       if (ch == null || sec == null) return null;
       if (lvl === "chapter") {
@@ -1350,22 +1460,72 @@
       return { text: n, ref: n };
     };
     // one text's commands counted, from `from`; `rec`: whether what it finds is recorded (the main file's text before a
-    // chapter file is counted, not recorded)
+    // chapter file is counted, not recorded). As TeX steps them (22.12 R, measured): a \caption steps the counter of the
+    // float it is in -- figure, table and their sideways and wrapped forms --, never a subfigure's; a longtable steps the
+    // table counter at its start, \captionof the one it names; a \caption in a float not read here leaves the later
+    // numbers of both unknown. \frontmatter and \backmatter take the chapters' numbers away; \setcounter and \addtocounter
+    // of a heading's, a float's or the footnote counter set it (a value that is not a number: all unknown after it);
+    // \footnote[7] prints 7 and steps nothing, \footnotemark steps it, a minipage's footnote is its own (a, b: unknown);
+    // the appendix package's appendices environment is \appendix (its titles' word unknown), and after it all is unknown.
     const count = (C, r, t2, from, rec) => {
-      const floats = r.envs.filter((e) => e.endFrom < e.to && (FIGURE_FLOATS.has(e.name) || TABLE_FLOATS.has(e.name)));
+      const floats = r.envs.filter((e) => e.endFrom < e.to && (FIGURE_COUNTED.test(e.name) || TABLE_COUNTED.test(e.name)));
+      const inside = (list, c) => list.filter((e) => e.from < c.from && c.to <= e.to).pop();
+      const subs = r.envs.filter((e) => SUB_FLOATS.test(e.name)), minis = r.envs.filter((e) => e.name === "minipage");
+      const longs = r.envs.filter((e) => e.name === "longtable");
       const theorems = r.envs.filter((e) => e.role === "text" && !PLAIN_TEXT_ENVS.has(e.name.replace(/\*$/, "")));
+      const evs = [];
+      for (const e of r.envs) {
+        if (e.from < from) continue;
+        if (e.name === "appendices") { evs.push({ at: e.from, what: "appendix" }); if (e.endFrom < e.to) evs.push({ at: e.to, what: "lost" }); }
+        else if (e.name === "subappendices") evs.push({ at: e.from, what: "lost" });
+        else if (e.name === "longtable") evs.push({ at: e.from, what: "longtable", e: e });
+      }
+      evs.sort((a, b) => a.at - b.at);
+      const appendix = () => {   // the headings start again at A, the floats and notes are not counted after it
+        C.appx = true; C.target = null;
+        if (chapters) C.chapter = 0; else C.section = 0;
+        C.subsection = C.subsubsection = 0;
+      };
+      const step = (kind, key) => {
+        C[kind] += 1;
+        const m = modes[kind], n = C.lost || C.appx || C[kind + "Lost"] || m == null ? null : m === "" ? String(C[kind]) : m === "chapter." ? (C.chapter > 0 ? C.chapter + "." : "") + C[kind]
+          : m === "chapter-" ? C.chapter + "-" + C[kind] : C.section + "-" + C[kind];
+        if (rec) { const map = kind === "figure" ? out.fig : out.tab; if (!map.has(key)) map.set(key, n); }
+        C.target = n == null ? null : { kind: kind, n: n };
+      };
+      let ev = 0;
+      const upTo = (at) => {
+        for (; ev < evs.length && evs[ev].at <= at; ev++) {
+          const x = evs[ev];
+          if (x.what === "appendix") { appendix(); if (F.appxTitles) C.headsLost = true; }
+          else if (x.what === "lost") { C.lost = true; C.target = null; }
+          else step("table", x.e.from);
+        }
+      };
       for (const c of r.cmds) {
-        if (c.from < from) continue;
-        if (INCLUDE_CMDS.has(c.name)) { C.lost = true; C.target = null; continue; }
-        if (c.name === "appendix") {   // the headings start again at A, the floats and notes are not counted after it
-          C.appx = true; C.target = null;
-          if (chapters) C.chapter = 0; else C.section = 0;
-          C.subsection = C.subsubsection = 0;
+        if (c.name === "setcounter" || c.name === "addtocounter") {
+          const a = c.args.filter((x) => !x.opt);
+          if (a.length === 2) {
+            const name = t2.slice(a[0].from + 1, a[0].to - 1).trim(), v = t2.slice(a[1].from + 1, a[1].to - 1).trim();
+            const key = name === "footnote" ? "note" : name;
+            if (name === "secnumdepth" && c.from >= from) C.lost = true;
+            else if (COUNTED.has(name)) {
+              if (/^-?\d+$/.test(v)) C[key] = (c.name === "setcounter" ? 0 : C[key]) + Number(v);
+              else C.lost = true;
+            }
+          }
           continue;
         }
+        if (c.from < from) continue;
+        upTo(c.from);
+        if (INCLUDE_CMDS.has(c.name)) { C.lost = true; C.target = null; continue; }
+        if (c.name === "appendix" || c.name === "appendices") { appendix(); continue; }
+        if (c.name === "frontmatter" || c.name === "backmatter") { C.outside = true; continue; }
+        if (c.name === "mainmatter") { C.outside = false; continue; }
         if (c.role === "heading") {
           const star = c.nameTo > c.from + 1 + c.name.length;
-          if (star) { C.target = null; if (rec) out.heads.set(c.from, null); continue; }
+          // a chapter outside the main matter (\frontmatter, \backmatter) is not numbered and steps nothing
+          if (star || (c.name === "chapter" && C.outside)) { C.target = null; if (rec) out.heads.set(c.from, null); continue; }
           // TeX steps a heading's counter only where it numbers it (secnumdepth: none at all with 不编号)
           if (steps) {
             if (c.name === "chapter") { C.chapter += 1; C.section = C.subsection = C.subsubsection = 0; if (chapters) { if (modes.figure === "chapter." || modes.figure === "chapter-") C.figure = 0; if (modes.table === "chapter." || modes.table === "chapter-") C.table = 0; C.note = 0; } }
@@ -1375,21 +1535,28 @@
           }
           const label = C.lost ? null : headLabel(C, c.name);
           if (rec) out.heads.set(c.from, label);
-          C.target = label ? { kind: c.name === "chapter" ? "chapter" : "section", n: label.ref } : null;
+          C.target = label ? { kind: c.name === "chapter" ? "chapter" : "section", n: label.ref, lvl: c.name, appx: C.appx, top: c.name === levels[0] } : null;
           continue;
         }
         if (c.name === "caption" && c.args.some((a) => !a.opt) && c.nameTo === c.from + 8) {
-          const f = floats.filter((e) => e.beginTo <= c.from && c.to <= e.endFrom).pop();
-          if (!f) continue;
-          const kind = FIGURE_FLOATS.has(f.name) ? "figure" : "table";
-          C[kind] += 1;
-          const m = modes[kind], n = C.lost || C.appx || m == null ? null : m === "" ? String(C[kind]) : m === "chapter." ? (C.chapter > 0 ? C.chapter + "." : "") + C[kind]
-            : m === "chapter-" ? C.chapter + "-" + C[kind] : C.section + "-" + C[kind];
-          if (rec) { const map = kind === "figure" ? out.fig : out.tab; if (!map.has(f.from)) map.set(f.from, n); }
-          C.target = n == null ? null : { kind: kind, n: n };
+          if (inside(subs, c) || inside(longs, c)) continue;   // a subfigure's own counter; a longtable counted at its start
+          const f = inside(floats, c);
+          if (!f) { C.figureLost = C.tableLost = true; C.target = null; continue; }
+          step(FIGURE_COUNTED.test(f.name) ? "figure" : "table", f.from);
           continue;
         }
-        if (c.name === "footnote" && c.args.some((a) => !a.opt)) { C.note += 1; if (rec) out.notes.set(c.from, C.lost || C.appx ? null : String(C.note)); continue; }
+        if (c.name === "captionof") {
+          const a = c.args.filter((x) => !x.opt), kind = a.length ? t2.slice(a[0].from + 1, a[0].to - 1).trim() : "";
+          if (kind === "figure" || kind === "table") step(kind, c.from); else { C.figureLost = C.tableLost = true; C.target = null; }
+          continue;
+        }
+        if (c.name === "footnote" && c.args.some((a) => !a.opt)) {
+          const opt = c.args.find((a) => a.opt), v = opt ? t2.slice(opt.from + 1, opt.to - 1).trim() : null;
+          if (opt) { if (rec) out.notes.set(c.from, /^\d+$/.test(v) && !C.lost && !C.appx ? v : null); continue; }
+          if (inside(minis, c)) { if (rec) out.notes.set(c.from, null); continue; }
+          C.note += 1; if (rec) out.notes.set(c.from, C.lost || C.appx ? null : String(C.note)); continue;
+        }
+        if (c.name === "footnotemark") { if (!c.args.some((a) => a.opt) && !inside(minis, c)) C.note += 1; continue; }
         if (c.role === "item" && c.list && c.list.name === "enumerate") { C.target = null; continue; }
         if (rec && c.name === "label" && c.args.length) {
           const key = t2.slice(c.args[0].from + 1, c.args[0].to - 1).trim();
@@ -1398,9 +1565,11 @@
           if (key && !out.labels.has(key)) out.labels.set(key, own ? null : C.target);
         }
       }
+      upTo(Infinity);
       return C;
     };
-    let C = { chapter: 0, section: 0, subsection: 0, subsubsection: 0, figure: 0, table: 0, note: 0, lost: false, appx: false, target: null };
+    let C = { chapter: 0, section: 0, subsection: 0, subsubsection: 0, figure: 0, table: 0, note: 0, lost: false, appx: false, target: null,
+      outside: false, figureLost: false, tableLost: false, headsLost: false };
     if (!read.preamble) {
       // a chapter file: counted on from what its main file reads before it (kept while that text is the same)
       const key = JSON.stringify([out.sig, F.heads, F.chapters, modes, F.words.appendix, F.words.chapter]) + doc.before;
@@ -1439,11 +1608,29 @@
   function citeWords(keys, cites) { return keys.map((k) => (cites && cites.get(k)) || k).join(t("；")); }
   // \ref prints the number alone, as the PDF does ("Table~\ref{t}" reads "Table 1", 22.12 M, F4); the commands that print
   // a name with it (\autoref, \cref …) say the kind in the interface's words.
+  // \autoref prints hyperref's English names, \cref and \Cref cleveref's (measured, 22.12 R: "Figure 1", "section 1",
+  // "subsection 1.1", "Appendix A"); where the document's are not known (babel, polyglossia) the interface's words.
+  const AUTO_NAMES = { figure: "Figure", table: "Table", chapter: "chapter", section: "section", subsection: "subsection", subsubsection: "subsubsection" };
+  const CREF_NAMES = { figure: ["fig.", "figure", "Figure"], table: ["tab.", "table", "Table"], chapter: ["chapter", "chapter", "Chapter"],
+    section: ["section", "section", "Section"], appendix: ["appendix", "appendix", "Appendix"] };
+  function docRef(name, x, words) {
+    if (name === "autoref" && words && words.auto) {
+      const w = x.appx && x.top ? "Appendix" : AUTO_NAMES[x.lvl || x.kind];
+      return w ? w + " " + x.n : null;
+    }
+    if ((name === "cref" || name === "Cref") && words && words.cref) {
+      const k = x.appx && x.top ? "appendix" : x.kind === "section" ? "section" : x.kind, w = CREF_NAMES[k];
+      return w ? w[name === "Cref" || words.cref.cap ? 2 : words.cref.full ? 1 : 0] + " " + x.n : null;
+    }
+    return null;
+  }
   function refWords(name, keys, num) {
     return keys.map((k) => {
       const x = name === "pageref" || name === "nameref" ? null : num.labels.get(k);   // \nameref prints a title, not a number
       if (!x) return t("引用：{key}", { key: k });
       if (name === "ref") return x.n;
+      const own = docRef(name, x, num.words);
+      if (own) return own;
       return x.kind === "figure" ? t("图 {n}", { n: x.n }) : x.kind === "table" ? t("表 {n}", { n: x.n }) : x.kind === "chapter" ? t("第 {n} 章", { n: x.n }) : t("第 {n} 节", { n: x.n });
     }).join(name === "ref" ? ", " : t("、"));
   }
@@ -1664,10 +1851,16 @@
       ignoreEvent() { return true; }
     }
     // a paragraph break between words on one line (\par, 22.12 M F7): a new line, its first line indented as 首行缩进 says
+    // (`first`: after a heading, indented as a heading's first paragraph is; `before`: quiet words before the break)
     class ParW extends CM.WidgetType {
-      constructor() { super(); this.plain = "\n"; }
-      eq() { return true; }
-      toDOM() { const el = mk("span", "latex-parbreak"); el.append(mk("span", "latex-parbreak-line"), mk("span", "latex-parbreak-indent")); return el; }
+      constructor(first, before) { super(); this.first = !!first; this.before = before || null; this.plain = "\n"; }
+      eq(o) { return o.first === this.first && o.before === this.before; }
+      toDOM() {
+        const el = mk("span", "latex-parbreak" + (this.first ? " latex-parbreak-first" : ""));
+        if (this.before) el.append(mk("span", "latex-short", this.before));
+        el.append(mk("span", "latex-parbreak-line"), mk("span", "latex-parbreak-indent"));
+        return el;
+      }
     }
     // an empty cell of a grid (22.12 T): a box of the cell's width where the cursor stands, drawn inside its padding
     class CellW extends CM.WidgetType {
@@ -1784,7 +1977,7 @@
           if (g) { gridPieces(g, TABLE_FLOATS.has(e.name) ? wordOf : null); continue; }   // its cells typed in place (22.12 T)
           const model = tableModel(doc, read, e);
           const widget = model ? new BlockW(info.typeset + "t" + wordOf + text.slice(e.from, e.to), () => tableDOM(model, wordOf), "")
-            : new ChipW(TABLE_FLOATS.has(e.name) ? floatWords(read, e, t("表格"), text, num.words) : t("表格"), "unit", own);
+            : new ChipW(TABLE_FLOATS.has(e.name) ? floatWords(read, e, t("表格"), text, num.words, "table", n) : t("表格"), "unit", own);
           atom(from, to, widget, { block: own, kind: "table" });
           continue;
         }
@@ -1802,9 +1995,11 @@
             continue;
           }
           atom(from, to, model ? new BlockW(info.typeset + "f" + wordOf + text.slice(e.from, e.to), () => figureDOM(model, wordOf), "")
-            : new ChipW(floatWords(read, e, t("图"), text, num.words, "figure"), "unit", own), { block: own, kind: "figure" });
+            : new ChipW(floatWords(read, e, t("图"), text, num.words, "figure", num.fig.get(e.from)), "unit", own), { block: own, kind: "figure" });
           continue;
         }
+        // a longtable: its caption as the PDF prints it (it steps the table counter itself), else its cells' words
+        if (e.name === "longtable") { atom(from, to, new ChipW(floatWords(read, e, t("表格"), text, num.words, "table", num.tab.get(e.from), true), "unit", own), { block: own, kind: "table" }); continue; }
         if (e.role === "raw" && !TABULARS.has(e.name)) atom(from, to, new ChipW(t("LaTeX 内容"), "unit", own), { block: own, kind: "unit" });
       }
       // commands
@@ -1863,12 +2058,19 @@
         }
         if (ACCENTS[n] && args.length === 1 && /^\s*(?:\\i|[A-Za-z])\s*$/.test(arg(0))) { atom(c.from, c.to, new TextW(accented(ACCENTS[n], arg(0).trim())), { kind: "text" }); continue; }
         if (BREAKS.has(n)) { atom(c.from, c.to, new TextW("", "latex-br", "\n"), { kind: "break" }); continue; }
-        if (n === "par" && !c.args.length) {
-          // \par alone on its line: hidden, the line read as a blank one (F5); between words on a line: a new paragraph
-          // drawn there, its first line indented (F7)
-          const l = lineOf(c.from), before = codePart(text.slice(l.from, c.from)).trim(), after = codePart(text.slice(c.nameTo, l.to)).trim();
-          if (before && after) { atom(c.from, c.nameTo + (text[c.nameTo] === " " ? 1 : 0), new ParW(), { kind: "parbreak" }); continue; }
-          if (!before && !after) { atom(c.from, c.nameTo, null, { kind: "hidden" }); continue; }
+        const skipTo = c.args.length ? -1 : skipLen(n, text.slice(c.nameTo, c.nameTo + 200));
+        if (skipTo >= 0 && VERTICAL.has(n)) {
+          // \par (and \vskip, \vfill, \hrule) alone on its line: hidden, the line read as a blank one (F5); between words
+          // on a line: a new paragraph drawn there, its first line indented (F7)
+          const end = c.nameTo + skipTo, l = lineOf(c.from), before = codePart(text.slice(l.from, c.from)).trim(), after = codePart(text.slice(end, l.to)).trim();
+          if (before && after) { atom(c.from, end + (text[end] === " " ? 1 : 0), new ParW(), { kind: "parbreak" }); continue; }
+          atom(c.from, end + (before && !after ? 0 : text[end] === " " && after ? 1 : 0), null, { kind: "hidden" });
+          continue;
+        }
+        if (skipTo > 0 || (skipTo === 0 && !SILENT.has(n))) {
+          const end = c.nameTo + skipTo + (text[c.nameTo + skipTo] === " " ? 1 : 0);
+          if (alone(c.from, c.nameTo + skipTo)) hideLine(c.from, c.nameTo + skipTo); else atom(c.from, end, null, { kind: "hidden" });
+          continue;
         }
         if (SILENT.has(n) || GROUP_CLASSES.has(n)) {
           c.args.forEach((a) => bareArgs.add(a.from));
@@ -1876,7 +2078,8 @@
           else atom(c.from, c.nameTo + (text[c.nameTo] === " " && !c.args.length ? 1 : 0), null, { kind: "hidden" });
           continue;
         }
-        if (SILENT_ARGS.has(n)) { if (alone(c.from, c.to)) hideLine(c.from, c.to); else atom(c.from, c.to, null, { kind: "hidden" }); continue; }
+        // (\rowcolor must start its row: words typed at its start go after it)
+        if (SILENT_ARGS.has(n)) { if (alone(c.from, c.to)) hideLine(c.from, c.to); else atom(c.from, c.to, null, { kind: "hidden", lead: n === "rowcolor" }); continue; }
         const wrap = WRAPPERS.get(n);
         if (wrap && args.length === wrap[1] && c.args[c.args.length - 1] === args[args.length - 1]) continue;   // frames, below
         if (n === "caption" && args.length === 1) { atom(c.from, c.to, new ChipW(word(arg(0)) || t("LaTeX 内容"), "unit"), { kind: "unit" }); continue; }
@@ -1894,11 +2097,15 @@
       function gridPieces(g, word) {
         const rows = g.rows, last = rows.length - 1, cap = g.caption, x = { g: g, marks: [], lines: [], points: [], bridges: [] };
         const opt = (more) => Object.assign({ kind: "grid" }, more);
-        // each column its words' width, the spaces round them and the cell's padding (about two digits a side)
-        const total = g.widths.reduce((sum, w) => sum + w + 6, 0), rowStyle = "width:min(100%," + total + "ch)";
+        // each column its words' width, the spaces round them and the cell's padding (about two digits a side); a table
+        // whose longest words do not fit the page's measure that way is drawn compact (smaller, less padding), each column
+        // as wide as its longest word's share, so a number or a word is never broken letter by letter (22.12 R)
+        const compact = g.words.reduce((sum, w) => sum + w + 6, 0) > 46;
+        const share = g.widths.map((w, k) => (compact ? g.words[k] + 2 : w + 6));
+        const total = share.reduce((sum, w) => sum + w, 0), rowStyle = "width:min(100%," + total + "ch)";
         const cls = g.cols.map((al, k) => "latex-cell" + (al === "l" ? "" : " latex-col-" + al) + (g.bars && g.bars[k] ? " latex-cell-bl" : "") +
           (g.bars && k === g.cols.length - 1 && g.bars[k + 1] ? " latex-cell-br" : ""));
-        const style = g.widths.map((w) => "width:" + Math.round((w + 6) / total * 1000) / 10 + "%");
+        const style = share.map((w) => "width:" + Math.round(w / total * 1000) / 10 + "%");
         const capWord = word ? new TextW(word, "latex-caption-word", "") : null;
         if (cap && !cap.below) {
           x.first = atom(g.from, cap.open, capWord, opt({ lead: true, slotTo: true }));
@@ -1917,7 +2124,7 @@
             if (c[1] > c[0]) x.marks.push([c[0], c[1], cls[j] + (text.slice(c[0], c[1]).trim() ? "" : " latex-cell-empty"), style[j]]);
             else x.points.push({ at: c[0], widget: new CellW(cls[j] + " latex-cell-empty", style[j]) });
           });
-          x.lines.push([top ? g.from : r.from, "latex-trow" + (r.above ? " latex-trule-" + r.above : "") + (r.below ? " latex-trule-below-" + r.below : ""), rowStyle]);
+          x.lines.push([top ? g.from : r.from, "latex-trow" + (compact ? " latex-trow-compact" : "") + (r.above ? " latex-trule-" + r.above : "") + (r.below ? " latex-trule-below-" + r.below : ""), rowStyle]);
         });
         if (cap && cap.below) {
           atom(cap.line, cap.open, capWord, opt({ slotTo: true }));
@@ -1925,6 +2132,8 @@
           x.lines.push([cap.line, "latex-tcap-line latex-tcap-below"]);
           x.bridges.push([rows[last].end, cap.open]);
         }
+        // the table's last place is drawn where its last words end: the arrow keys pass from there to the next line
+        if (text[g.to] === "\n") x.bridges.push([cap && cap.below ? cap.close : rows[last].end, g.to + 1]);
         grids.push(x);
       }
       // a line that only holds what is hidden (a \label, \noindent …) leaves no trace, its line break with it
@@ -1999,12 +2208,16 @@
         const a = c.args[c.args.length - 1], l = lineOf(c.from), lead = c.role === "heading" && !text.slice(l.from, c.from).trim();
         const rest = text.slice(c.to, lineOf(c.to).to).replace(/\\label\s*\{[^{}]*\}/g, "");
         const short = c.role === "heading" && c.args.length > 1 && c.args[0].opt ? word(text.slice(c.args[0].from + 1, c.args[0].to - 1)) : null;
+        // words after a heading on its line are its first paragraph: on a line of their own (\paragraph's run in)
+        const tail = c.role === "heading" ? headingTail(text, c) : "";
         // a heading's number as the PDF prints it (22.12 M, F6): shown, never text -- the cursor passes it with the markup
         const hn = c.role === "heading" ? num.heads.get(c.from) : null;
         hide(lead ? l.from : c.from, a.from + 1, { kind: "open", lead: lead, slotTo: true,
           widget: hn ? new TextW(hn.text, "latex-hnum latex-h latex-h" + HEADINGS.get(c.name) + (hn.tight ? " latex-hnum-tight" : ""), "") : null });
-        hide(a.to - 1, c.to, { kind: "close", slotFrom: true, trail: c.role === "heading" && !codePart(rest).trim(),
-          widget: short ? new TextW(t("（目录中：{words}）", { words: short }), "latex-short", "") : null });
+        // (with words after it on its line, the spaces before them go with it: the words start their own line)
+        const sp = tail ? /^[ \t]*/.exec(text.slice(c.to, c.to + 40))[0].length : 0;
+        hide(a.to - 1, c.to + sp, { kind: "close", slotFrom: true, trail: c.role === "heading" && !codePart(rest).trim(),
+          widget: tail ? new ParW(true, short ? t("（目录中：{words}）", { words: short }) : null) : short ? new TextW(t("（目录中：{words}）", { words: short }), "latex-short", "") : null });
         if (a.to - 1 > a.from + 1 && cls) marksOut.push([a.from + 1, a.to - 1, cls]);
         if (c.role === "heading") linesOut.push([l.from, "latex-hline"]);
         markupRanges.push([c.from, a.from + 1], [a.to - 1, c.to]);
@@ -2028,7 +2241,8 @@
         const bl = lineOf(e.from), bOwn = alone(e.from, argsEnd), el = lineOf(e.endFrom), eOwn = alone(e.endFrom, e.to);
         const titleOf = e.role === "text" && text[e.beginTo] === "[" ? word(text.slice(e.beginTo + 1, argsEnd - 1)) : null;
         const dw = num.words || {};   // the document's own words (22.12 M, F4)
-        const label = e.name === "abstract" ? dw.abstract || t("摘要") : e.name === "proof" ? dw.proof || t("证明") : titleOf ? titleOf : null;
+        // a document whose word is not known here (a babel language): no word, never the interface's (22.12 R)
+        const label = e.name === "abstract" ? (num.words ? dw.abstract : t("摘要")) : e.name === "proof" ? (num.words ? dw.proof : t("证明")) : titleOf ? titleOf : null;
         const head = label ? new TextW(label, e.name === "abstract" ? "latex-abstract-head" : "latex-env-head", label + "\n") : null;
         // typed at the end of \begin, words go to the first item, or the first line inside
         const fwd = items.length ? itemEnd(items[0]) : bOwn && bl.to + 1 < e.endFrom ? bl.to + 1 : null;
@@ -2159,12 +2373,17 @@
       // the quiet lines above it
       function paraStart(L) {
         if (L.from < bodyFrom || L.from >= bodyTo) return null;
-        let C = L, gap = false;
+        let C = L, gap = false, noind = false;
         const breaks = (l) => blank(l) || PAR_LINE.test(codePart(l.text));
-        while (C.number < doc.lines && (quietLine(C.text) || blank(C)) && covered(C.to)) { if (breaks(C)) gap = true; C = doc.line(C.number + 1); }
+        // (a \noindent on a quiet line of its own is the paragraph's after it, unless a paragraph break comes between)
+        while (C.number < doc.lines && (quietLine(C.text) || blank(C)) && covered(C.to)) {
+          if (breaks(C)) { gap = true; noind = false; }
+          if (/\\noindent(?![A-Za-z])/.test(codePart(C.text))) noind = true;
+          C = doc.line(C.number + 1);
+        }
         // an empty paragraph the page shows (F5: Return's, the place after a float): its cursor at the indent
         if ((blank(C) || kindOf(C) === "par") && !covered(C.to)) return "latex-para";
-        if (C.from >= bodyTo || kindOf(C) !== "text" || /^\s*\\noindent(?![A-Za-z])/.test(C.text)) return null;
+        if (C.from >= bodyTo || kindOf(C) !== "text" || noind || /^\s*\\noindent(?![A-Za-z])/.test(C.text.replace(PARS_LEAD, ""))) return null;
         if (PAR_START.test(C.text)) return "latex-para";   // \par ends the paragraph before the words after it
         return startAfter(L.number - 1, gap);
       }
@@ -2179,13 +2398,24 @@
           while (k >= 1 && (quietLine(doc.line(k).text) || blank(doc.line(k)))) { if (blank(doc.line(k)) || PAR_LINE.test(codePart(doc.line(k).text))) gap = true; k -= 1; }
           if (k < 1 || doc.line(k).to <= bodyFrom) return "latex-para";
           const P = doc.line(k), code = codePart(P.text);
-          if (HEADING_LINE.test(P.text)) return "latex-para-first";   // across a blank line too
+          // (across a blank line too; after the words a heading has on its line, they are the paragraph going on)
+          if (HEADING_LINE.test(P.text)) return !wordsAfterHeading(P) ? "latex-para-first" : gap ? "latex-para" : null;
           if (gap || PARA_AFTER.test(P.text) || PAR_END.test(code)) return "latex-para";
           const e = FLOAT_END.test(code.trim()) ? floatOn(P) : null;
           if (!e) return null;
           k = lineOf(e.from).number - 1;
         }
         return null;
+      }
+      // The heading on line P has words after it on its line (22.12 R: "\section{Head} Words."): TeX sets them as the
+      // heading's first paragraph, drawn on a line of their own; the paragraph after them is an ordinary one.
+      function wordsAfterHeading(P) {
+        const r = meetRange(read.cmds, P.from, P.to);
+        for (let i = r[0]; i < r[1]; i++) {
+          const c = read.cmds[i];
+          if (c.role === "heading" && c.from >= P.from && c.to <= P.to && HEADING_LINE.test(text.slice(c.from, P.to))) return !!headingTail(text, c);
+        }
+        return false;
       }
       // the float that ends on line P, on lines of its own (nothing before its \begin on that line)
       function floatOn(P) {
@@ -2205,11 +2435,23 @@
       }
       // a figure's caption sits under its images, centred
       for (const p of out) if (p.frame && p.frame.kind === "figure") linesOut.push([lineOf(p.from).from, "latex-figure-line"]);
+      // words after a float's \end on its line (22.12 R): never in its line (a figure's centred caption line, or after its
+      // chip) -- a line of their own, in the paragraph TeX puts them in (F7: going on round a float in a paragraph,
+      // starting one after a float between them)
+      for (const e of read.envs) {
+        if (!(e.endFrom < e.to) || !(TABLE_FLOATS.has(e.name) || FIGURE_FLOATS.has(e.name)) || !near(e.from, e.to) || e.from < bodyFrom || e.to > bodyTo) continue;
+        const el = lineOf(e.to), rest = codePart(text.slice(e.to, el.to));
+        const k = inside(e.from);
+        if (!rest.trim() || (k && k.from < e.from)) continue;   // (a float inside something drawn whole: that one's)
+        const fl = lineOf(e.from), inPara = text.slice(fl.from, e.from).trim();
+        const cls = inPara ? null : startAfter(fl.number - 1, false);
+        marksOut.push([e.to + (rest.length - rest.trimStart().length), el.to, "latex-after-float" + (cls === "latex-para" ? " latex-after-float-para" : cls === "latex-para-first" ? " latex-after-float-first" : "")]);
+      }
       // where two atoms touch and nothing may be typed between, a bridge over the place keeps the cursor from stopping
       const bridges = [];
       for (let k = 1; k < out.length; k++) {
         const a = out[k - 1], b = out[k];
-        if (a.to === b.from && !a.slotTo && !b.slotFrom) bridges.push([a.to - 1, a.to + 1]);
+        if (a.to === b.from && !a.slotTo && !b.slotFrom && !slotBetween(a, b)) bridges.push([a.to - 1, a.to + 1]);
       }
       const points = [];
       for (const x of shownGrids) { bridges.push(...x.bridges); marksOut.push(...x.marks); linesOut.push(...x.lines); points.push(...x.points); }
@@ -2229,7 +2471,7 @@
       const seenLines = new Set();
       for (const p of got.pieces) {
         // `fwd`: words typed at its end go further on (worked out when typed, from what is read then)
-        const spec = { atom: true, kind: p.kind, lead: !!p.lead, trail: !!p.trail, fwd: p.fwd != null, slotFrom: !!p.slotFrom, slotTo: !!p.slotTo };
+        const spec = { atom: true, kind: p.kind, lead: !!p.lead, trail: !!p.trail, fwd: p.fwd != null, slotFrom: !!p.slotFrom, slotTo: !!p.slotTo, drawn: drawnPiece(p) };
         if (p.widget) spec.widget = p.widget;
         if (p.plain != null) spec.plain = p.plain;   // what copying gives for it (the tab between a grid's cells)
         if (p.block) spec.block = true;
@@ -2305,7 +2547,7 @@
     // {from, to, firstSpec, lastSpec}.
     function atomAt(value, pos, how) {
       const ps = touching(value, pos), left = ps.find((x) => x.to === pos && x.from < pos), right = ps.find((x) => x.from === pos && x.to > pos);
-      const joined = !!left && !!right && !left.spec.slotTo && !right.spec.slotFrom;
+      const joined = !!left && !!right && !left.spec.slotTo && !right.spec.slotFrom && !slotBetween(left.spec, right.spec);
       let p = null;
       if (how === "in") p = ps.find((x) => x.from < pos && pos < x.to) || (joined ? left : null);
       else if (how === "from") p = joined ? null : right;
@@ -2314,12 +2556,12 @@
       let from = p.from, to = p.to, firstSpec = p.spec, lastSpec = p.spec, first = p, last = p;
       for (let n = 0; n < 400; n++) {
         const l = touching(value, from).find((x) => x.to === from && x.from < from);
-        if (!l || l.spec.slotTo || firstSpec.slotFrom) break;
+        if (!l || l.spec.slotTo || firstSpec.slotFrom || slotBetween(l.spec, firstSpec)) break;
         from = l.from; firstSpec = l.spec; first = l;
       }
       for (let n = 0; n < 400; n++) {
         const r = touching(value, to).find((x) => x.from === to && x.to > to);
-        if (!r || r.spec.slotFrom || lastSpec.slotTo) break;
+        if (!r || r.spec.slotFrom || lastSpec.slotTo || slotBetween(lastSpec, r.spec)) break;
         to = r.to; lastSpec = r.spec; last = r;
       }
       return { from: from, to: to, firstSpec: firstSpec, lastSpec: lastSpec, firstFwd: fwdOf(value, first), lastFwd: fwdOf(value, last) };
@@ -2524,12 +2766,13 @@
       if (compose && parts.every((p) => p.to === p.from)) return tr;   // its words are seen to when it ends (`composeFix`)
       if (/^input\.paste/.test(ev) && parts.length === 1) { const f = gridPaste(state, value, parts[0], br); if (f) return Object.assign(f, f.changes ? { userEvent: ev, scrollIntoView: true } : {}); }
       const specs = [];
-      let caret = null, risky = false;
+      let caret = null, risky = false, inGrid = false;
       for (const p of parts) {
         let at = p.from;
         if (p.to > p.from) {
           const cut = gridCut(value, p.from, p.to, ev, !p.text);
           if (cut && !cut.length && !p.text) return { refused: "" };   // nothing but a table's markup: nothing goes
+          if (cut) { risky = true; inGrid = true; }
           const D = cut || uncommented(value, protect(value, p.from, p.to, !p.text));
           if (D.length !== 1 || D[0][0] !== p.from || D[0][1] !== p.to || /\n/.test(value.info.text.slice(p.from, p.to))) risky = true;
           value.atoms.between(p.from, p.to, (f, t2, v) => { if (v.spec.atom && f < p.to && t2 > p.from) risky = true; });
@@ -2556,7 +2799,7 @@
           if (!compose && place.ctx === "text" && afterFloat(state.doc, at)) { s2 = br + s2; risky = true; }
           if (s2 !== p.text || /\n/.test(p.text)) risky = true;
           // typed into an empty cell, the words are set apart from the & on each side: "a & b & c" (22.12 T)
-          const pad = !compose && p.to === p.from && place.ctx === "cell" ? cellPad(value, at) : null;
+          const pad = !compose && p.to === p.from && place.ctx === "cell" ? cellPad(value, at, s2) : null;
           if (pad) { specs.push({ from: pad.from, to: pad.to, insert: pad.before + s2 + pad.after }); caret = { at: pad.from, len: (pad.before + s2).split(br).join("\n").length }; risky = true; continue; }
           const same = specs.find((x) => x.to != null && x.from === at && x.insert === "");
           if (same) same.insert = s2; else specs.push({ from: at, insert: s2 });
@@ -2576,6 +2819,8 @@
         if (unsureWhy(text2, read2)) return { refused: t("这样改会让 LaTeX 的结构不完整，没有改。") };
         // no words outside a comment before the edit are inside one after it (a hidden comment never swallows a line)
         if (!commentsKept(value.read, ch, read2)) return { refused: t("这样改会让后面的文字变成注释，没有改。") };
+        // a cell emptied by a deletion: the cursor where the page draws that cell, never in the hidden indent before it
+        if (inGrid) anchor = snapCell(text2, read2, Math.min(anchor, nd.length));
       }
       return { changes: ch, selection: { anchor: Math.min(anchor, nd.length) }, userEvent: ev, scrollIntoView: true };
     }
@@ -2619,24 +2864,29 @@
       return merged;
     }
     // An empty cell typed into: the whole of it replaced, the words with a space toward each & (none at a line's start).
-    function cellPad(value, at) {
+    function cellPad(value, at, words) {
       const text = value.info.text, c = cellAt(text, value.read, at);
       if (!c || text.slice(c.cell[0], c.cell[1]).trim()) return null;
-      const row = c.g.rows[c.r], before = c.c > 0 || /[A-Za-z@]$/.test(text.slice(Math.max(0, c.cell[0] - 1), c.cell[0])) ? " " : "";
+      const row = c.g.rows[c.r], before = padBefore(text, c.cell[0], c.c, words);
       return { from: c.cell[0], to: c.cell[1], before: before, after: c.c < row.cells.length - 1 || row.slash ? " " : "" };
     }
-    // Pasted text with tabs or line breaks (copied from a spreadsheet or a table) into a cell fills the cells from there,
-    // as a spreadsheet does: each line a row, each tab the next cell, each value escaped as typing is and put in place of
-    // the cell's words; values past the last column go into the row's last cell, a space between; rows past the last
-    // are added. One step of ⌘Z. Null when it is not such a paste into a cell (it is then pasted as anywhere).
+    // Pasted text copied from a spreadsheet or a table into a cell fills the cells from there, as a spreadsheet does:
+    // each line a row, each tab the next cell (a spreadsheet's quoted value, line breaks and all, one cell, unquoted),
+    // each value escaped as typing is and put in place of the cell's words; values past the last column go into the
+    // row's last cell, a space between; rows past the last are added. One step of ⌘Z. Only a paste holding a tab, or
+    // one into an empty cell or over a cell's words whole, is spread: lines pasted into a cell's words (a sentence
+    // copied from a PDF) are words of that cell, their line breaks spaces, as typed. Null when it is not such a paste
+    // (it is then pasted as anywhere).
     function gridPaste(state, value, p, br) {
       const raw = p.text.replace(/\r\n?/g, "\n").replace(/\n+$/, "");
       if (!/[\t\n]/.test(raw)) return null;
       const text = value.info.text, c = cellAt(text, value.read, p.from);
       if (!c || p.to > c.cell[1]) return null;
+      const own = text.slice(c.cell[0], c.cell[1]), wa = c.cell[0] + (own.length - own.trimStart().length), wb = c.cell[1] - (own.length - own.trimEnd().length);
+      if (!/\t/.test(raw) && own.trim() && !(p.from <= wa && p.to >= wb)) return null;
       const g = c.g, n = g.cols.length, specs = [], extra = [];
-      raw.split("\n").forEach((line, i) => {
-        const vals = line.split("\t").map((v) => literal(v, "cell", br, "").trim()), fit = vals.slice(0, n - c.c);
+      tabRows(raw).forEach((line, i) => {
+        const vals = line.map((v) => literal(v, "cell", br, "").trim()), fit = vals.slice(0, n - c.c);
         if (vals.length > n - c.c) fit[fit.length - 1] = vals.slice(n - c.c - 1).filter(Boolean).join(" ");
         if (c.r + i < g.rows.length) fit.forEach((v, j) => { const x = cellFill(text, g, c.r + i, c.c + j, v); if (!i && !j) x.first = true; specs.push(x); });
         else extra.push(new Array(c.c).fill("").concat(fit, new Array(Math.max(0, n - c.c - fit.length)).fill("")));
@@ -2704,15 +2954,39 @@
   // A group is drawn in its face or size when it holds text and its closing brace is not inside a formula (where the
   // brace belongs to the formula, not to the group).
   function groupShown(read, g) { return g.to - 1 > g.nameTo && !read.maths.some((f) => f.from < g.to - 1 && g.to - 1 < f.to); }
+  // The words after a heading on its line (its \label and comments left out) that TeX sets as a paragraph of its own:
+  // "" for \paragraph and \subparagraph, which run in.
+  function headingTail(text, c) {
+    if (/^(?:paragraph|subparagraph)$/.test(c.name)) return "";
+    const e = text.indexOf("\n", c.to);
+    return codePart(text.slice(c.to, e < 0 ? text.length : e)).replace(/\\label\s*\{[^{}]*\}/g, "").trim();
+  }
   // The words a float the edit view cannot draw says: its kind and its caption's plain words -- the kind in the
-  // document's own word where it is known ("Figure: The rate", `words` from numbersOf; 22.12 M, F4), never a number
-  // (such a float is not counted here: subfigures, two captions).
-  function floatWords(read, e, kind, text, words, which) {
-    const cap = read.cmds.find((c) => c.name === "caption" && c.from > e.beginTo && c.to <= e.endFrom);
-    const a = cap ? cap.args.filter((x) => !x.opt).pop() : null, said = a ? plainWords(text.slice(a.from + 1, a.to - 1)) : null;
-    const name = words ? words[which || "table"] : null;
-    if (name) return said ? name + (words.sep || ": ") + said : name;
+  // document's own word where it is known ("Figure 1: The rate", `words` from numbersOf; 22.12 M, F4). The float's own
+  // caption is its \caption outside a subfigure or subtable (whose captions come first, 22.12 R); its number where
+  // numbersOf counted it (`n`). `cells`: with no caption, the words of its cells (a longtable).
+  function floatWords(read, e, kind, text, words, which, n, cells) {
+    const subs = read.envs.filter((x) => x !== e && x.from > e.from && x.to <= e.endFrom && SUB_FLOATS.test(x.name));
+    const caps = read.cmds.filter((c) => c.name === "caption" && c.nameTo === c.from + 8 && c.from > e.beginTo && c.to <= e.endFrom && !subs.some((x) => x.from < c.from && c.to <= x.to));
+    // (two captions of its own print two numbers: its first caption's words, no number)
+    if (caps.length > 1) n = null;
+    const cap = caps[0], a = cap ? cap.args.filter((x) => !x.opt).pop() : null;
+    let said = a ? plainWords(text.slice(a.from + 1, a.to - 1)) : null;
+    if (!cap && cells) said = cellWords(text, e);
+    const name = words ? words[which || "table"] : null, sep = words ? words[(which || "table") === "table" ? "sepTab" : "sepFig"] : null;
+    if (name && sep) return name + (n ? " " + n : "") + (said ? sep + said : "");
+    if (words) return said || kind;   // the document's word unknown (22.12 R): its caption's words, never the interface's 图 or 表
     return said ? t("{kind}：{words}", { kind: kind, words: said }) : kind;
+  }
+  const SUB_FLOATS = /^sub(?:figure|table|float)\*?$/;
+  // The plain words of a long table's cells, cut short: its spec, caption, label, heads and rules left out.
+  function cellWords(text, e) {
+    let body = text.slice(e.beginTo, e.endFrom).split("\n").map(codePart).join(" ");
+    body = body.replace(/^\s*(?:\[[^\]]*\])?\s*\{(?:[^{}]|\{[^{}]*\})*\}/, "").replace(/\\(?:caption\*?|label)\s*(?:\[[^\]]*\])?\s*\{[^{}]*\}/g, " ")
+      .replace(/\\(?:endfirsthead|endhead|endfoot|endlastfoot|toprule|midrule|bottomrule|hline|addlinespace|centering)(?![A-Za-z])/g, " ");
+    const words = body.split(/\\\\\*?(?:\[[^\]]*\])?|&/).map((x) => plainWords(x)).filter((x) => x);
+    const said = words.join(" ");
+    return said ? (said.length > 80 ? said.slice(0, 80) + "…" : said) : null;
   }
 
   // The edit view's extensions, which 「显示代码」 takes out (a compartment): the field, the atomic ranges, the filter
@@ -3051,6 +3325,39 @@
   // its own with the row's indent; a new column is an "l" in the spec (with "|" when every column is ruled) and an empty
   // cell in each row; the researcher's spec letters for the other columns are kept.
 
+  // What sets the words `v` typed into the empty cell `k` (at `at`) apart from what is before it: a space after an &, or
+  // after a rule's control word on the row's line (\toprule&) -- "{}" there when the words start with "[" or "*", which
+  // the rule would read as its option (a compile stops at "\toprule [1]").
+  function padBefore(text, at, k, v) {
+    if (!v) return "";
+    if (k > 0) return " ";
+    const prev = text.slice(Math.max(0, at - 60), at);
+    if (/(?:^|[^\\])(?:\\\\)*\\[A-Za-z@]+\*?$/.test(prev)) return /^[[*]/.test(v) ? "{}" : " ";
+    return /[A-Za-z@]$/.test(prev) ? " " : "";
+  }
+  // Tab-separated text as a spreadsheet copies it: its rows, each a list of values; a value in double quotes (as Excel
+  // and Numbers write one holding a tab, a line break or a quote) is the text between them, "" a quote.
+  function tabRows(s) {
+    const rows = [[]];
+    let cell = "", i = 0, start = true;
+    while (i < s.length) {
+      const ch = s[i];
+      if (start && ch === '"') {
+        let j = i + 1, v = "";
+        for (;;) {
+          const q = s.indexOf('"', j);
+          if (q < 0) { v = null; break; }
+          if (s[q + 1] === '"') { v += s.slice(j, q + 1); j = q + 2; continue; }
+          v += s.slice(j, q); j = q + 1; break;
+        }
+        if (v != null && (j >= s.length || s[j] === "\t" || s[j] === "\n")) { cell = v; i = j; start = false; continue; }
+      }
+      if (ch === "\t" || ch === "\n") { rows[rows.length - 1].push(cell); if (ch === "\n") rows.push([]); cell = ""; start = true; i += 1; continue; }
+      cell += ch; start = false; i += 1;
+    }
+    rows[rows.length - 1].push(cell);
+    return rows;
+  }
   // A row's line of `vals` (escaped words): "a & & c \\", an empty one "& & \\".
   function rowLine(vals) { return vals.reduce((s, v, k) => s + (k ? "& " : "") + (v ? v + " " : ""), "") + "\\\\"; }
   // The change that puts `v` in place of the words of cell (r, k): an empty cell's spaces with them, a space toward each &.
@@ -3061,7 +3368,7 @@
       const a = cell[0] + (s.length - s.trimStart().length), b = cell[1] - (s.length - s.trimEnd().length);
       return { from: a, to: b, insert: v, shown: v.length };
     }
-    const before = v && (k > 0 || /[A-Za-z@]$/.test(text.slice(Math.max(0, cell[0] - 1), cell[0]))) ? " " : "", after = v && (k < row.cells.length - 1 || row.slash) ? " " : "";
+    const before = padBefore(text, cell[0], k, v), after = v && (k < row.cells.length - 1 || row.slash) ? " " : "";
     return { from: cell[0], to: cell[1], insert: v ? before + v + after : s, shown: (before + v).length };
   }
   // The change that adds rows of `valsList` after row `r`: on the lines before the next row (after the rules between,
@@ -3099,7 +3406,8 @@
     }
     if (!at) return null;
     const g = at.g, rows = g.rows, n = g.cols.length, last = rows.length - 1, row = rows[at.r];
-    const go = (r, c) => ({ selection: cellSelection(text, rows[r].cells[c]), userEvent: "select", scrollIntoView: true });
+    const value = wx ? state.field(wx.field, false) : null;
+    const go = (r, c) => ({ selection: cellSelection(text, rows[r].cells[c], value && value.info.text === text ? value : null), userEvent: "select", scrollIntoView: true });
     const done = (specs, r, c) => {
       specs.sort((a, b) => a.from - b.from || (a.to == null ? a.from : a.to) - (b.to == null ? b.from : b.to));
       const changes = state.changes(specs), text2 = changes.apply(state.doc).toString(), read2 = readLatex(text2);
@@ -3134,7 +3442,12 @@
       if (!last) return { refused: t("表格至少要有一行。") };
       // the row's line goes whole, unless it holds rules too (they stay, on their line)
       const own = !text.slice(row.from, row.lead).trim() && !codePart(text.slice(row.slashTo, row.to)).trim();
-      return done([own ? { from: row.from, to: Math.min(text.length, row.to + 1) } : { from: row.lead, to: row.slashTo }], Math.min(at.r, last - 1), at.c);
+      const specs = [own ? { from: row.from, to: Math.min(text.length, row.to + 1) } : { from: row.lead, to: row.slashTo }];
+      // a row between two rules: the rules it kept apart would print as a double line -- those under it go (above it,
+      // for the last row, so the table keeps its closing rule)
+      const below = at.r < last ? rows[at.r + 1].above : row.below;
+      if (row.above && below) specs.push(...(at.r < last ? rulesGone(text, row.slashTo, rows[at.r + 1].lead) : rulesGone(text, rows[at.r - 1].slashTo, row.lead)));
+      return done(specs, Math.min(at.r, last - 1), at.c);
     }
     if (act === "colLeft" || act === "colRight" || act === "colDelete") {
       if (!g.items) return { refused: t("这个表格的列格式比较特别，加减列要在「显示代码」里改。") };
@@ -3168,6 +3481,26 @@
     }
     return null;
   }
+  // The deletions that take away the rules (\toprule, \midrule, \bottomrule, \hline) in [a, b): a rule's line whole when
+  // it holds nothing else, else the rule with the spaces between it and the row.
+  function rulesGone(text, a, b) {
+    const out = [];
+    for (let at = a; at < b;) {
+      const ls = lineStartAt(text, at), le = lineEndAt(text, at), e = Math.min(le, b), code = codePart(text.slice(at, e));
+      const re = /\\(?:toprule|midrule|bottomrule|hline)(?![A-Za-z])[ \t]*(?:\[[^\]\n]*\])?/g, hits = [];
+      for (let m = re.exec(code); m; m = re.exec(code)) hits.push([at + m.index, at + m.index + m[0].length]);
+      const rest = hits.reduce((x, h) => x.slice(0, h[0] - ls) + " ".repeat(h[1] - h[0]) + x.slice(h[1] - ls), text.slice(ls, le));
+      if (hits.length && !rest.trim() && ls >= a && le < b) out.push([ls, Math.min(text.length, le + 1)]);
+      else hits.forEach((h) => {
+        let x = h[0], y = h[1];
+        if (codePart(text.slice(y, le)).trim()) { while (text[y] === " " || text[y] === "\t") y += 1; }
+        else while (x > Math.max(a, ls) && (text[x - 1] === " " || text[x - 1] === "\t")) x -= 1;
+        out.push([x, y]);
+      });
+      at = le + 1;
+    }
+    return out.map((d) => ({ from: d[0], to: d[1] }));
+  }
   // Whether the first row is a header: a \midrule or \hline under it (第一行是表头 pressed).
   function gridHeader(text, g) { return g.rows.length > 1 && headerRules(text, g).length > 0; }
   // Return in a grid's cell: the cursor goes to the cell below, as a spreadsheet's (in the last row it stays); ⇧Return
@@ -3175,7 +3508,10 @@
   // cell), Return makes an empty paragraph above it, as Word does. Null elsewhere.
   function gridEnter(state, value, shift) {
     const text = value.info.text, read = value.read, sel = state.selection.main, head = sel.head;
-    if (sel.empty && !shift && gridsNear(text, read, head, head).some((g) => g.from === head)) {
+    const atStart = sel.empty && gridsNear(text, read, head, head).some((g) => g.from === head);
+    // ⇧Return at the table's first place: typed words go to its first cell (or caption), where no line break goes
+    if (atStart && shift) return { refused: t("表格的格子里不能换行。") };
+    if (atStart) {
       const blankBefore = head === 0 || !text.slice(lineStartAt(text, head - 1), head - 1).trim();
       return { changes: state.changes({ from: head, insert: blankBefore ? state.lineBreak : state.lineBreak + state.lineBreak }),
         selection: { anchor: blankBefore ? head : head + 1 }, userEvent: "input.enter", scrollIntoView: true };
@@ -3190,7 +3526,7 @@
   // caption's words or after them, and where they would join the table's lines with the text before or after it.
   function gridBack(value, pos, dir) {
     const text = value.info.text, read = value.read, c = cellAt(text, read, pos);
-    if (c && pos === (dir < 0 ? c.cell[0] : c.cell[1])) return { refused: "" };
+    if (c && (dir < 0 ? pos <= c.cell[0] : pos >= c.cell[1])) return { refused: "" };
     for (const g of gridsNear(text, read, pos - 1, pos + 1)) {
       if (dir < 0 ? pos === g.from || (pos === g.to + 1 && text.slice(pos, lineEndAt(text, pos)).trim()) : pos === g.to || (pos === g.from - 1 && text.slice(lineStartAt(text, pos), pos).trim())) return { refused: "" };
       if (g.caption && pos === (dir < 0 ? g.caption.open : g.caption.close)) return { refused: "" };
@@ -3228,7 +3564,9 @@
     let s = codePart(line).trim();
     for (let n = 0; n < 40 && s; n++) {
       const m = /^\\([A-Za-z@]+)\*?\s*/.exec(s);
-      if (!m || m[1] === "maketitle" || !(SILENT.has(m[1]) || SILENT_ARGS.has(m[1]) || m[1] === "label")) return false;
+      const k = m ? skipLen(m[1], s.slice(m[1].length + 1)) : -1;
+      if (k > 0) { s = s.slice(m[1].length + 1 + k).trim(); continue; }
+      if (!m || m[1] === "maketitle" || !(SILENT.has(m[1]) || SILENT_ARGS.has(m[1]) || m[1] === "label" || k === 0)) return false;
       s = s.slice(m[0].length);
       for (let g = /^(?:\{[^{}]*\}|\[[^\]]*\])\s*/.exec(s); g; g = /^(?:\{[^{}]*\}|\[[^\]]*\])\s*/.exec(s)) s = s.slice(g[0].length);
     }
@@ -3238,8 +3576,11 @@
   const HEADING_LINE = /^\s*\\(?:part|chapter|section|subsection|subsubsection)\*?\s*[[{]/;
   // \par (22.12 M, F7): a line of it alone (its code), one that holds it, one that ends or starts with it
   const commentLine = (line) => { const c = codePart(line); return c.length < line.length && !c.trim(); };
-  const PAR_ONLY = /^\s*\\par(?![A-Za-z])\s*$/, PAR_LINE = /(?:^|[^\\])(?:\\\\)*\\par(?![A-Za-z])/;
-  const PAR_END = /(?:^|[^\\])(?:\\\\)*\\par\s*$/, PAR_START = /^\s*\\par(?![A-Za-z])/;
+  // (and what ends a paragraph as \par does: \vskip with its length, \vfill, \hrule -- 22.12 R)
+  const VPAR = String.raw`(?:\\(?:par|vfil(?:l|neg)?|vss)(?![A-Za-z])|\\hrule(?![A-Za-z])` + RULE_SPEC + String.raw`|\\vskip(?![A-Za-z])` + GLUE + ")";
+  const PAR_ONLY = new RegExp(String.raw`^\s*` + VPAR + String.raw`\s*$`), PAR_LINE = new RegExp(String.raw`(?:^|[^\\])(?:\\\\)*` + VPAR);
+  const PAR_END = new RegExp(String.raw`(?:^|[^\\])(?:\\\\)*` + VPAR + String.raw`\s*$`), PAR_START = new RegExp(String.raw`^\s*` + VPAR);
+  const PARS_LEAD = new RegExp(String.raw`^\s*(?:` + VPAR + String.raw`\s*)+`);
   // a float's \end, the whole code of its line, and its \begin at a line's start
   const FLOAT_END = /^\\end\s*\{(?:figure|table)\*?\}$/, FLOAT_BEGIN = /^\s*\\begin\s*\{(?:figure|table)\*?\}/;
   // A change on a line can start or end the paragraph of the next line with words, and a quiet or blank line's place is
@@ -4801,7 +5142,7 @@
     hookEditView(me);
     const extensions = [
       me.wordComp.of(code ? [] : wordExtensions(CM, { say: (s) => sayEdit(me, s) })),   // first, so its keys come first
-      historyOf(CM), CM.drawSelection(), CM.highlightSpecialChars(), CM.EditorView.lineWrapping,
+      historyOf(CM), CM.drawSelection(), CM.EditorView.lineWrapping,
       returnKeys(CM), formatKeys(CM, me), CM.keymap.of([].concat(CM.defaultKeymap, CM.historyKeymap)),
       me.codeComp.of(code ? codeLook(CM) : []), includeLinks(CM, me),
       CM.EditorView.contentAttributes.of({ "aria-label": t("LaTeX 源码"), spellcheck: "false" }),
@@ -4933,7 +5274,9 @@
   // so no word of the edit view is ever coloured as code.
   let looks = null;
   function codeLook(CM) {
-    if (!looks || looks.CM !== CM) looks = { CM: CM, ext: [CM.StreamLanguage.define(CM.stex), CM.syntaxHighlighting(highlight(CM))] };
+    // (and CodeMirror's red marks of control and invisible characters -- a zero-width space or a soft hyphen pasted from a
+    // PDF --, which are the code's: in the edit view they are the text's own, drawn as the PDF draws them, 22.12 R)
+    if (!looks || looks.CM !== CM) looks = { CM: CM, ext: [CM.StreamLanguage.define(CM.stex), CM.syntaxHighlighting(highlight(CM)), CM.highlightSpecialChars()] };
     return looks.ext;
   }
   // Colours from the palette's own tokens (8): commands olive, comments the quiet gray, the rest ink.
@@ -5597,7 +5940,12 @@
     const gridTool = (label, act) => tool(label, run((st) => gridSpec(st, act)));
     ui.grid = { box: mk("div", "latex-format-group latex-grid-tools hidden"), header: gridTool(t("第一行是表头"), "header") };
     ui.grid.header.setAttribute("aria-pressed", "false");
-    ui.grid.box.append(mk("h4", "latex-format-title", t("表格")),
+    // a group named by its title (22.12 R); from a cell, Escape and then Tab reach it (Tab in a cell goes to the next cell)
+    const gridTitle = mk("h4", "latex-format-title", t("表格"));
+    gridTitle.setAttribute("id", "latex-grid-title");
+    ui.grid.box.setAttribute("role", "group");
+    ui.grid.box.setAttribute("aria-labelledby", "latex-grid-title");
+    ui.grid.box.append(gridTitle,
       row(gridTool(t("在上方插入行"), "rowAbove"), gridTool(t("在下方插入行"), "rowBelow")),
       row(gridTool(t("在左侧插入列"), "colLeft"), gridTool(t("在右侧插入列"), "colRight")),
       row(gridTool(t("删除行"), "rowDelete"), gridTool(t("删除列"), "colDelete")), row(ui.grid.header));
@@ -5817,6 +6165,7 @@
     if (!note) return;
     note.textContent = text || "";
     note.className = "node-sub latex-format-note" + (warn ? " latex-export-warn" : "") + (text ? "" : " hidden");
+    me.formatSaid = text && me.view ? { doc: me.view.state.doc, head: me.view.state.selection.main.head } : null;
     if (text) inSight(note);
   }
 
@@ -5871,6 +6220,9 @@
   function drawFormatState(me) {
     const ui = me.ui.format;
     if (!ui || !me.view) return;
+    // a sentence of the panel's goes once the text or the cursor moves on, as the edit view's own do (22.12 R)
+    const was = me.formatSaid;
+    if (was && (was.doc !== me.view.state.doc || was.head !== me.view.state.selection.main.head)) sayFormat(me, "");
     fillFormatOptions(me);
     const off = !!formatOff(me), value = me.view.state.field(wordField(me.CM).field, false);
     const read = off ? null : value ? value.read : readLatex(me.view.state.doc.toString());
@@ -5894,7 +6246,8 @@
       const head = gridHeader(value.info.text, cell.g);
       ui.grid.header.setAttribute("aria-pressed", String(head));
       ui.grid.header.classList.toggle("is-on", head);
-      ui.grid.header.disabled = cell.g.rows.length < 2;
+      // (a one-row table: pressed, it says why it cannot be -- DESIGN 22.12 T's sentence, never a silent gray button)
+      ui.grid.header.disabled = false;
     }
     drawContext(me);
     drawLayout(me);
@@ -5981,7 +6334,9 @@
         return b;
       }));
       if (!shown.length) list.appendChild(mk("p", "node-sub", t("没有找到这样的图片")));
-      else if (all.length > shown.length || more) list.appendChild(mk("p", "node-sub", t("只列出了一部分，请用搜索找其余的。")));
+      // (the engine's list cut short: a search here only looks through what it sent -- 22.12 R)
+      else if (more) list.appendChild(mk("p", "node-sub", t("项目里的图片太多，这里没有全部列出；不在这里的图片可以在「显示代码」里写上路径插入。")));
+      else if (all.length > shown.length) list.appendChild(mk("p", "node-sub", t("只列出了一部分，请用搜索找其余的。")));
     };
     search.addEventListener("input", show);
     list.replaceChildren(mk("p", "node-sub", t("载入中…")));
@@ -6062,7 +6417,8 @@
         return b;
       }));
       if (!shown.length) list.appendChild(mk("p", "node-sub", t("没有找到这样的文献")));
-      else if (all.length > shown.length || entriesMore) list.appendChild(mk("p", "node-sub", t("只列出了一部分，请用搜索找其余的。")));
+      else if (entriesMore) list.appendChild(mk("p", "node-sub", t("项目里的文献太多，这里没有全部列出；不在这里的文献可以在「显示代码」里用它的键引用。")));
+      else if (all.length > shown.length) list.appendChild(mk("p", "node-sub", t("只列出了一部分，请用搜索找其余的。")));
     };
     search.addEventListener("input", show);
     list.replaceChildren(mk("p", "node-sub", t("载入中…")));
@@ -6264,6 +6620,27 @@
 
   // 段间距 on the page: a line is 1.8em times 行距's stretch (the page's line height, 22.12 A2)
   const PARSKIP_GAP = { half: "calc(0.9em * var(--latex-stretch, 1))", one: "calc(1.8em * var(--latex-stretch, 1))" };
+  // A hand-written 行距 and 段间距 (22.12 R: they were drawn as none): the last \renewcommand{\baselinestretch}{1.5} or
+  // \linespread{1.5}, as a number; the last \setlength{\parskip}{…} (or \parskip=…) of a plain length or a multiple of
+  // \baselineskip, its stretch left out, as lines of the page (the PDF's line is 1.2em of its body size, 10pt unless
+  // the class's option says 11pt or 12pt), at most three. Anything else: the page's own (none, a single line).
+  function ownStretch(code) {
+    const m = [...code.matchAll(/\\(?:renewcommand\s*\{?\s*\\baselinestretch\s*\}?\s*\{\s*(\d*\.?\d+)\s*\}|linespread\s*\{\s*(\d*\.?\d+)\s*\}|setstretch\s*\{\s*(\d*\.?\d+)\s*\})/g)].pop();
+    const v = m ? Number(m[1] || m[2] || m[3]) : 0;
+    return v > 0 ? Math.min(Math.max(v, 0.8), 2.5) : null;
+  }
+  function ownParskip(code) {
+    const m = [...code.matchAll(/\\(?:setlength\s*\{?\s*\\parskip\s*\}?\s*\{([^{}]*)\}|parskip\s*=?\s*([^\s\\%][^\n\\%]*))/g)].pop();
+    if (!m) return "0";
+    const v = (m[1] != null ? m[1] : m[2]).replace(/\s(?:plus|minus)\s[\s\S]*$/, "").trim();
+    const size = Number(((/\\documentclass\s*\[([^\]]*)\]/.exec(code) || [])[1] || "").match(/\b(1[012])pt\b/)?.[1] || 10);
+    let lines = null;
+    const x = /^(\d*\.?\d+)?\s*\\baselineskip$/.exec(v), d = /^(\d*\.?\d+)\s*(pt|bp|mm|cm|em|ex)$/.exec(v);
+    if (x) lines = x[1] == null ? 1 : Number(x[1]);
+    else if (d) lines = Number(d[1]) * { pt: 1, bp: 1.004, mm: 2.845, cm: 28.45, em: size, ex: size * 0.43 }[d[2]] / (1.2 * size);
+    if (!(lines > 0)) return "0";
+    return "calc(" + Math.round(Math.min(lines, 3) * 1.8 * 1000) / 1000 + "em * var(--latex-stretch, 1))";
+  }
   // Where the settings come from: the open file's preamble when it is the main file, else the main file's (`format`).
   function layoutState(me) {
     const facts = panelFacts(me), off = layoutOff(me);
@@ -6290,7 +6667,8 @@
     if (key !== L.cacheKey) { L.cacheKey = key; L.layout = key == null ? null : layoutOf(st.pre, local); force = true; }
     const layout = L.layout, why = st.why || (layout && layout.why) || "";
     // like Word (22.1, A2's C): the editor's lines follow 行距, roughly
-    const sp = layout && !layout.why ? layout.settings.spacing : null, n = sp && !sp.mine && sp.n ? sp.n : 1;
+    const sp = layout && !layout.why ? layout.settings.spacing : null, code = st.pre ? masked(st.pre) : "";
+    const n = sp && !sp.mine && sp.n ? sp.n : sp && sp.mine ? ownStretch(code) || 1 : 1;
     if (me.ui.box.style && typeof me.ui.box.style.setProperty === "function") {
       me.ui.box.style.setProperty("--latex-stretch", String(Math.min(Math.max(n, 0.8), 2.5)));
       // and its paragraphs' first lines follow 首行缩进 (22.12 B2)
@@ -6299,7 +6677,7 @@
       me.ui.box.style.setProperty("--latex-indent-first", ind.first);
       // and the space between paragraphs follows 段间距 (22.12 M, F5): none, half a line or a line of the page's own
       const ps = layout && !layout.why ? layout.settings.parskip : null;
-      me.ui.box.style.setProperty("--latex-parskip", ps && !ps.mine ? PARSKIP_GAP[ps.value] || "0" : "0");
+      me.ui.box.style.setProperty("--latex-parskip", ps && !ps.mine ? PARSKIP_GAP[ps.value] || "0" : ps && ps.mine ? ownParskip(code) : "0");
     }
     if (me.ui.format.panes.layout.classList.contains("hidden") && !force) return;
     const main = st.facts.main;
@@ -6812,6 +7190,6 @@
       unsureWhy: unsureWhy, enterSpec: enterSpec, backSpec: backSpec, plainOf: plainOf, numbersOf: numbersOf, plainWords: plainWords,
       docInfoOf: docInfoOf, docInfoSpec: docInfoSpec, unescapeTex: unescapeTex, escapeTyped: escapeTyped,
       quietLine: quietLine, paraReach: paraReach, pageIndent: pageIndent, historyOf: historyOf, heldIn: heldIn, newLabel: newLabel, passageField: passageField,
-      codeLook: codeLook, gridOf: gridOf, gridAt: gridAt, cellAt: cellAt, gridSpec: gridSpec, gridHeader: gridHeader, specItems: specItems, floatWord: floatWord }),
+      codeLook: codeLook, gridOf: gridOf, gridAt: gridAt, cellAt: cellAt, cellCaret: cellCaret, docFacts: docFacts, gridSpec: gridSpec, gridHeader: gridHeader, specItems: specItems, floatWord: floatWord }),
   });
 })();

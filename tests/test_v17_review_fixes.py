@@ -684,7 +684,7 @@ view().dispatch({selection: {anchor: TEXT.indexOf('here')}});
 tool('图片').fire('click'); await tick();
 out.pickerInSight = scrolled.includes('latex-picker hidden') || scrolled.includes('latex-picker');
 gets.pop().res({images: [{path: 'figs/a.png', thumb: false}], more: true}); await tick(); await tick();
-out.cut = inside(byClass('latex-picker'), (e) => e.textContent === '只列出了一部分，请用搜索找其余的。').length;
+out.cut = inside(byClass('latex-picker'), (e) => e.textContent === '项目里的图片太多，这里没有全部列出；不在这里的图片可以在「显示代码」里写上路径插入。').length;   // 22.12 R: the engine's cut
 out.fileClass = inside(byClass('latex-picker'), (e) => e.textContent === 'figs/a.png')[0].className;
 tool('图片').fire('click');
 // a character pdfLaTeX cannot set: said in ochre

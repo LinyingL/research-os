@@ -263,7 +263,18 @@ def text_before(main: str, rel: str, text_of: Any) -> str | None:
         pos = m.end()
         if sum(len(p) for p in pieces) > BEFORE_LIMIT:
             return None
-    return found if found is not None and len(found) <= BEFORE_LIMIT else None
+    if found is None or len(found) > BEFORE_LIMIT:
+        return None
+    # a conditional (\iffalse … \fi) or a catcode trick: what TeX counts in it is not sure (22.12 R), as the page's own
+    # reader is not sure of a body that holds one
+    if any(_UNSURE_RE.fullmatch(name) for name in re.findall(r"\\([A-Za-z@]+)", _masked(found))):
+        return None
+    return found
+
+
+#: The commands that make the page's reader unsure of a body (latex.js `UNSURE_CMDS`).
+_UNSURE_RE = re.compile(r"if(?!thenelse$|def$|undef$|strequal$|boolexpr$|toggle$)[A-Za-z@]*|fi|else|or|makeatletter|makeatother|catcode|csname"
+                        r"|endcsname|expandafter|begingroup|endgroup|loop|repeat")
 
 
 _CLASS_RE = re.compile(r"\\documentclass\s*(?:\[[^\]]*\])?\s*\{([^{}]*)\}")
@@ -1131,17 +1142,29 @@ def _own_paper(root: Path, draft: str) -> set[str]:
 def _exported_pdfs(root: Path, walked: list[str]) -> set[str]:
     """The PDFs any paper of the project was exported to (folded), never offered as an image (22.12 M, F8 -- browser
     acceptance 2026-11-14: 图片 listed paper/english.pdf and paper/main.pdf): each export recorded in papers.toml, and
-    a `.pdf` beside a `.tex` of the same name that is a document (`\\documentclass`), as TeX writes `<main>.pdf` --
-    not a `standalone` one, whose PDF is a figure made to be included."""
+    a `.pdf` beside a `.tex` of the same name that is a document (`\\documentclass`), as TeX writes `<main>.pdf`, or in a
+    build folder beside it (`build/`, `out/`: latexmk's -outdir, 22.12 R) -- not a `standalone` one, whose PDF is a
+    figure made to be included."""
     found = {e["pdf"] for e in papers.exports(root) if isinstance(e.get("pdf"), str)}
     present = {files_ingest.fold(p) for p in walked if p.lower().endswith(".pdf")}
-    beside = [p for p in walked if p.lower().endswith(".tex") and files_ingest.fold(p[:-4] + ".pdf") in present]
-    _known, text_of = tex_reader(root, beside)
-    for tex in beside:
+    made = {tex: [pdf for pdf in _outputs_of(tex) if files_ingest.fold(pdf) in present] for tex in walked if tex.lower().endswith(".tex")}
+    made = {tex: pdfs for tex, pdfs in made.items() if pdfs}
+    _known, text_of = tex_reader(root, list(made))
+    for tex, pdfs in made.items():
         m = _CLASS_RE.search(uncommented(text_of(tex)))
         if m and m.group(1).strip() != "standalone":
-            found.add(tex[:-4] + ".pdf")
+            found.update(pdfs)
     return {files_ingest.fold(p) for p in found}
+
+
+#: The folders beside a document that TeX tools write its PDF into (latexmk's -outdir, VS Code's LaTeX Workshop).
+_OUTPUT_DIRS = ("build", "out", "output", "_build")
+
+
+def _outputs_of(tex: str) -> list[str]:
+    """Where a compile of the document `tex` puts its PDF (22.12 R): beside it, or in a build folder beside it."""
+    folder, name = posixpath.split(tex[:-4])
+    return [posixpath.join(folder, name + ".pdf")] + [posixpath.join(folder, d, name + ".pdf") for d in _OUTPUT_DIRS]
 
 
 #: A PDF or EPS figure's first page as a small PNG (22.12 M, F9): what is drawn, its longest side in pixels, the largest
@@ -1151,6 +1174,9 @@ THUMB_PIXELS = 480
 THUMB_SOURCE_LIMIT = 50 * 1024 * 1024
 THUMB_SECONDS = 10
 THUMB_LIMIT = 2 * 1024 * 1024
+#: The most the thumbnail cache of one project keeps (22.12 R): past it the oldest pictures go when one is written.
+THUMB_CACHE_LIMIT = 64 * 1024 * 1024
+THUMB_CACHE_FILES = 4000
 _TOOL_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", "/Library/TeX/texbin", "/usr/bin")
 
 
@@ -1200,9 +1226,13 @@ def figure_thumbnail(root: str | Path, rel: Any, project_id: str) -> bytes:
     relative, no hidden component, no symbolic link, not only in the cloud (409 `cloud`, nothing is downloaded), a
     regular file of at most 50 MB; the converter runs at most 10 s with no shell, in a folder of the cache, and its
     picture is taken only when it is a PNG of at most 2 MB. Refused with 404 `no_thumbnail` when none can be made: the
-    page then shows the file's name alone."""
+    page then shows the file's name alone. The converters together run at most 10 s, and none after one ran out of
+    time; a file none could draw is remembered (an empty `<key>.fail`), so it is not tried again until it changes
+    (22.12 R: a dense plot cost 20 s on every request). The cache is pruned when a picture is written, the oldest
+    first, past `THUMB_CACHE_LIMIT` or `THUMB_CACHE_FILES`."""
     import subprocess
     import tempfile
+    import time
 
     root = workspace._root(root)  # noqa: SLF001
     refused = _refuse("path", f"{rel!r} is not a figure the editor can draw", "只能显示项目里的 PDF 或 EPS 图片", 400)
@@ -1229,15 +1259,23 @@ def figure_thumbnail(root: str | Path, rel: Any, project_id: str) -> bytes:
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(folder, 0o700)
     key = hashlib.sha256(f"{full.resolve()}\0{info.st_size}\0{info.st_mtime_ns}".encode()).hexdigest()[:24]
-    kept = folder / f"{key}.png"
+    kept, failed = folder / f"{key}.png", folder / f"{key}.fail"
     if kept.is_file():
         return kept.read_bytes()
+    if failed.exists():
+        raise none
+    deadline = time.monotonic() + THUMB_SECONDS
     with tempfile.TemporaryDirectory(dir=folder) as work:
         out = Path(work) / "thumb.png"
         for command in _thumb_commands(full, out):
+            left = deadline - time.monotonic()
+            if left < 0.5:
+                break
             try:
                 subprocess.run(command, cwd=work, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                               timeout=THUMB_SECONDS, check=False)
+                               timeout=left, check=False)
+            except subprocess.TimeoutExpired:
+                break   # a figure one converter cannot draw in time, the next would not either
             except (OSError, subprocess.SubprocessError):
                 continue
             try:
@@ -1246,9 +1284,36 @@ def figure_thumbnail(root: str | Path, rel: Any, project_id: str) -> bytes:
                 made = b""
             if made.startswith(b"\x89PNG\r\n\x1a\n"):
                 os.replace(out, kept)
+                _prune_thumbs(folder, kept)
                 return made
             out.unlink(missing_ok=True)
+    try:
+        failed.touch()
+        _prune_thumbs(folder, failed)
+    except OSError:
+        pass
     raise none
+
+
+def _prune_thumbs(folder: Path, keep: Path) -> None:
+    """The oldest pictures (and failure marks) of `folder` taken away until it holds at most `THUMB_CACHE_LIMIT` bytes
+    and `THUMB_CACHE_FILES` files; `keep`, just written, stays."""
+    try:
+        entries = []
+        for entry in os.scandir(folder):
+            if entry.is_file(follow_symlinks=False) and entry.name.endswith((".png", ".fail")) and entry.path != str(keep):
+                info = entry.stat(follow_symlinks=False)
+                entries.append((info.st_mtime_ns, info.st_size, entry.path))
+        size = sum(e[1] for e in entries) + (keep.stat().st_size if keep.exists() else 0)
+        count = len(entries) + 1
+        for _mtime, length, path in sorted(entries):
+            if size <= THUMB_CACHE_LIMIT and count <= THUMB_CACHE_FILES:
+                break
+            os.unlink(path)
+            size -= length
+            count -= 1
+    except OSError:
+        pass
 
 
 #: What 格式与插入's 图片 offers (22.12): the files `\includegraphics` takes in the engines of 22.4.
