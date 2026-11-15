@@ -690,9 +690,14 @@ def test_no_get_route_writes_or_starts_anything_but_a_read_probe(audited):
         after = _tree_state(root, paths.researchos_home())
         if kind == "draws":   # its picture, in the engine's own home only; a converter, nothing else
             changed = {k for k, _v in set(before.items()) ^ set(after.items())}
-            assert changed and all(os.sep + "latex-thumbs" in k for k in changed), (route, sorted(changed)[:4])
-            assert set(started) <= {"pdftoppm", "gs", "sips"} and started, (route, started)
-            assert status == 200, (route, status, raw[:200])
+            assert all(os.sep + "latex-thumbs" in k for k in changed), (route, sorted(changed)[:4])
+            assert set(started) <= {"pdftoppm", "gs", "sips"}, (route, started)
+            from researchos import latex_edit
+            if latex_edit._thumb_commands(Path("x.pdf"), Path("x.png")):   # a converter here: it ran and drew
+                assert changed and started, (route, sorted(changed)[:4], started)
+                assert status == 200, (route, status, raw[:200])
+            else:   # none (a Linux runner without poppler): nothing started, no picture, only the name shows
+                assert not started and status == 404, (route, started, status)
             results[route] = status
             continue
         assert before == after, (route, sorted(set(before.items()) ^ set(after.items()))[:4])
