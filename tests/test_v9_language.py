@@ -183,6 +183,10 @@ ALLOWED_CHINESE: dict[str, str] = {
     # whole lines, so a bare 图 or 表 elsewhere is still an untranslated word (review)
     "\\renewcommand{\\figurename}{图}": "22.12 A3: \\figurename as 版式 writes it into the preamble",
     "\\renewcommand{\\tablename}{表}": "22.12 A3: \\tablename as 版式 writes it into the preamble",
+    # 22.12 M (F4, F6): what a ctex document prints for its parts and numbers, shown in the edit view as its PDF prints them
+    # whatever the interface's language -- never words of the interface
+    "图|表|摘要|目录|插图|表格|参考文献|证明|附录|第|章|十|、|（|）": "22.12 M: the names and number marks a ctex document prints",
+    "〇一二三四五六七八九": "22.12 M: the Chinese digits of ctex's \\chinese numbers (第一章, 一、, （一）)",
 }
 
 CJK = re.compile("[\u2e80-\u2fff\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")

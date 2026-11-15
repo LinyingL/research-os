@@ -7481,16 +7481,20 @@ nothing to type between, they are one). What each construct is shown as:
   `{\heiti …}` and the size groups, and the wrappers whose last argument is words: `\textsc`, `\mbox`, `\textcolor` …):
   the markup hidden, the words styled and editable in place;
 - **headings**: the markup hidden (a short title `[…]` said after it in quiet words), the words editable in the
-  heading's style;
+  heading's style, after the number the PDF prints -- 1 / 1.1, 一、（一）1., Chapter 1, 第一章, A after `\appendix` -- as
+  版式's 章节编号 has it, shown and never text (*22.12 M, F6, found at acceptance 2026-11-14*; none where it is not
+  sure, never a wrong one);
 - **lists**: `\begin`/`\end` hidden, each `\item` a bullet, a number or a description's term; the items' words
   editable;
 - **quote, center, flushleft, flushright, abstract** and the other environments of running text: the markers hidden,
-  the lines styled (an abstract under a quiet 「摘要」, a theorem under its title);
-- **figures**: the images (21.5's thumbnails) and 「图 N：」 before the caption, whose words are editable; the rest
+  the lines styled (an abstract under its heading in the document's word, Abstract or 摘要 -- *22.12 M, F4* --, a theorem
+  under its title);
+- **figures**: the images (21.5's thumbnails; a PDF's or an EPS's first page, *22.12 M, F9*) and the caption's label as
+  the PDF prints it -- "Figure 1: ", 「图 1: 」, the document's word (*22.12 M, F4*) -- before the caption, whose words are editable; the rest
   hidden and atomic. A figure the reader doubts (subfigures, no caption) is one unit, its caption's words in a chip;
 - **tables** (*amended by T of 22.12, browser acceptance 2026-11-14: the researcher restricted only formulas to the code*):
   a table the grid reader is sure of is **filled in like Word** -- a grid whose cells are the text itself, each cell's
-  words typed in place, the caption's words editable after 「表 N：」, the markup (`\begin`/`\end`, the column spec, `&`,
+  words typed in place, the caption's words editable after its label as the PDF prints it ("Table 1: ", 「表 1: 」), the markup (`\begin`/`\end`, the column spec, `&`,
   `\\`, the rules, `\centering`, `\label`) hidden and atomic; Tab, ⇧Tab and the arrow keys go from cell to cell, and the
   right column's 「表格」 group adds and deletes rows and columns (22.12 T). A table with merged cells or anything else the
   grid reader is unsure of stays a read-only preview, **one atomic unit** (selected and deleted whole; its cells changed
@@ -7499,11 +7503,13 @@ nothing to type between, they are one). What each construct is shown as:
 - **formulas** (`$…$`, `\(…\)`, `\[…\]`, `equation`, `align`, `gather` …): typeset by KaTeX (HTML only, so no TeX
   reaches the page's text), each **one atomic unit**; one KaTeX cannot typeset, or before KaTeX has loaded, a quiet
   「公式」 -- never the code. A click selects it, and the right column says 「公式要在「显示代码」里改。」 with the link;
-- `\cite` a chip with author and year from the project's `.bib`, else the key; `\ref` and its like 「第 N 节」, 「图 N」,
-  「表 N」 where the number is known cheaply (a main file; 22.12 B1), else 「引用：key」; `\label` hidden; `\footnote` a small
+- `\cite` a chip with author and year from the project's `.bib`, else the key; `\ref` the number alone, as the PDF prints
+  it (*22.12 M, F4*: "Table~\ref{t}" reads "Table 1"), and its like (`\autoref`, `\cref` …) 「第 N 节」, 「图 N」, 「表 N」, where
+  the number is known cheaply (a main file, or a chapter file from its place in the main file; 22.12 B1, M), else 「引用：key」; `\label` hidden; `\footnote` a small
   superscript number whose words are shown, and changed, in the right column; `\url` and `\href` a chip with the address
   or the link's words; `\maketitle` the title block; `\begin{document}` and `\end{document}` the quiet labels 「正文开始」
-  and 「正文结束」; `\newpage`, `\clearpage` a quiet 「分页」 line; `\tableofcontents` 「目录（导出时生成）」;
+  and 「正文结束」; `\newpage`, `\clearpage` a quiet 「分页」 line; `\tableofcontents` the heading the PDF prints for it, 「Contents（导出时生成）」 or
+  「目录（导出时生成）」 (*22.12 M, F4*; the lists and the bibliography likewise);
 - **the preamble** (all before `\begin{document}` in a main file) is not shown: one quiet line 「导言区：文档类 article，
   6 个宏包」, **not expandable** -- 版式 edits it (22.12, with 文档信息 for `\title`, `\author`, `\date`), 显示代码 shows it;
 - **comments** are hidden entirely (a line or a paragraph of them leaves no trace) and never lost: only a deletion
@@ -7513,14 +7519,19 @@ nothing to type between, they are one). What each construct is shown as:
   the body): one atomic quiet chip, 「LaTeX 内容」 or, for a command whose arguments are plain words, those words read-only
   -- never the command's name. A researcher's words are never hidden without being shown somewhere: verbatim text is
   shown as it is, in its own quiet block;
-- **line structure**: a paragraph's single line breaks are spaces (none between two CJK characters), a blank line
-  separates paragraphs.
+- **line structure**: a paragraph's single line breaks are spaces (none between two CJK characters); paragraphs are
+  TeX's own (*22.12 M, F7*): a blank line or `\par` ends one, text after a float in a paragraph goes on with it, text
+  after a float between paragraphs starts one. **Blank lines take no room** (*22.12 M, F5*): however many separate two
+  paragraphs, the next starts on the next line, apart by what 段间距 says (none, half a line, a line); a third and more
+  between are the empty paragraphs Return makes, a line each where the cursor stands; between two things that are not
+  words (a float and `\end{document}`) they stay, a place to type after the float.
 
 **Typing and pasting** are plain text and keep the source literal: `% $ & # _ { } ~ ^ \ < > |` are written escaped (`\%`, `\$`,
 `\&`, `\#`, `\_`, `\{`, `\}`, `\textasciitilde{}`, `\textasciicircum{}`, `\textbackslash{}`, and -- 22.12 B3, so they print as typed
 without the T1 font encoding -- `\textless{}`, `\textgreater{}`, `\textbar{}`); words typed at the edge of what is
 hidden go where the cursor shows them (after a bullet, inside the list, at the end of an environment's last line, before
-a hidden comment, never into one, never before `\documentclass`); a letter -- any letter: XeLaTeX reads a CJK character as
+a hidden comment, never into one, never before `\documentclass`; on the empty line after a float, after a blank line
+written first, so they start a paragraph as the page shows -- *22.12 M, F7*); a letter -- any letter: XeLaTeX reads a CJK character as
 one -- never runs into a command's name, and a `[` or `*` typed after `\item`, `\\` or a `\begin{…}` never becomes their
 option (`{}` keeps them apart). Pasted rich text is its plain text, escaped, whatever line break the clipboard holds; its
 line breaks are new paragraphs, spaces in a heading, a style or a caption, and new items in a list. An input method's
@@ -7529,7 +7540,8 @@ are put there and escaped as typing is, joined to its own step of ⌘Z (22.12 B3
 deleted whole; a construct covered in part keeps its markup round what remains (or loses it with its last word); the
 document's own markup always stays; an edit that would still leave the source unbalanced is refused with a quiet
 sentence. Hidden comments, labels and atomic units in a deleted range go with it, asking nothing (⌘Z restores them).
-**Return** makes a new paragraph; in a list a new `\item` (an empty item leaves the list); in a heading the heading ends
+**Return** makes a new paragraph -- at a paragraph's end an empty one the page shows, a blank line written each side of it;
+at a paragraph's start an empty one above it; inside a paragraph a split there (*22.12 M, F5*) --; in a list a new `\item` (an empty item leaves the list); in a heading the heading ends
 there and the words after the cursor start the paragraph; inside a style the style is closed before the break and
 opened again after it; in a caption it is refused. **⇧Return** is a line break `\\`, only in a paragraph with words
 before it. **Backspace** at the start of a heading turns it into body text, joined with the paragraph before when that
@@ -7921,6 +7933,12 @@ emoji, arrow or glyph (⌘ beside 加粗, 斜体 and 下划线 is the key's own 
   (「表格内容要在「显示代码」里改。」 and the like) is a quiet sentence with a text link; a footnote's words a plain text
   field; 文档信息 in 版式 plain fields and a select. No new primary on the page or in 版式: 保存 stays the page's one (the
   link panel's 「确认关联」 and a picker's 「插入」, never shown together, are their own surfaces' one, as above).
+- Found at acceptance (22.12 M, 2026-11-14): **a disabled button of the right column looks disabled** (F2) -- gray words
+  (`--gray`), no fill, a faint edge (`--line`), no hover -- as the disabled selects beside it do; with 显示代码 on, 加粗,
+  引文块 and every 插入 button are so. **The code's colours are the code's alone** (F3): the LaTeX language and its
+  highlight style are given to the editor only while 显示代码 shows the code, so no word of the edit view (a number, a
+  bracket) is coloured as code. A heading's number (F6) is in the heading's face and size, a space after it but none after
+  一、 or （一）; an empty paragraph line (F5) has the paragraph's indent; no new word, glyph or primary.
 
 ### 22.8 Batches and acceptance
 
@@ -9066,3 +9084,107 @@ said nothing of tables -- the edit view is where a paper's words are written, an
   break (`\makecell`, a `p{}` column's `\newline`) is not offered; a long cell's wrapped lines are passed over by the up
   and down keys; selecting a row or a column as such (Word's) is not there -- 删除行 and 删除列 are; F4 (the document's own
   word for 表 / Table) is left to its own step, through `floatWord`.
+
+**What browser acceptance found (M; 2026-11-14, a real Chromium against the engine's own page on a scratch project: an
+English paper from 新建文稿, article by pdfLaTeX, and a Chinese one, ctexart by XeLaTeX, their exported PDFs compared by eye
+and by pdftotext).** F1 (tables filled in like Word) is T, above. The others, each fixed with a test that failed before
+(`tests/test_v17_acceptance.py`; the same tests run on the code before M: all 22 failed):
+
+- **F2, a disabled button did not look disabled** -- with 显示代码 on, 加粗, 引文块 and every 插入 button had `disabled` but
+  looked as enabled. Now `.latex-side .btn:disabled`: gray words, no fill, a faint edge, no hover (22.7).
+- **F3, the code's colours leaked into the edit view** -- "50", "3" and "000" carried CodeMirror's highlight class (a
+  gray-brown). The stex language and the highlight style are now in a compartment of their own (`codeLook`), given only
+  while 显示代码 shows the code (and to a file opened as code).
+- **F4, the labels ignored the document's language** -- an English article's table read 「表 1：」 and its abstract
+  「摘要」, its PDF "Table 1:" and "Abstract". The words the edit view shows for the document's parts are now the PDF's:
+  `docFacts` reads the main file's preamble (the open file's, or `format.preamble` for a chapter file) as 版式 does -- a
+  ctex class or the ctex package: 图, 表, 摘要, 目录, 插图, 表格, 参考文献, 证明, 第一章, 附录; any other class: Figure, Table,
+  Abstract, Contents, List of Figures, List of Tables, References (Bibliography with chapters), Proof, Chapter, Appendix;
+  a name the preamble sets (`\renewcommand{\figurename}{…}` as 版式's 图表名称 writes it, `\ctexset{figurename=…}`, the
+  others likewise) as it sets it, plain words only; babel or polyglossia with a language other than English, or the
+  caption package's own names: unknown, and the interface's 「图：」 is said as before. A caption's label is the name, the
+  number where it is known and ": " ("Figure 1: ", 「图 1: 」; ". " in an ams class); a float the edit view cannot draw is a
+  chip of the name and the caption's words, never a number ("Figure: Sub"; a bare tabular stays 「表格」). `\ref` is the
+  number alone, as printed ("Table~\ref{t}" reads "Table 1"; the chip's edge says it is a reference); `\autoref` and its
+  like keep their words. 版式's 图表编号 reads in the document's word: 「连续编号（Figure 1）」 in an English paper.
+- **F5, paragraph gaps did not match the PDF** -- each blank line between paragraphs was a full empty line (three with
+  双倍), where the PDF had none. Now (`viewPieces`) a run of blank lines (or of `\par` alone, hidden comment lines between)
+  is joined to the lines round it: the last to the line of words after it, the first to the line of words before it, by
+  atoms hiding their line breaks (typed at one's edge, the words go where the cursor shows them). So one or two blank
+  lines -- spaces on them, comments between -- are a new line and no more, around headings, lists and figures too; a
+  third and more are the empty paragraphs Return makes, a line each, indented, where the cursor stands; between two
+  things that are not words (a float's `\end` and `\end{document}`, two floats) the run stays, a place to type after the
+  float. *Decided:* blank lines between paragraphs are never shown as height; the place to type a new paragraph is made
+  by Return, which writes the blank lines so that the page shows it -- at a paragraph's end a blank line each side of
+  the new one (two after it before a heading, a block or the end), at a paragraph's start the same above it, inside a
+  paragraph (the line after is its words) a split with no empty one; Return on an empty paragraph adds another. A line
+  class follows the page's line to where it starts (a heading's line joined to the blank line before it). 段间距 is
+  `--latex-parskip` (none, `calc(0.9em * stretch)`, `calc(1.8em * stretch)`), the padding above a paragraph's first line.
+- **F6, headings had no numbers** -- "Introduction" where the PDF printed "1 Introduction". `numbersOf` now counts the
+  headings as TeX does and the heading's hidden opening shows the number the PDF prints, never text (the cursor passes
+  it with the markup): 版式's 章节编号 1 / 1.1 / 1.1.1, 一、（一）1. (a chapter class: 第一章, then 一、（一）) or 不编号; a
+  starred heading and `\paragraph` none; a chapter class's chapter "Chapter 1" or 第一章 and its third level none
+  (secnumdepth 2); after `\appendix` A, A.1 (zh: A with nothing after it, then （一）), a chapter Appendix A or 附录 A and
+  its sections A.1 (zh: 一、). A class other than article, report, book, ctexart, ctexrep and ctexbook, a numbering 版式
+  calls the person's own, a chapter set by hand, or anything after an `\input` of the file itself: no number. A chapter
+  file is numbered from its place in its main file: `format.before` (the engine's `text_before`) is the main file's body
+  up to the `\input` or `\include` that brings it in, an earlier included file put in its place; none (no numbers) when
+  the file is brought in twice, through another file, by `\import`, or that text is over 1 MB. A `\ref` to a heading
+  prints its number as measured (一, （一）, A.1; a chapter in a ctex class 一).
+- **F7, text right after a float did not join like the PDF** -- "Second paragraph here." then a table then "Var" printed
+  "Second paragraph here. Var". The page's paragraphs are now TeX's (`paraStart`, `startAfter`): a float on lines of its
+  own is passed over -- the words after it go on with the paragraph when it was in one (text before it with no blank
+  line), start one when it was between paragraphs (a blank line, a heading, the body's start before it) --; `\par` alone
+  on a line, at a line's end or its start ends a paragraph, and between words on one line it is a new line indented
+  (`latex-parbreak`). And words typed, pasted or composed on the empty line after a float are written after a blank line
+  (`afterFloat`), so they start a paragraph, as the page shows them.
+- **F8, the image picker listed the papers' own PDFs** -- paper/english.pdf and paper/main.pdf beside english.tex and
+  main.tex (only the open draft's paper's PDF was left out). Now no PDF any export recorded and no `.pdf` beside a `.tex`
+  of the same name that is a document (`_exported_pdfs`); a `standalone` .tex's PDF, a figure made to be included, stays.
+- **F9, a PDF figure showed only its file name** -- most papers' figures are PDFs. *Chosen:* the engine draws the first
+  page, not WebKit's `<img>` of a PDF (which Chromium cannot show, so it could not be checked the way the rest of the page
+  is): `GET /api/latex/thumb?path=` (`figure_thumbnail`) makes a PNG of at most 480 px by pdftoppm, else macOS's sips, an
+  EPS by Ghostscript in safe mode (sips on macOS 14 cannot), with no shell, at most 10 s, into
+  `<home>/latex-thumbs/<project id>/` -- never the project --, kept while the file's size and time are the same; guarded as
+  the editor's paths (project-relative, no hidden component, no symbolic link, not only in the cloud, a regular file of at
+  most 50 MB, the picture taken only when it is a PNG of at most 2 MB); 404 `no_thumbnail` otherwise, and the page then
+  shows the name alone. The image picker shows the same picture for a PDF or EPS. *Verified:* in Chromium on the engine's
+  own page the figure's PDF and EPS pictures loaded (340 by 480 and 133 by 67 px); the app's WKWebView shows the route's
+  PNG as it shows the asset route's. 18.1's audit of every GET lists it as a kind of its own, `draws`: run, it changes
+  nothing but `<home>/latex-thumbs/` and starts nothing but a converter (`tests/test_engine_session.py`).
+- **Measured against TeX** (TeX Live 2023, latexmk, pdftotext): fifteen documents -- article, report, book, ctexart,
+  ctexrep, ctexbook; 章节编号 each value; 图表名称 the class's and Figure in a ctex class; 图表编号 continuous, by chapter and
+  by section; each with a starred heading, `\paragraph`, a figure, a table, `\ref` to each, the lists, the bibliography,
+  a proof and `\appendix` -- compiled and read back: 78 headings show the number on their PDF line and 66 show none where
+  the PDF has none, every caption reads as printed, 91 `\ref` chips are what the PDF prints (the rest unknown, said by
+  their key), and Abstract, Proof, Contents, the lists and the bibliography are the document's words. A chapter file under
+  an article with two `\input` files and under ctexrep with `\include`: its headings, caption, `\ref` and footnote as the
+  PDF prints them. Paragraphs: a corpus of 39 cases (blank lines, comment lines, text after floats in and between
+  paragraphs, after lists, quotes and displayed formulas, `\par` in four places, `\noindent`, `\label`, `\vspace`,
+  `\newpage`, headings), compiled with every paragraph indented 4em and read back with word positions: the page starts a
+  paragraph exactly where the PDF does at all 73 lines of running text (before M, 8 differed). 22.12 B2's 3,000 seeded
+  edits still draw again only where they reach, equal to drawing whole.
+- *Seen in a browser* (Chromium, the engine's own page, a scratch project and home on port 8796, 1,280 px): "1
+  Introduction", "1.1 Data", "A Proofs"; "Abstract", "Contents（导出时生成）", "Table 1: Main results", "See Table 1 and
+  Figure 1."; the second paragraph on the line under the first with its indent, no empty line; "Var continues the
+  paragraph." under the table without indent; a `\par` between words a new indented line; the figure's PDF and EPS
+  pictures; no highlight class in the edit view (127 in the code); a disabled tool gray on no fill; Return at the end of
+  the first paragraph an empty indented line with the cursor on it, and "New one" typed there a paragraph of its own.
+- **Typing** (three runs each, on this machine the same day; the code before M measured alongside): 22.1's 3,000-line key
+  median 2.6 to 3.0 ms, p95 4.6 to 5.3; its 2 MB key 19.8 to 20.7 ms (before M 20.1 to 20.9); the edit view's keys
+  3.2 to 6.8 ms median, p95 under 8.3; the page's 3.7 to 3.8 ms, in a cell 3.6; in a cell of the long paper 2.9 to 3.1 ms,
+  Tab 2.0 to 2.2, its 2 MB key 24.7 to 27.0 ms (before M 23.8 to 26.1) and running text 25.5 to 25.7. The machine was
+  slower that day than T's measures (T: 15.8 to 17.0 ms for the 2 MB key); M adds nothing measurable.
+- **Words** (13.4 rows): 连续编号（{fig} 1） Continuous ({fig} 1); 按章编号（{fig} 2.3） By chapter ({fig} 2.3); 按章或节编号（{fig} 2-3）
+  By chapter or section ({fig} 2-3) (replacing the three with 图); {name}（导出时生成） {name} (made at export). The document's
+  words are no interface words: they stay as the PDF prints them in either language (`test_v9_language`'s allowed list).
+- **Tests changed on purpose:** `test_v17_latex_word.py` (Return's new paragraphs; `\ref`'s number alone),
+  `test_v17_no_code_view.py` and `test_v17_page_look.py` (the article's words, `\ref`'s number, the marks of paragraphs
+  joined to the blank line before them, `--latex-parskip`), `test_v17_table_edit.py` ("Table 1: "),
+  `test_v17_layout_settings.py` (图表编号's options in the document's word), `test_v17_format_panel.py` (`format.before`; a
+  PDF's picture in the picker), `test_v9_language.py` (the ctex words allowed outside t()), `test_engine_session.py` (the
+  GET audit's kind `draws` for the thumbnail route).
+- *Not done in M:* a babel language other than English shows the interface's words; `\autoref` and `\cref` keep the
+  interface's kind words; figures, tables and footnotes after `\appendix` are not numbered (headings are); `\part` shows
+  no number; a chapter file brought in through another chapter file has no numbers; the place after a float before
+  `\end{document}` is an empty line of the page.

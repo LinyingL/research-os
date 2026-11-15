@@ -875,8 +875,12 @@
     const s = text.slice(cell[0], cell[1]), a = cell[0] + (s.length - s.trimStart().length), b = cell[1] - (s.length - s.trimEnd().length);
     return b > a ? { anchor: a, head: b } : { anchor: cellCaret(text, cell) };
   }
-  // The words before a figure's or a table's caption (「图 N：」, 「表 N：」 where the number is known, 22.1), one helper for both.
-  function floatWord(kind, n) {
+  // The words before a figure's or a table's caption, one helper for both: as the PDF prints them (22.12 M, F4) --
+  // "Figure 1: ", 「图 1: 」, the document's own name (`words`, numbersOf's) and the number where it is known; with no
+  // document to read them from (a file with no main file), 「图 N：」 and 「表 N：」 in the interface's words (22.1).
+  function floatWord(kind, n, words) {
+    const name = words ? words[kind === "table" ? "table" : "figure"] : null;
+    if (name) return name + (n ? " " + n : "") + (words.sep || ": ");
     if (kind === "table") return n ? t("表 {n}：", { n: n }) : t("表：");
     return n ? t("图 {n}：", { n: n }) : t("图：");
   }
@@ -970,12 +974,16 @@
   }
 
   // The project path of an image \includegraphics names, as the export finds it from the main file's folder (22.4), for
-  // a thumbnail through the asset route; null for a kind the route does not draw or a path that leaves the project.
+  // a thumbnail: a png, jpeg, gif or webp through the asset route, a PDF or EPS figure's first page through the
+  // engine's (22.12 M, F9); null for another kind or a path that leaves the project. A picture that does not come is
+  // taken out, the file's name stays.
+  const DRAWN = /\.(?:pdf|eps)$/i;
   function assetOf(path) {
-    if (!RASTER.test(path) || typeof ed === "undefined" || !ed || !ed.path) return null;
+    if (!(RASTER.test(path) || DRAWN.test(path)) || typeof ed === "undefined" || !ed || !ed.path) return null;
     const f = ed.format || {}, folder = typeof f.folder === "string" ? f.folder : ed.path.slice(0, Math.max(ed.path.lastIndexOf("/"), 0));
     const p = normPath((folder ? folder + "/" : "") + path);
-    return p && !p.startsWith("..") ? "/api/workspace/asset?path=" + encodeURIComponent(p) : null;
+    if (!p || p.startsWith("..")) return null;
+    return (DRAWN.test(p) ? "/api/latex/thumb?path=" : "/api/workspace/asset?path=") + encodeURIComponent(p);
   }
   function graphicDOM(path, tag) {
     const line = mk(tag, "latex-graphic"), src = assetOf(path);
@@ -1141,11 +1149,13 @@
   // a line of its own in the edit view, said in words (looked up when said, 13.6)
   const LINE_COMMANDS = new Set(["tableofcontents", "listoffigures", "listoftables", "newpage", "clearpage", "cleardoublepage", "pagebreak",
     "printbibliography", "bibliography", "appendix"]);
-  function lineWords(n) {
-    if (n === "tableofcontents") return t("目录（导出时生成）");
-    if (n === "listoffigures") return t("图目录（导出时生成）");
-    if (n === "listoftables") return t("表目录（导出时生成）");
-    if (n === "printbibliography" || n === "bibliography") return t("参考文献（导出时生成）");
+  // (22.12 M, F4: the heading such a list prints is the document's own word -- "Contents", 「目录」 -- when it is known)
+  function lineWords(n, words) {
+    const own = (k) => (words && words[k] ? t("{name}（导出时生成）", { name: words[k] }) : null);
+    if (n === "tableofcontents") return own("contents") || t("目录（导出时生成）");
+    if (n === "listoffigures") return own("lof") || t("图目录（导出时生成）");
+    if (n === "listoftables") return own("lot") || t("表目录（导出时生成）");
+    if (n === "printbibliography" || n === "bibliography") return own("refs") || t("参考文献（导出时生成）");
     return n === "appendix" ? t("附录") : t("分页");
   }
   const HIDDEN_CMDS = new Set(["label", "bibliographystyle", "nocite", "addbibresource"]);
@@ -1215,18 +1225,96 @@
     return Math.max(at, c.to);
   }
 
-  // The numbers the PDF will print, where they can be known cheaply: a main file's figures and tables (continuous, by
-  // chapter or as 版式 writes them by section), sections, footnotes, and what each \label names. A chapter file, a form
-  // not read here, anything after an \input or \appendix: unknown (null), said in words instead.
-  function numbersOf(text, read) {
-    const out = { fig: new Map(), tab: new Map(), notes: new Map(), labels: new Map(), sig: "" };
-    if (!read.preamble) return out;
-    const pre = masked(text.slice(0, read.preamble.to));
-    const cm = /\\documentclass\s*(?:\[[^\]]*\])?\s*\{\s*([^{}\s]+)\s*\}/.exec(pre), chapters = !!cm && CHAPTER_CLASSES.has(cm[1]);
+  // -- what the PDF prints (22.12 M, F4 and F6; browser acceptance 2026-11-14: an English paper's table read 「表 1：」
+  // and its abstract 「摘要」 while the PDF printed "Table 1:" and "Abstract", and "Introduction" had no "1") --------
+  //
+  // The words a document prints for its own parts are the document's, never the interface's: a ctex class's (or the ctex
+  // package's) Chinese, every other class's English, a name the preamble sets (\renewcommand{\figurename}{…}, ctex's
+  // figurename=…) as it sets it, a babel or polyglossia language other than English unknown. Measured on TeX Live 2023
+  // (tests/test_v17_acceptance.py): article and report print Figure 1:, Abstract, Contents, List of Figures, References
+  // or Bibliography, Proof, Chapter 1, Appendix A; ctexart and ctexrep 图 1:, 摘要, 目录, 插图, 表格, 参考文献, 证明,
+  // 第一章, 附录 A.
+  // (the ctex words, LaTeX's own printed text, never interface words: 图 表 摘要 目录 插图 表格 参考文献 证明 附录, 第 … 章, and
+  // the 十 、 （ ） of its numbers)
+  const DOC_ZH = "图|表|摘要|目录|插图|表格|参考文献|证明|附录|第|章|十|、|（|）".split("|");
+  const DOC_ZH_DIGITS = "〇一二三四五六七八九";
+  const DOC_EN = { figure: "Figure", table: "Table", abstract: "Abstract", contents: "Contents", lof: "List of Figures", lot: "List of Tables",
+    ref: "References", bib: "Bibliography", proof: "Proof", chapter: "Chapter", appendix: "Appendix" };
+  const DOC_ZH_WORDS = { figure: DOC_ZH[0], table: DOC_ZH[1], abstract: DOC_ZH[2], contents: DOC_ZH[3], lof: DOC_ZH[4], lot: DOC_ZH[5],
+    ref: DOC_ZH[6], bib: DOC_ZH[6], proof: DOC_ZH[7], appendix: DOC_ZH[8], chapter: null };
+  // the commands that hold each name (ctex's key of the same name too)
+  const DOC_NAMES = { figure: "figurename", table: "tablename", abstract: "abstractname", contents: "contentsname", lof: "listfigurename",
+    lot: "listtablename", ref: "refname", bib: "bibname", proof: "proofname", chapter: "chaptername", appendix: "appendixname" };
+  const ENGLISH = /^(?:english|american|british|USenglish|UKenglish|canadian|australian|newzealand)$/;
+  // heading numbers are known in these classes (the others number their own way: none is shown, never a wrong one)
+  const NUMBER_CLASSES = new Set(["article", "report", "book", "ctexart", "ctexrep", "ctexbook"]);
+  // a chapter's number or words set by hand: the chapter classes' heading numbers are then unknown
+  const CHAPTER_OWN = /\\(?:(?:(?:re)?new|provide)command|[gex]?def|let)\s*\*?\s*\{?\s*\\(?:thechapter|chaptername|appendixname|@chapapp|@makechapterhead|CTEXthechapter)\b|\bchapter\s*\/\s*(?:name|number|format|aftername|numbering)\b|\\titleformat\b|\btitlesec\b/;
+  function chineseNumber(n) {
+    if (!(n > 0 && n < 100)) return null;
+    const tens = Math.floor(n / 10), ones = n % 10, d = DOC_ZH_DIGITS;
+    if (!tens) return d[ones];
+    return (tens > 1 ? d[tens] : "") + DOC_ZH[11] + (ones ? d[ones] : "");
+  }
+  function letterOf(n) { return n > 0 && n <= 26 ? String.fromCharCode(64 + n) : null; }
+
+  // What the document's preamble says of what it prints: its class, chapters, ctex, the heading numbers 版式 reads
+  // (22.12 A3: "" the class's own, "zh" 一、（一）1., "none"; null when unknown -- the person's own, a class not read
+  // here, a chapter set by hand), the names of its parts and the separator after a caption's number. Kept for the
+  // last preamble asked about (a key in the body asks again with the same one).
+  let factsKept = null;
+  function docFacts(pre, local) {
+    if (factsKept && factsKept.pre === pre && factsKept.local === local) return factsKept.facts;
+    const code = masked(pre), f = preambleFacts(pre), L = layoutOf(pre, local || []);
+    const S = L.settings || {};
+    // the language: babel's last option or polyglossia's main language
+    let lang = f.ctex ? "zh" : "en";
+    const babel = /\\usepackage\s*(?:\[([^\]]*)\])?\s*\{[^}]*\b(babel|polyglossia)\b[^}]*\}/.exec(code);
+    if (babel) {
+      const main = babel[2] === "babel" ? (babel[1] || "").split(",").map((x) => x.trim()).filter((x) => x && !/=/.test(x)).pop()
+        : (/\\set(?:main|default)language\s*(?:\[[^\]]*\])?\s*\{\s*([A-Za-z]+)\s*\}/.exec(code) || [])[1];
+      lang = main && ENGLISH.test(main) ? "en" : null;
+    }
+    const words = {};
+    Object.keys(DOC_NAMES).forEach((k) => { words[k] = lang === "zh" ? DOC_ZH_WORDS[k] : lang === "en" ? DOC_EN[k] : null; });
+    // a name the preamble sets, as it sets it (only plain words; anything else unknown)
+    Object.keys(DOC_NAMES).forEach((k) => {
+      const name = DOC_NAMES[k];
+      const re = new RegExp("\\\\(?:renewcommand|def)\\s*\\{?\\s*\\\\" + name + "(?![A-Za-z@])\\s*\\}?\\s*\\{([^{}]*)\\}|\\b" + name + "\\s*=\\s*(?:\\{([^{}]*)\\}|([^,{}\\]]*))", "g");
+      let m = null;
+      for (let x = re.exec(code); x; x = re.exec(code)) m = x;
+      if (m) { const v = m[1] != null ? m[1] : m[2] != null ? m[2] : m[3]; words[k] = plainWords(v) || null; }
+    });
+    // the caption package's own names: unknown
+    if (/\\(?:captionsetup|usepackage)\s*(?:\[[^\]]*\b(?:name|figurename|tablename)\s*=[^\]]*\])/.test(code) || /\\captionsetup\s*(?:\[[^\]]*\])?\s*\{[^}]*\bname\s*=/.test(code)) { words.figure = null; words.table = null; }
+    words.refs = f.chapters ? words.bib : words.ref;
+    words.sep = /^ams/.test(f.cls || "") ? ". " : ": ";   // what follows a caption's number
+    const numbered = !!f.cls && NUMBER_CLASSES.has(f.cls) && !L.why && S.secnum && !S.secnum.mine && !(f.chapters && CHAPTER_OWN.test(code));
+    const facts = { cls: f.cls, chapters: !!f.cls && CHAPTER_CLASSES.has(f.cls), ctex: f.ctex, heads: numbered ? S.secnum.value : null, words: words };
+    factsKept = { pre: pre, local: local, facts: facts };
+    return facts;
+  }
+
+  // The numbers the PDF will print, where they can be known cheaply: figures and tables (continuous, by chapter or as 版式
+  // writes them by section), headings as 版式's 章节编号 has them (22.12 M, F6), footnotes, and what each \label names --
+  // in a main file from its own text, in a chapter file from its main file's preamble and what the main file reads
+  // before it (`doc`: {pre, local, before}, from the engine). A form not read here, anything after an \input: unknown
+  // (null), said in words instead; after \appendix the headings go on (A, A.1, 附录 A), the figures, tables and
+  // footnotes are unknown. `words`: the document's own names (docFacts).
+  const beforeKept = new Map();
+  function numbersOf(text, read, doc) {
+    const out = { fig: new Map(), tab: new Map(), notes: new Map(), labels: new Map(), heads: new Map(), words: null, sig: "" };
+    const pre = read.preamble ? text.slice(0, read.preamble.to) : doc && typeof doc.pre === "string" ? doc.pre : null;
+    const F = pre != null ? docFacts(pre, doc ? doc.local : null) : null;
+    out.words = F ? F.words : null;
+    const sign = () => { out.sig = JSON.stringify([Array.from(out.fig.values()), Array.from(out.tab.values()), Array.from(out.notes.values()), Array.from(out.labels),
+      Array.from(out.heads.values()), F && [F.words, F.heads]]); return out; };
+    if (!F || (!read.preamble && !(doc && typeof doc.before === "string"))) return sign();
+    const P = masked(pre), chapters = F.chapters;
     const mode = (w) => {
-      if (new RegExp("\\\\(?:numberwithin|@addtoreset)\\s*(?:\\[[^\\]]*\\])?\\s*\\{" + w + "\\}").test(pre)) return null;
-      const within = new RegExp("\\\\counterwithin\\s*\\{" + w + "\\}\\s*\\{(\\w+)\\}").exec(pre), without = new RegExp("\\\\counterwithout\\s*\\{" + w + "\\}").test(pre);
-      const the = new RegExp("\\\\renewcommand\\s*\\{?\\\\the" + w + "\\}?\\s*\\{(.*)\\}\\s*$", "m").exec(pre);
+      if (new RegExp("\\\\(?:numberwithin|@addtoreset)\\s*(?:\\[[^\\]]*\\])?\\s*\\{" + w + "\\}").test(P)) return null;
+      const within = new RegExp("\\\\counterwithin\\s*\\{" + w + "\\}\\s*\\{(\\w+)\\}").exec(P), without = new RegExp("\\\\counterwithout\\s*\\{" + w + "\\}").test(P);
+      const the = new RegExp("\\\\renewcommand\\s*\\{?\\\\the" + w + "\\}?\\s*\\{(.*)\\}\\s*$", "m").exec(P);
       if (the) {
         if (within && within[1] === "section" && the[1].replace(/\s/g, "") === "\\arabic{section}-\\arabic{" + w + "}") return "section-";
         if (chapters && the[1].replace(/\s/g, "") === "\\thechapter-\\arabic{" + w + "}") return "chapter-";
@@ -1236,79 +1324,128 @@
       return chapters && !without ? "chapter." : "";
     };
     const modes = { figure: mode("figure"), table: mode("table") };
-    const secOk = !/\\(?:setcounter\s*\{\s*secnumdepth|renewcommand\s*\{?\\the(?:chapter|section|subsection|subsubsection)\b|ctexset|titleformat|usepackage\s*(?:\[[^\]]*\])?\s*\{[^}]*titlesec)/.test(pre);
-    const depth = chapters ? 2 : 3, levels = chapters ? ["chapter", "section", "subsection"] : ["section", "subsection", "subsubsection"];
-    const counts = { chapter: 0, section: 0, subsection: 0, subsubsection: 0, figure: 0, table: 0, note: 0 };
-    const floats = read.envs.filter((e) => e.endFrom < e.to && (FIGURE_FLOATS.has(e.name) || TABLE_FLOATS.has(e.name)));
-    let lost = false, target = null;
-    const theorems = read.envs.filter((e) => e.role === "text" && !PLAIN_TEXT_ENVS.has(e.name.replace(/\*$/, "")));
-    const secNo = (lvl) => { const k = levels.indexOf(lvl); return k < 0 ? null : levels.slice(0, k + 1).map((l) => counts[l]).join("."); };
-    for (const c of read.cmds) {
-      if (c.from < read.preamble.to) continue;
-      if (INCLUDE_CMDS.has(c.name) || c.name === "appendix") { lost = true; target = null; continue; }
-      if (c.role === "heading") {
-        const star = c.nameTo > c.from + 1 + c.name.length;
-        if (star) { target = null; continue; }
-        if (c.name === "chapter") { counts.chapter += 1; counts.section = counts.subsection = counts.subsubsection = 0; if (chapters) { counts.figure = modes.figure === "chapter." || modes.figure === "chapter-" ? 0 : counts.figure; counts.table = modes.table === "chapter." || modes.table === "chapter-" ? 0 : counts.table; counts.note = 0; } }
-        else if (c.name === "section") { counts.section += 1; counts.subsection = counts.subsubsection = 0; if (modes.figure === "section-") counts.figure = 0; if (modes.table === "section-") counts.table = 0; }
-        else if (c.name === "subsection") { counts.subsection += 1; counts.subsubsection = 0; }
-        else if (c.name === "subsubsection") counts.subsubsection += 1;
-        const k = levels.indexOf(c.name);
-        target = !lost && secOk && k >= 0 && k < depth + (chapters ? 0 : 0) + 1 && k <= depth ? { kind: c.name === "chapter" ? "chapter" : "section", n: secNo(c.name) } : null;
-        continue;
+    const levels = chapters ? ["chapter", "section", "subsection"] : ["section", "subsection", "subsubsection"];
+    const W = F.words, zh = F.heads === "zh", steps = F.heads !== "none";
+    // the number a heading prints and the one a \ref to it prints (measured, 22.12 M): {text, ref, tight}
+    const headLabel = (C, lvl) => {
+      const k = levels.indexOf(lvl);
+      if (k < 0 || F.heads == null || F.heads === "none") return null;
+      const ch = C.appx && chapters ? letterOf(C.chapter) : String(C.chapter), sec = C.appx && !chapters ? letterOf(C.section) : String(C.section);
+      if (ch == null || sec == null) return null;
+      if (lvl === "chapter") {
+        if (C.appx) return W.appendix ? { text: W.appendix + " " + ch, ref: ch } : null;
+        if (F.ctex) { const cn = chineseNumber(C.chapter); return cn ? { text: DOC_ZH[9] + cn + DOC_ZH[10], ref: cn } : null; }
+        return W.chapter ? { text: W.chapter + " " + ch, ref: ch } : null;
       }
-      if (c.name === "caption" && c.args.some((a) => !a.opt) && c.nameTo === c.from + 8) {
-        const f = floats.filter((e) => e.beginTo <= c.from && c.to <= e.endFrom).pop();
-        if (!f) continue;
-        const kind = FIGURE_FLOATS.has(f.name) ? "figure" : "table";
-        counts[kind] += 1;
-        const m = modes[kind], n = lost || m == null ? null : m === "" ? String(counts[kind]) : m === "chapter." ? counts.chapter + "." + counts[kind]
-          : m === "chapter-" ? counts.chapter + "-" + counts[kind] : counts.section + "-" + counts[kind];
-        const map = kind === "figure" ? out.fig : out.tab;
-        if (!map.has(f.from)) map.set(f.from, n);
-        target = n == null ? null : { kind: kind, n: n };
-        continue;
+      if (zh) {
+        if (lvl === "section") {
+          if (C.appx && !chapters) return { text: sec, ref: sec, tight: true };
+          const cn = chineseNumber(C.section); return cn ? { text: cn + DOC_ZH[12], ref: cn, tight: true } : null;
+        }
+        if (lvl === "subsection") { const cn = chineseNumber(C.subsection), w = cn ? DOC_ZH[13] + cn + DOC_ZH[14] : null; return w ? { text: w, ref: w, tight: true } : null; }
+        return { text: C.subsubsection + ".", ref: String(C.subsubsection) };
       }
-      if (c.name === "footnote" && c.args.some((a) => !a.opt)) { counts.note += 1; out.notes.set(c.from, lost ? null : String(counts.note)); continue; }
-      if (c.role === "item" && c.list && c.list.name === "enumerate") { target = null; continue; }
-      if (c.name === "label" && c.args.length) {
-        const key = text.slice(c.args[0].from + 1, c.args[0].to - 1).trim();
-        // in a theorem (and its like) a label names the theorem, whose number is not counted here: unknown
-        const own = theorems.some((e) => e.beginTo <= c.from && c.from < e.endFrom);
-        if (key && !out.labels.has(key)) out.labels.set(key, own ? null : target);
+      const parts = chapters ? [ch, C.section, C.subsection] : [sec, C.subsection, C.subsubsection];
+      const n = parts.slice(0, k + 1).join(".");
+      return { text: n, ref: n };
+    };
+    // one text's commands counted, from `from`; `rec`: whether what it finds is recorded (the main file's text before a
+    // chapter file is counted, not recorded)
+    const count = (C, r, t2, from, rec) => {
+      const floats = r.envs.filter((e) => e.endFrom < e.to && (FIGURE_FLOATS.has(e.name) || TABLE_FLOATS.has(e.name)));
+      const theorems = r.envs.filter((e) => e.role === "text" && !PLAIN_TEXT_ENVS.has(e.name.replace(/\*$/, "")));
+      for (const c of r.cmds) {
+        if (c.from < from) continue;
+        if (INCLUDE_CMDS.has(c.name)) { C.lost = true; C.target = null; continue; }
+        if (c.name === "appendix") {   // the headings start again at A, the floats and notes are not counted after it
+          C.appx = true; C.target = null;
+          if (chapters) C.chapter = 0; else C.section = 0;
+          C.subsection = C.subsubsection = 0;
+          continue;
+        }
+        if (c.role === "heading") {
+          const star = c.nameTo > c.from + 1 + c.name.length;
+          if (star) { C.target = null; if (rec) out.heads.set(c.from, null); continue; }
+          // TeX steps a heading's counter only where it numbers it (secnumdepth: none at all with 不编号)
+          if (steps) {
+            if (c.name === "chapter") { C.chapter += 1; C.section = C.subsection = C.subsubsection = 0; if (chapters) { if (modes.figure === "chapter." || modes.figure === "chapter-") C.figure = 0; if (modes.table === "chapter." || modes.table === "chapter-") C.table = 0; C.note = 0; } }
+            else if (c.name === "section") { C.section += 1; C.subsection = C.subsubsection = 0; if (modes.figure === "section-") C.figure = 0; if (modes.table === "section-") C.table = 0; }
+            else if (c.name === "subsection") { C.subsection += 1; C.subsubsection = 0; }
+            else if (c.name === "subsubsection" && !chapters) C.subsubsection += 1;
+          }
+          const label = C.lost ? null : headLabel(C, c.name);
+          if (rec) out.heads.set(c.from, label);
+          C.target = label ? { kind: c.name === "chapter" ? "chapter" : "section", n: label.ref } : null;
+          continue;
+        }
+        if (c.name === "caption" && c.args.some((a) => !a.opt) && c.nameTo === c.from + 8) {
+          const f = floats.filter((e) => e.beginTo <= c.from && c.to <= e.endFrom).pop();
+          if (!f) continue;
+          const kind = FIGURE_FLOATS.has(f.name) ? "figure" : "table";
+          C[kind] += 1;
+          const m = modes[kind], n = C.lost || C.appx || m == null ? null : m === "" ? String(C[kind]) : m === "chapter." ? (C.chapter > 0 ? C.chapter + "." : "") + C[kind]
+            : m === "chapter-" ? C.chapter + "-" + C[kind] : C.section + "-" + C[kind];
+          if (rec) { const map = kind === "figure" ? out.fig : out.tab; if (!map.has(f.from)) map.set(f.from, n); }
+          C.target = n == null ? null : { kind: kind, n: n };
+          continue;
+        }
+        if (c.name === "footnote" && c.args.some((a) => !a.opt)) { C.note += 1; if (rec) out.notes.set(c.from, C.lost || C.appx ? null : String(C.note)); continue; }
+        if (c.role === "item" && c.list && c.list.name === "enumerate") { C.target = null; continue; }
+        if (rec && c.name === "label" && c.args.length) {
+          const key = t2.slice(c.args[0].from + 1, c.args[0].to - 1).trim();
+          // in a theorem (and its like) a label names the theorem, whose number is not counted here: unknown
+          const own = theorems.some((e) => e.beginTo <= c.from && c.from < e.endFrom);
+          if (key && !out.labels.has(key)) out.labels.set(key, own ? null : C.target);
+        }
       }
+      return C;
+    };
+    let C = { chapter: 0, section: 0, subsection: 0, subsubsection: 0, figure: 0, table: 0, note: 0, lost: false, appx: false, target: null };
+    if (!read.preamble) {
+      // a chapter file: counted on from what its main file reads before it (kept while that text is the same)
+      const key = JSON.stringify([out.sig, F.heads, F.chapters, modes, F.words.appendix, F.words.chapter]) + doc.before;
+      if (!beforeKept.has(key)) {
+        if (beforeKept.size > 4) beforeKept.clear();
+        const b = readLatex(doc.before), at = b.preamble ? b.preamble.to : 0;
+        beforeKept.set(key, count(Object.assign({}, C), b, doc.before, at, false));
+      }
+      C = Object.assign({}, beforeKept.get(key), { target: null });
+      if (C.lost) return sign();
     }
-    out.sig = JSON.stringify([Array.from(out.fig.values()), Array.from(out.tab.values()), Array.from(out.notes.values()), Array.from(out.labels)]);
-    return out;
+    count(C, read, text, read.preamble ? read.preamble.to : 0, true);
+    return sign();
   }
   // The numbers before a change, still true after it, or null: when no command and no environment's \begin or \end is
   // touched, the preamble is not, and every command and environment reads as before (`cmp`, from `compared`), what
-  // numbersOf counts is the same -- only where each figure, table and footnote starts has moved.
+  // numbersOf counts is the same -- only where each figure, table, footnote and heading starts has moved.
   function numbersKept(old, num, read, ch, cmp) {
-    if (!old.preamble || !read.preamble || old.preamble.to !== read.preamble.to) return null;
+    if (!old.preamble !== !read.preamble || (old.preamble && old.preamble.to !== read.preamble.to)) return null;
     if (old.cmds.length !== read.cmds.length || cmp.cmds[0] + cmp.cmds[1] !== read.cmds.length) return null;
     if (old.envs.length !== read.envs.length || cmp.envs[0] + cmp.envs[1] !== read.envs.length) return null;
     let near = false;
     ch.iterChangedRanges((fa, ta, fb, tb) => {
-      if (fa <= old.preamble.to) near = true;
+      if (old.preamble && fa <= old.preamble.to) near = true;
       eachMeeting(read.cmds, fb, tb, (c) => { if (c.from <= tb && c.to >= fb) near = true; });
       eachMeeting(read.envs, fb, tb, (e) => { if ((e.from <= tb && e.beginTo >= fb) || (e.endFrom <= tb && e.to >= fb)) near = true; });
     });
     if (near) return null;
     const moved = (m) => { const out = new Map(); m.forEach((v, k) => out.set(cmp.map(k), v)); return out; };
-    return { fig: moved(num.fig), tab: moved(num.tab), notes: moved(num.notes), labels: num.labels, sig: num.sig };
+    return { fig: moved(num.fig), tab: moved(num.tab), notes: moved(num.notes), heads: moved(num.heads), labels: num.labels, words: num.words, sig: num.sig };
   }
 
   const PLAIN_TEXT_ENVS = new Set(["document", "abstract", "quote", "quotation", "verse", "center", "flushleft", "flushright", "doublespace",
     "onehalfspace", "singlespace", "spacing", "minipage", "multicols", "appendices", "landscape", "titlepage", "frame"]);
   // What a \cite chip says: author and year from the project's .bib (`cites`, from each key to its words), else the key.
   function citeWords(keys, cites) { return keys.map((k) => (cites && cites.get(k)) || k).join(t("；")); }
+  // \ref prints the number alone, as the PDF does ("Table~\ref{t}" reads "Table 1", 22.12 M, F4); the commands that print
+  // a name with it (\autoref, \cref …) say the kind in the interface's words.
   function refWords(name, keys, num) {
     return keys.map((k) => {
       const x = name === "pageref" || name === "nameref" ? null : num.labels.get(k);   // \nameref prints a title, not a number
       if (!x) return t("引用：{key}", { key: k });
+      if (name === "ref") return x.n;
       return x.kind === "figure" ? t("图 {n}", { n: x.n }) : x.kind === "table" ? t("表 {n}", { n: x.n }) : x.kind === "chapter" ? t("第 {n} 章", { n: x.n }) : t("第 {n} 节", { n: x.n });
-    }).join(t("、"));
+    }).join(name === "ref" ? ", " : t("、"));
   }
   // The visible character of an accent: the letter with its combining mark, composed.
   function accented(mark, letter) { return (letter.replace(/^\\i$/, "ı") + mark).normalize("NFC"); }
@@ -1526,6 +1663,12 @@
       }
       ignoreEvent() { return true; }
     }
+    // a paragraph break between words on one line (\par, 22.12 M F7): a new line, its first line indented as 首行缩进 says
+    class ParW extends CM.WidgetType {
+      constructor() { super(); this.plain = "\n"; }
+      eq() { return true; }
+      toDOM() { const el = mk("span", "latex-parbreak"); el.append(mk("span", "latex-parbreak-line"), mk("span", "latex-parbreak-indent")); return el; }
+    }
     // an empty cell of a grid (22.12 T): a box of the cell's width where the cursor stands, drawn inside its padding
     class CellW extends CM.WidgetType {
       constructor(cls, style) { super(); this.cls = cls; this.style = style; this.plain = ""; }
@@ -1538,7 +1681,9 @@
         return { left: x, right: x, top: r.top + (parseFloat(cs.paddingTop) || 0), bottom: r.bottom - (parseFloat(cs.paddingBottom) || 0) };
       }
     }
-    const hooks = { title: null, preamble: null };   // set by the editor: what a click on the title block and the 导言区 line does
+    // set by the editor: what a click on the title block and the 导言区 line does; `doc`, a chapter file's main file
+    // ({pre, local, before}: numbersOf), or a main file's own .sty and .cls ({local})
+    const hooks = { title: null, preamble: null, doc: null };
     // (a grid's cells and rows carry their widths: `style`)
     const marks = new Map();
     const mark = (cls, style) => {
@@ -1635,11 +1780,11 @@
         if (!(e.endFrom < e.to) || !near(e.from, e.to) || e.role === "text" || e.role === "list") continue;
         const own = alone(e.from, e.to), from = own ? lineOf(e.from).from : e.from, to = own ? lineOf(e.to).to : e.to;
         if (TABLE_FLOATS.has(e.name) || (TABULARS.has(e.name) && !inFloat)) {
-          const n = num.tab.get(e.from), wordOf = floatWord("table", n), g = gridOf(text, read, e);
+          const n = num.tab.get(e.from), wordOf = floatWord("table", n, num.words), g = gridOf(text, read, e);
           if (g) { gridPieces(g, TABLE_FLOATS.has(e.name) ? wordOf : null); continue; }   // its cells typed in place (22.12 T)
           const model = tableModel(doc, read, e);
           const widget = model ? new BlockW(info.typeset + "t" + wordOf + text.slice(e.from, e.to), () => tableDOM(model, wordOf), "")
-            : new ChipW(TABLE_FLOATS.has(e.name) ? floatWords(read, e, t("表格"), text) : t("表格"), "unit", own);
+            : new ChipW(TABLE_FLOATS.has(e.name) ? floatWords(read, e, t("表格"), text, num.words) : t("表格"), "unit", own);
           atom(from, to, widget, { block: own, kind: "table" });
           continue;
         }
@@ -1647,7 +1792,7 @@
           const model = figureModel(doc, read, e);
           const caps = read.cmds.filter((c) => c.name === "caption" && c.from > e.beginTo && c.to <= e.endFrom);
           const cap = caps.length === 1 && caps[0].nameTo === caps[0].from + 8 ? caps[0].args.filter((a) => !a.opt) : [];
-          const wordOf = floatWord("figure", num.fig.get(e.from));
+          const wordOf = floatWord("figure", num.fig.get(e.from), num.words);
           if (model && cap.length === 1) {
             const a = cap[0], pics = read.cmds.filter((c) => c.name === "includegraphics" && c.from > e.beginTo && c.to <= e.endFrom);
             const pathOf = (c) => { const x = c.args.filter((y) => !y.opt); return text.slice(x[0].from + 1, x[0].to - 1).trim(); };
@@ -1656,7 +1801,8 @@
             atom(a.to - 1, to, after.length ? new FigW(after, null) : null, { kind: "figure", slotFrom: true });
             continue;
           }
-          atom(from, to, model ? new BlockW(info.typeset + "f" + wordOf + text.slice(e.from, e.to), () => figureDOM(model, wordOf), "") : new ChipW(floatWords(read, e, t("图"), text), "unit", own), { block: own, kind: "figure" });
+          atom(from, to, model ? new BlockW(info.typeset + "f" + wordOf + text.slice(e.from, e.to), () => figureDOM(model, wordOf), "")
+            : new ChipW(floatWords(read, e, t("图"), text, num.words, "figure"), "unit", own), { block: own, kind: "figure" });
           continue;
         }
         if (e.role === "raw" && !TABULARS.has(e.name)) atom(from, to, new ChipW(t("LaTeX 内容"), "unit", own), { block: own, kind: "unit" });
@@ -1703,7 +1849,7 @@
           continue;
         }
         if (LINE_COMMANDS.has(n)) {
-          const words = lineWords(n);
+          const words = lineWords(n, num.words);
           if (alone(c.from, c.to)) { const l = lineOf(c.from); atom(l.from, l.to, new BlockW("l" + words, () => mk("div", "latex-line-mark", words)), { block: true, kind: "line" }); }
           else atom(c.from, c.to, new ChipW(words, "unit"), { kind: "unit" });
           continue;
@@ -1717,6 +1863,13 @@
         }
         if (ACCENTS[n] && args.length === 1 && /^\s*(?:\\i|[A-Za-z])\s*$/.test(arg(0))) { atom(c.from, c.to, new TextW(accented(ACCENTS[n], arg(0).trim())), { kind: "text" }); continue; }
         if (BREAKS.has(n)) { atom(c.from, c.to, new TextW("", "latex-br", "\n"), { kind: "break" }); continue; }
+        if (n === "par" && !c.args.length) {
+          // \par alone on its line: hidden, the line read as a blank one (F5); between words on a line: a new paragraph
+          // drawn there, its first line indented (F7)
+          const l = lineOf(c.from), before = codePart(text.slice(l.from, c.from)).trim(), after = codePart(text.slice(c.nameTo, l.to)).trim();
+          if (before && after) { atom(c.from, c.nameTo + (text[c.nameTo] === " " ? 1 : 0), new ParW(), { kind: "parbreak" }); continue; }
+          if (!before && !after) { atom(c.from, c.nameTo, null, { kind: "hidden" }); continue; }
+        }
         if (SILENT.has(n) || GROUP_CLASSES.has(n)) {
           c.args.forEach((a) => bareArgs.add(a.from));
           if (alone(c.from, c.nameTo) && !c.args.length) hideLine(c.from, c.nameTo);
@@ -1846,7 +1999,10 @@
         const a = c.args[c.args.length - 1], l = lineOf(c.from), lead = c.role === "heading" && !text.slice(l.from, c.from).trim();
         const rest = text.slice(c.to, lineOf(c.to).to).replace(/\\label\s*\{[^{}]*\}/g, "");
         const short = c.role === "heading" && c.args.length > 1 && c.args[0].opt ? word(text.slice(c.args[0].from + 1, c.args[0].to - 1)) : null;
-        hide(lead ? l.from : c.from, a.from + 1, { kind: "open", lead: lead, slotTo: true });
+        // a heading's number as the PDF prints it (22.12 M, F6): shown, never text -- the cursor passes it with the markup
+        const hn = c.role === "heading" ? num.heads.get(c.from) : null;
+        hide(lead ? l.from : c.from, a.from + 1, { kind: "open", lead: lead, slotTo: true,
+          widget: hn ? new TextW(hn.text, "latex-hnum latex-h latex-h" + HEADINGS.get(c.name) + (hn.tight ? " latex-hnum-tight" : ""), "") : null });
         hide(a.to - 1, c.to, { kind: "close", slotFrom: true, trail: c.role === "heading" && !codePart(rest).trim(),
           widget: short ? new TextW(t("（目录中：{words}）", { words: short }), "latex-short", "") : null });
         if (a.to - 1 > a.from + 1 && cls) marksOut.push([a.from + 1, a.to - 1, cls]);
@@ -1871,7 +2027,8 @@
         const items = e.role === "list" ? e.itemCmds : [];
         const bl = lineOf(e.from), bOwn = alone(e.from, argsEnd), el = lineOf(e.endFrom), eOwn = alone(e.endFrom, e.to);
         const titleOf = e.role === "text" && text[e.beginTo] === "[" ? word(text.slice(e.beginTo + 1, argsEnd - 1)) : null;
-        const label = e.name === "abstract" ? t("摘要") : e.name === "proof" ? t("证明") : titleOf ? titleOf : null;
+        const dw = num.words || {};   // the document's own words (22.12 M, F4)
+        const label = e.name === "abstract" ? dw.abstract || t("摘要") : e.name === "proof" ? dw.proof || t("证明") : titleOf ? titleOf : null;
         const head = label ? new TextW(label, e.name === "abstract" ? "latex-abstract-head" : "latex-env-head", label + "\n") : null;
         // typed at the end of \begin, words go to the first item, or the first line inside
         const fwd = items.length ? itemEnd(items[0]) : bOwn && bl.to + 1 < e.endFrom ? bl.to + 1 : null;
@@ -1915,6 +2072,7 @@
       const kindOf = (l) => {
         if (blank(l)) return "blank";
         if (commentOnly(l)) return "comment";
+        if (PAR_ONLY.test(codePart(l.text))) return "par";
         if (/^\s*\\item(?![A-Za-z])/.test(l.text)) return "item";
         return STRUCTURAL.test(l.text) ? "hard" : "text";
       };
@@ -1924,16 +2082,64 @@
         if (covered(L.to) || inGrid(L.from)) continue;
         const kl = kindOf(L);
         if (kl !== "text" && kl !== "item") continue;
-        if (/(?:^|[^\\])(?:\\\\)*\\\\\s*(?:\[[^\]]*\])?\s*$/.test(codePart(L.text))) continue;
+        if (/(?:^|[^\\])(?:\\\\)*\\\\\s*(?:\[[^\]]*\])?\s*$/.test(codePart(L.text)) || PAR_END.test(codePart(L.text))) continue;
         let j = k + 1;
         while (j <= doc.lines && commentOnly(doc.line(j))) j += 1;
-        if (j > doc.lines || kindOf(doc.line(j)) !== "text") continue;
+        if (j > doc.lines || kindOf(doc.line(j)) !== "text" || PAR_START.test(doc.line(j).text)) continue;
         const next = doc.line(j).text.trim()[0] || "", prev = codePart(L.text).trimEnd().slice(-1);
         spaces.push({ from: L.to, to: L.to + 1, widget: new TextW(CJK_ONE.test(prev) && CJK_ONE.test(next) ? "" : " ", "latex-text", " "), atom: true, kind: "space" });
       }
       out.push(...spaces);
-      // the line classes: where a visual line starts (its line break before is not hidden), by what it is in
       out.sort((a, b) => a.from - b.from || a.to - b.to);
+      // Blank lines take no room (22.12 M, F5 -- browser acceptance 2026-11-14: each blank line between paragraphs was a
+      // full empty line, three with 行距 双倍, where the PDF has none): TeX reads any run of them as one paragraph break,
+      // which the page shows as a new line, and 段间距 as a gap above the paragraph's first line. Of a run of blank lines
+      // (or lines of \par alone) between two lines, the last is joined to the line of words after it and the first to the
+      // line of words before it; a third and more, between, are the empty paragraphs Return makes, a line each where the
+      // cursor stands. Between two lines that are not words -- a float's \end and \end{document}, two floats -- the run
+      // stays, a place to type after the float (typed there, a blank line is written before the words: F7).
+      const gaps = [];
+      const fill = (a, b, extra) => {   // the parts of [a, b) no piece covers, hidden (a \par alone has its own piece)
+        let at = a;
+        for (let p = a; p <= b; p++) {
+          if (p < b && !covered(p)) continue;
+          if (p > at) gaps.push(Object.assign({ from: at, to: p, widget: null, atom: true, kind: "gap" }, extra));
+          at = p + 1;
+        }
+      };
+      const reachOf = (pos) => {   // where the pieces covering `pos` end (`out` is in order; it may overlap: neighbours too)
+        let lo = 0, hi = out.length;
+        while (lo < hi) { const mid = (lo + hi) >> 1; if (out[mid].from <= pos) lo = mid + 1; else hi = mid; }
+        let r = -1;
+        for (let k = lo - 1; k >= 0 && k >= lo - 8; k--) if (out[k].from <= pos && pos < out[k].to && out[k].to > r) r = out[k].to;
+        return r;
+      };
+      // the line before `n` that the page shows (hidden lines of comments, their line breaks with them, passed over)
+      const prevShown = (n) => { let m = n - 1; while (m >= 1 && commentOnly(doc.line(m)) && covered(doc.line(m).to)) m -= 1; return m; };
+      const emptyLine = (l) => (blank(l) || PAR_ONLY.test(codePart(l.text))) && l.from > bodyFrom && l.to < bodyTo && !inGrid(l.from) &&
+        (!covered(l.from - 1) || (prevShown(l.number) >= 1 && prevShown(l.number) < l.number - 1 && !covered(doc.line(prevShown(l.number)).to)));
+      const floatEnd = (l) => FLOAT_END.test(codePart(l.text).trim()) || (inGrid(l.from) && inGrid(l.to));
+      const wordsLine = (l, below) => !!l && !blank(l) && l.from >= bodyFrom && l.from < bodyTo && !blockLine(l) && !(below ? FLOAT_BEGIN.test(l.text) || inGrid(l.from) : floatEnd(l));
+      for (let k = first; k <= last && k <= doc.lines; k++) {
+        if (!emptyLine(doc.line(k))) continue;
+        let j = k;
+        while (j < doc.lines && !covered(doc.line(j).to) && emptyLine(doc.line(j + 1))) j += 1;
+        const A = prevShown(k) >= 1 ? doc.line(prevShown(k)) : null, Lj = doc.line(j), B = j < doc.lines ? doc.line(j + 1) : null;
+        // the last line's break may be hidden already: by a paragraph of comments, which joins it to the words after them
+        // (as joined forward), or by a \begin alone on the line after, which leaves nothing on it (joined backward then)
+        const swallowed = covered(Lj.to) ? reachOf(Lj.to) : -1;
+        const onWords = swallowed > 0 && text[swallowed - 1] === "\n" && wordsLine(lineOf(swallowed), true);
+        const wa = wordsLine(A, false), wb = swallowed < 0 ? wordsLine(B, true) : onWords, n = j - k + 1;
+        const back = (L) => fill(L.number === k && A ? A.to : doc.line(L.number - 1).to, L.to, { trail: true });
+        const fwd = (L) => fill(L.from, Math.min(L.to + 1, len), { lead: true });
+        if (wa || wb) {
+          if (!onWords) { if (wb) fwd(Lj); else back(Lj); }
+          if (n > 1) { const L1 = doc.line(k); if (wa) back(L1); else fwd(L1); }
+        }
+        k = j;
+      }
+      if (gaps.length) { out.push(...gaps); out.sort((a, b) => a.from - b.from || a.to - b.to); }
+      // the line classes: where a visual line starts (its line break before is not hidden), by what it is in
       const lineEnvs = read.envs.filter((e) => e.endFrom < e.to && (e.role === "list" || ENV_LINES[e.name] || (e.role === "text" && e.name !== "document")) && near(e.from, e.to));
       const lf = within ? lineOf(within[0]).number : 1, ll = within ? lineOf(within[1]).number : doc.lines;
       for (let k = lf; k <= ll; k++) {
@@ -1954,14 +2160,48 @@
       function paraStart(L) {
         if (L.from < bodyFrom || L.from >= bodyTo) return null;
         let C = L, gap = false;
-        while (C.number < doc.lines && (quietLine(C.text) || blank(C)) && covered(C.to)) { if (blank(C)) gap = true; C = doc.line(C.number + 1); }
+        const breaks = (l) => blank(l) || PAR_LINE.test(codePart(l.text));
+        while (C.number < doc.lines && (quietLine(C.text) || blank(C)) && covered(C.to)) { if (breaks(C)) gap = true; C = doc.line(C.number + 1); }
+        // an empty paragraph the page shows (F5: Return's, the place after a float): its cursor at the indent
+        if ((blank(C) || kindOf(C) === "par") && !covered(C.to)) return "latex-para";
         if (C.from >= bodyTo || kindOf(C) !== "text" || /^\s*\\noindent(?![A-Za-z])/.test(C.text)) return null;
-        // a heading's first paragraph stays so across a blank line, as TeX's \@afterheading does
-        let k = L.number - 1;
-        while (k >= 1 && (quietLine(doc.line(k).text) || blank(doc.line(k)))) { if (blank(doc.line(k))) gap = true; k -= 1; }
-        if (k < 1 || doc.line(k).to <= bodyFrom) return "latex-para";
-        if (HEADING_LINE.test(doc.line(k).text)) return "latex-para-first";
-        return gap || PARA_AFTER.test(doc.line(k).text) ? "latex-para" : null;
+        if (PAR_START.test(C.text)) return "latex-para";   // \par ends the paragraph before the words after it
+        return startAfter(L.number - 1, gap);
+      }
+      // What the lines up to `k` (the quiet and blank ones above it passed over) say of the words after them: a paragraph
+      // starts after a blank line or \par, the body's start, \maketitle, a contents line or a page break, and -- the
+      // first after a heading -- a heading, as TeX's \@afterheading does; after anything else the paragraph goes on
+      // (what follows a list, a quote or a displayed formula). A float on lines of its own is passed over as TeX passes
+      // it (22.12 M, F7): in a paragraph (words before it on the line above) the paragraph goes on round it, so the words
+      // after it are the same paragraph -- "Second paragraph here. Var" --; between paragraphs the words after it start one.
+      function startAfter(k, gap) {
+        for (let n = 0; n < 50; n++) {
+          while (k >= 1 && (quietLine(doc.line(k).text) || blank(doc.line(k)))) { if (blank(doc.line(k)) || PAR_LINE.test(codePart(doc.line(k).text))) gap = true; k -= 1; }
+          if (k < 1 || doc.line(k).to <= bodyFrom) return "latex-para";
+          const P = doc.line(k), code = codePart(P.text);
+          if (HEADING_LINE.test(P.text)) return "latex-para-first";   // across a blank line too
+          if (gap || PARA_AFTER.test(P.text) || PAR_END.test(code)) return "latex-para";
+          const e = FLOAT_END.test(code.trim()) ? floatOn(P) : null;
+          if (!e) return null;
+          k = lineOf(e.from).number - 1;
+        }
+        return null;
+      }
+      // the float that ends on line P, on lines of its own (nothing before its \begin on that line)
+      function floatOn(P) {
+        const r = meetRange(read.envs, P.from, P.to);
+        for (let i = r[0]; i < r[1]; i++) {
+          const e = read.envs[i];
+          if ((TABLE_FLOATS.has(e.name) || FIGURE_FLOATS.has(e.name)) && e.endFrom < e.to && e.to >= P.from && e.to <= P.to && !text.slice(lineOf(e.from).from, e.from).trim()) return e;
+        }
+        return null;
+      }
+      // a line class goes where the page's line starts: a heading's line joined to the blank line before it (F5) is that
+      // line's start
+      function visualStart(x) {
+        let p = x[0];
+        for (let n = 0; n < 50 && p > 0 && text[p - 1] === "\n" && covered(p - 1); n++) p = lineOf(p - 1).from;
+        return p === x[0] ? x : [p].concat(x.slice(1));
       }
       // a figure's caption sits under its images, centred
       for (const p of out) if (p.frame && p.frame.kind === "figure") linesOut.push([lineOf(p.from).from, "latex-figure-line"]);
@@ -1978,7 +2218,7 @@
         bridges: bridges.filter((x) => meets(x[0], x[1])),
         pieces: out.filter((p) => meets(p.from, p.to)),
         marks: marksOut.filter((m) => meets(m[0], m[1])),
-        lines: linesOut.filter((x) => !within || (x[0] >= within[0] && x[0] <= within[1])),
+        lines: linesOut.map(visualStart).filter((x) => !within || (x[0] >= within[0] && x[0] <= within[1])),
         points: points.filter((p) => meets(p.at, p.at)),
       };
     }
@@ -2007,7 +2247,7 @@
     // and drawn again only where `redraw` says -- widened over every piece that meets the place, before and after, so
     // none is left half drawn -- and a key costs the same in a long file as in a short one. Nothing depends on the
     // selection: a move of the cursor changes nothing drawn.
-    const infoOf = (text, read, math, cites, num) => ({ text: text, num: num || numbersOf(text, read), math: math, cites: cites, typeset: math ? "K" : "-" });
+    const infoOf = (text, read, math, cites, num) => ({ text: text, num: num || numbersOf(text, read, hooks.doc || null), math: math, cites: cites, typeset: math ? "K" : "-" });
     const whole = (state, read, info, math) => {
       const d = decorations(state.doc, read, info, null);
       return { read: read, info: info, math: math, open: false, live: false, deco: D.set(d.deco, true), atoms: D.set(d.atoms, true) };
@@ -2230,6 +2470,13 @@
       }
       return true;
     }
+    // Words typed on an empty line right after a float (22.12 M, F7 -- browser acceptance 2026-11-14: "Var" typed under a
+    // new table printed as "Second paragraph here. Var", the paragraph before the table going on): they start a paragraph
+    // of their own, as the page shows them, so a blank line is written before them.
+    function afterFloat(doc, at) {
+      const l = doc.lineAt(at);
+      return l.number > 1 && !l.text.trim() && FLOAT_END.test(codePart(doc.line(l.number - 1).text).trim());
+    }
     // Typed or pasted words as LaTeX that prints them: the special characters escaped; line breaks a space inside a
     // heading, a style or a caption, a new \item in a list, else a new paragraph.
     function literal(text, ctx, br, indent) {
@@ -2304,7 +2551,9 @@
           at = there;
         }
         if (p.text) {
-          const place = placeOf(value, at), s2 = compose ? p.text : literal(p.text, place.ctx, br, place.indent);
+          const place = placeOf(value, at);
+          let s2 = compose ? p.text : literal(p.text, place.ctx, br, place.indent);
+          if (!compose && place.ctx === "text" && afterFloat(state.doc, at)) { s2 = br + s2; risky = true; }
           if (s2 !== p.text || /\n/.test(p.text)) risky = true;
           // typed into an empty cell, the words are set apart from the & on each side: "a & b & c" (22.12 T)
           const pad = !compose && p.to === p.from && place.ctx === "cell" ? cellPad(value, at) : null;
@@ -2426,7 +2675,9 @@
       const there = typedAt(st0, v0, from);
       const gone = { changes: c1, selection: { anchor: from }, effects: done, userEvent: "input.type.compose.made" };
       if (there == null) return Object.assign(gone, { refused: t("这里不能输入文字。") });
-      const place = placeOf(v0, there), ins = literal(text, place.ctx, state.lineBreak, place.indent);
+      const place = placeOf(v0, there);
+      let ins = literal(text, place.ctx, state.lineBreak, place.indent);
+      if (place.ctx === "text" && afterFloat(st0.doc, there)) ins = state.lineBreak + ins;
       let ch = c1.compose(st0.changes({ from: there, insert: ins })), nd = ch.apply(state.doc);
       const more = joints(ch, nd);
       if (there === from && ins.split(state.lineBreak).join("\n") === text && !more.length) return { effects: done };
@@ -2453,11 +2704,15 @@
   // A group is drawn in its face or size when it holds text and its closing brace is not inside a formula (where the
   // brace belongs to the formula, not to the group).
   function groupShown(read, g) { return g.to - 1 > g.nameTo && !read.maths.some((f) => f.from < g.to - 1 && g.to - 1 < f.to); }
-  // The words a float the edit view cannot draw says: its kind and its caption's plain words.
-  function floatWords(read, e, kind, text) {
+  // The words a float the edit view cannot draw says: its kind and its caption's plain words -- the kind in the
+  // document's own word where it is known ("Figure: The rate", `words` from numbersOf; 22.12 M, F4), never a number
+  // (such a float is not counted here: subfigures, two captions).
+  function floatWords(read, e, kind, text, words, which) {
     const cap = read.cmds.find((c) => c.name === "caption" && c.from > e.beginTo && c.to <= e.endFrom);
-    const a = cap ? cap.args.filter((x) => !x.opt).pop() : null, words = a ? plainWords(text.slice(a.from + 1, a.to - 1)) : null;
-    return words ? t("{kind}：{words}", { kind: kind, words: words }) : kind;
+    const a = cap ? cap.args.filter((x) => !x.opt).pop() : null, said = a ? plainWords(text.slice(a.from + 1, a.to - 1)) : null;
+    const name = words ? words[which || "table"] : null;
+    if (name) return said ? name + (words.sep || ": ") + said : name;
+    return said ? t("{kind}：{words}", { kind: kind, words: said }) : kind;
   }
 
   // The edit view's extensions, which 「显示代码」 takes out (a compartment): the field, the atomic ranges, the filter
@@ -2644,15 +2899,31 @@
         return { changes: spec.changes, selection: spec.selection };
       }
       para = br + /^[ \t]*/.exec(st.doc.lineAt(item.from).text)[0] + "\\item ";
-    } else if (!inline.length) {
-      // nothing before the cursor on its line: one line break makes the paragraph (or an empty one)
-      const ls = text.lastIndexOf("\n", pos - 1) + 1;
-      if (!text.slice(ls, pos).trim()) para = br;
+    }
+    // where the cursor ends up, from the end of what is inserted (a third line break after it: `back` 1)
+    let back = 0;
+    if (!list && !inline.length) {
+      // blank lines take no room (22.12 M, F5): a new empty paragraph is a blank line between two others, so the page
+      // shows it, a line where the cursor stands
+      let line = st.doc.lineAt(pos);
+      // at the end of a line the page shows as a block (the 导言区 line, \maketitle's title): at the start of the next
+      const whole = pos === line.to && line.number < st.doc.lines ? w.atomAt(val, pos, "to") : null;
+      if (whole && whole.from <= line.from) { pos = line.to + 1; line = st.doc.lineAt(pos); }
+      const before = text.slice(line.from, pos).trim(), after = text.slice(pos, line.to).trim();
+      const above = line.number > 1 ? st.doc.line(line.number - 1).text.trim() : "x", below = line.number < st.doc.lines ? st.doc.line(line.number + 1) : null;
+      const prev = line.number > 1 ? st.doc.line(line.number - 1).text : "";
+      if (!before && !after) para = br;                              // on an empty paragraph: another under it
+      else if (!before) {                                            // at a paragraph's start: an empty one above it
+        if (!above) para = br + br;
+        else if (commentLine(prev) || !STRUCTURAL.test(prev)) para = br;   // inside a paragraph (its line before is words): split there
+        else para = br + br + br;                                    // after a heading, a block, the body's start
+      } else if (!after && below && STRUCTURAL.test(below.text) && !commentLine(below.text)) { para = br + br + br; back = 1; }   // before a heading, a block or the end
+      else if (!after && below && below.text.trim()) para = br;      // at a line's end inside a paragraph: split there
     }
     const outer = inline.slice().sort((a, b) => a.from - b.from);
     const closes = outer.map(() => "}").join(""), opens = outer.map((f) => text.slice(f.from, f.openTo)).join("");
     const ins = closes + para + opens;
-    return make([{ from: pos, insert: ins }], (ch) => ch.mapPos(pos, -1) + ins.split(br).join("\n").length);
+    return make([{ from: pos, insert: ins }], (ch) => ch.mapPos(pos, -1) + ins.split(br).join("\n").length - back);
   }
   // Backspace (dir -1) and Delete (dir 1) where Word does more than CodeMirror: at the start of a heading's words it
   // becomes body text, joined with the paragraph before when that is running text; at the edge of a style the
@@ -2965,6 +3236,12 @@
   }
   const PARA_AFTER = /^\s*\\(?:begin\s*\{document\}|maketitle|tableofcontents|listoffigures|listoftables|newpage|clearpage|cleardoublepage|pagebreak)(?![A-Za-z])/;
   const HEADING_LINE = /^\s*\\(?:part|chapter|section|subsection|subsubsection)\*?\s*[[{]/;
+  // \par (22.12 M, F7): a line of it alone (its code), one that holds it, one that ends or starts with it
+  const commentLine = (line) => { const c = codePart(line); return c.length < line.length && !c.trim(); };
+  const PAR_ONLY = /^\s*\\par(?![A-Za-z])\s*$/, PAR_LINE = /(?:^|[^\\])(?:\\\\)*\\par(?![A-Za-z])/;
+  const PAR_END = /(?:^|[^\\])(?:\\\\)*\\par\s*$/, PAR_START = /^\s*\\par(?![A-Za-z])/;
+  // a float's \end, the whole code of its line, and its \begin at a line's start
+  const FLOAT_END = /^\\end\s*\{(?:figure|table)\*?\}$/, FLOAT_BEGIN = /^\s*\\begin\s*\{(?:figure|table)\*?\}/;
   // A change on a line can start or end the paragraph of the next line with words, and a quiet or blank line's place is
   // drawn from what follows it: the place drawn again reaches back over the quiet and blank lines before it and on, over
   // those after it, to the next line with words.
@@ -2972,6 +3249,7 @@
     let a = doc.lineAt(Math.max(0, Math.min(s[0], doc.length))).number, b = doc.lineAt(Math.max(0, Math.min(s[1], doc.length))).number;
     const still = (n) => { const t2 = doc.line(n).text; return !t2.trim() || quietLine(t2); };
     while (a > 1 && still(a - 1)) a -= 1;
+    if (a > 1) a -= 1;   // and the line before them: blank lines are joined to it (22.12 M, F5)
     if (b < doc.lines) { b += 1; while (b < doc.lines && still(b)) b += 1; }
     return [Math.min(s[0], doc.line(a).from), Math.max(s[1], doc.line(b).to)];
   }
@@ -4505,6 +4783,7 @@
   function load(me, file) {
     const CM = me.CM;
     me.wordComp = new CM.Compartment();
+    me.codeComp = new CM.Compartment();   // 22.12 M (F3): the code's colours, only while 显示代码 shows the code
     // B1 (22.1): a file the edit view cannot show safely opens as code, the switch on and disabled, saying why: a
     // read-only file always (`forced`), one the reader is unsure of while it is so (`unsure`, read again as it changes)
     me.forced = file.read_only ? t("这个文件只能查看，只显示代码。") : null;
@@ -4524,7 +4803,7 @@
       me.wordComp.of(code ? [] : wordExtensions(CM, { say: (s) => sayEdit(me, s) })),   // first, so its keys come first
       historyOf(CM), CM.drawSelection(), CM.highlightSpecialChars(), CM.EditorView.lineWrapping,
       returnKeys(CM), formatKeys(CM, me), CM.keymap.of([].concat(CM.defaultKeymap, CM.historyKeymap)),
-      CM.StreamLanguage.define(CM.stex), CM.syntaxHighlighting(highlight(CM)), includeLinks(CM, me),
+      me.codeComp.of(code ? codeLook(CM) : []), includeLinks(CM, me),
       CM.EditorView.contentAttributes.of({ "aria-label": t("LaTeX 源码"), spellcheck: "false" }),
       CM.EditorView.updateListener.of((update) => {
         changed(me, update);
@@ -4596,7 +4875,7 @@
     if (why && !codeShown(me)) {
       sourceShown.add(me.path);
       me.ui.page.classList.add("is-source");
-      me.view.dispatch({ effects: [me.wordComp.reconfigure([])].concat(scrollTo(me, st.selection.main.head)) });
+      me.view.dispatch({ effects: [me.wordComp.reconfigure([]), me.codeComp.reconfigure(codeLook(me.CM))].concat(scrollTo(me, st.selection.main.head)) });
       closePicker(me);
     }
     me.codeNote = null;
@@ -4628,7 +4907,8 @@
     }
     if (want) sourceShown.add(me.path); else sourceShown.delete(me.path);
     me.ui.page.classList.toggle("is-source", want);
-    me.view.dispatch({ effects: [me.wordComp.reconfigure(want ? [] : wordExtensions(me.CM, { say: (s) => sayEdit(me, s) }))].concat(scrollTo(me, me.view.state.selection.main.head)) });
+    me.view.dispatch({ effects: [me.wordComp.reconfigure(want ? [] : wordExtensions(me.CM, { say: (s) => sayEdit(me, s) })),
+      me.codeComp.reconfigure(want ? codeLook(me.CM) : [])].concat(scrollTo(me, me.view.state.selection.main.head)) });
     // the edit view's filter moves the cursor out of what is hidden; either way it stays in sight
     if (!want) me.view.dispatch({ selection: me.view.state.selection, effects: scrollTo(me, me.view.state.selection.main.head) });
     me.note = null;
@@ -4648,6 +4928,14 @@
     loadMath().then(() => { if (ed === me && me.view) me.view.dispatch({ effects: wordField(me.CM).mathOn.of(true) }); }, () => {});
   }
 
+  // The code's own look in 显示代码 (22.12 M, F3 -- browser acceptance 2026-11-14: a number in the edit view carried the
+  // code's gray-brown): its language and colours are in a compartment of their own, given only while the code is shown,
+  // so no word of the edit view is ever coloured as code.
+  let looks = null;
+  function codeLook(CM) {
+    if (!looks || looks.CM !== CM) looks = { CM: CM, ext: [CM.StreamLanguage.define(CM.stex), CM.syntaxHighlighting(highlight(CM))] };
+    return looks.ext;
+  }
   // Colours from the palette's own tokens (8): commands olive, comments the quiet gray, the rest ink.
   function highlight(CM) {
     const tags = CM.tags;
@@ -5388,6 +5676,11 @@
     hooks.title = () => { if (ed !== me || !me.ui.format) return; me.ui.format.pick("layout"); const f = me.ui.format.layout.info && me.ui.format.layout.info.title; if (f && typeof f.focus === "function") f.focus(); };
     hooks.preamble = () => { if (ed !== me || !me.ui.format) return; me.ui.format.pick("layout"); };
     hooks.cites = me.cites || null;
+    // what the PDF prints (22.12 M): a chapter file is numbered from its main file's preamble and what the main file reads
+    // before it; a main file from its own text, with the project's own .sty and .cls it loads
+    const f = me.format;
+    hooks.doc = f ? { pre: typeof f.preamble === "string" && !f.cut ? f.preamble : null, local: f.local || null,
+      before: typeof f.before === "string" ? f.before : null } : null;
   }
   // \cite chips say author and year: the project's .bib entries are read once a file with a citation is open (a moment
   // after it loads, so opening never waits), then the chips are drawn again.
@@ -5672,7 +5965,7 @@
         if (x.thumb) {
           const img = mk("img", "latex-thumb");
           img.alt = ""; img.loading = "lazy";
-          img.src = "/api/workspace/asset?path=" + encodeURIComponent(x.path);
+          img.src = (DRAWN.test(x.path) ? "/api/latex/thumb?path=" : "/api/workspace/asset?path=") + encodeURIComponent(x.path);
           img.addEventListener("error", () => { if (img.remove) img.remove(); });
           b.appendChild(img);
         }
@@ -5851,8 +6144,11 @@
         unable("none", t("不编号"), set && set.capnum.value === "within" && !set.capnum.mine && set.secnum.value !== "none" ? t("图表按章或节编号时不能选") : null)];
       case "capname": return [unable("zh", t("图 / 表"), set && !layout.cjk ? t("中文图表名需要中文文档类") : null), ["en", "Figure / Table"]];
       case "capnum": {
-        const within = unable("within", t("按章或节编号（图 2-3）"), set && set.secnum.value === "none" && !set.secnum.mine && set.capnum.value !== "within" ? t("章节不编号时不能选") : null);
-        return layout && layout.chapters ? [["continuous", t("连续编号（图 1）")], ["", t("按章编号（图 2.3）")], within] : [["", t("连续编号（图 1）")], within];
+        // in the document's own word (22.12 M, F4): 「连续编号（Figure 1）」 in an English paper, as its captions print
+        const fig = (set && !set.capname.mine ? set.capname.value : layout ? layout.capDefault : "zh") === "en" ? DOC_EN.figure : DOC_ZH[0];
+        const within = unable("within", t("按章或节编号（{fig} 2-3）", { fig: fig }), set && set.secnum.value === "none" && !set.secnum.mine && set.capnum.value !== "within" ? t("章节不编号时不能选") : null);
+        return layout && layout.chapters ? [["continuous", t("连续编号（{fig} 1）", { fig: fig })], ["", t("按章编号（{fig} 2.3）", { fig: fig })], within]
+          : [["", t("连续编号（{fig} 1）", { fig: fig })], within];
       }
       default: return [];
     }
@@ -5966,6 +6262,8 @@
     return { all: all, first: first };
   }
 
+  // 段间距 on the page: a line is 1.8em times 行距's stretch (the page's line height, 22.12 A2)
+  const PARSKIP_GAP = { half: "calc(0.9em * var(--latex-stretch, 1))", one: "calc(1.8em * var(--latex-stretch, 1))" };
   // Where the settings come from: the open file's preamble when it is the main file, else the main file's (`format`).
   function layoutState(me) {
     const facts = panelFacts(me), off = layoutOff(me);
@@ -5999,6 +6297,9 @@
       const ind = pageIndent(layout && !layout.why ? layout : null, st.pre);
       me.ui.box.style.setProperty("--latex-indent", ind.all);
       me.ui.box.style.setProperty("--latex-indent-first", ind.first);
+      // and the space between paragraphs follows 段间距 (22.12 M, F5): none, half a line or a line of the page's own
+      const ps = layout && !layout.why ? layout.settings.parskip : null;
+      me.ui.box.style.setProperty("--latex-parskip", ps && !ps.mine ? PARSKIP_GAP[ps.value] || "0" : "0");
     }
     if (me.ui.format.panes.layout.classList.contains("hidden") && !force) return;
     const main = st.facts.main;
@@ -6511,6 +6812,6 @@
       unsureWhy: unsureWhy, enterSpec: enterSpec, backSpec: backSpec, plainOf: plainOf, numbersOf: numbersOf, plainWords: plainWords,
       docInfoOf: docInfoOf, docInfoSpec: docInfoSpec, unescapeTex: unescapeTex, escapeTyped: escapeTyped,
       quietLine: quietLine, paraReach: paraReach, pageIndent: pageIndent, historyOf: historyOf, heldIn: heldIn, newLabel: newLabel, passageField: passageField,
-      gridOf: gridOf, gridAt: gridAt, cellAt: cellAt, gridSpec: gridSpec, gridHeader: gridHeader, specItems: specItems, floatWord: floatWord }),
+      codeLook: codeLook, gridOf: gridOf, gridAt: gridAt, cellAt: cellAt, gridSpec: gridSpec, gridHeader: gridHeader, specItems: specItems, floatWord: floatWord }),
   });
 })();

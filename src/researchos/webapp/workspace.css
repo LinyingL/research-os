@@ -371,6 +371,10 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-editor .cm-content.latex-word { font-family: var(--font-sans); font-size: .95rem; }
 .latex-word .latex-h { font-family: var(--font-serif); font-weight: 600; }
 .latex-h4, .latex-h5 { font-size: 1rem; }
+/* 22.12 M (F6): a heading's number as the PDF prints it, in the heading's face and size, a space after it ("1 引言") but
+   none after 一、 or （一） (latex-hnum-tight), as ctex sets them; shown only, never selected as text */
+.latex-word .latex-hnum { margin-right: .6em; user-select: none; }
+.latex-word .latex-hnum.latex-hnum-tight { margin-right: 0; }
 .latex-b { font-weight: 600; } .latex-i { font-style: italic; } .latex-u { text-decoration: underline; }
 .latex-chip { font-family: var(--font-sans); font-size: .78rem; color: var(--ink-soft); background: var(--paper-alt); border: 1px solid var(--line); border-radius: 3px; padding: 0 .3em; }
 /* a formula wider than the column scrolls inside its own line, never past the column (as KaTeX's own advice) */
@@ -443,6 +447,10 @@ body.canvas-mode #view-latex { flex: 1; min-height: 0; display: flex; flex-direc
 .latex-side-rest > p { margin: 0; }
 .latex-file-name { min-width: 0; overflow-wrap: anywhere; font-family: var(--font-sans); }
 .latex-tool[aria-pressed="true"] { border-color: var(--ink); background: var(--paper); }
+/* 22.12 M (F2, browser acceptance 2026-11-14): a button of the right column that cannot be used looks it, as the disabled
+   selects beside it do -- gray words on no fill and a faint edge, never pressed, no hover. */
+.latex-side .btn:disabled, .latex-side .btn:disabled:hover { color: var(--gray); background: transparent; border-color: var(--line); cursor: default; }
+.latex-side .btn:disabled .latex-key { color: inherit; }
 .latex-key { font-size: .75rem; color: var(--gray); }
 .latex-format-reason, .latex-format-note { margin: 0; }
 .latex-picker { display: flex; flex-direction: column; align-items: flex-start; gap: .4rem; padding: .5rem .6rem; background: var(--paper-alt); border: 1px solid var(--line); }
@@ -543,6 +551,12 @@ span.latex-abstract-head { display: block; }
 .latex-editor .cm-content.latex-word .cm-line.latex-para { text-indent: var(--latex-indent, 1.5em); }
 .latex-editor .cm-content.latex-word .cm-line.latex-para-first { text-indent: var(--latex-indent-first, 0); }
 .latex-editor .cm-content.latex-word .cm-line.latex-para *, .latex-editor .cm-content.latex-word .cm-line.latex-para-first * { text-indent: 0; }
+/* 22.12 M (F5, browser acceptance 2026-11-14): paragraphs apart as 段间距 says -- --latex-parskip, none, half a line or a
+   line, set by the page from the main file -- whatever the blank lines between them in the source, which take no room;
+   F7: a \par between words is a new line there, its first line indented as 首行缩进 says. */
+.latex-editor .cm-content.latex-word .cm-line.latex-para, .latex-editor .cm-content.latex-word .cm-line.latex-para-first { padding-top: var(--latex-parskip, 0); }
+.latex-word .latex-parbreak-line { display: block; }
+.latex-word .latex-parbreak-indent { display: inline-block; width: var(--latex-indent, 1.5em); }
 .latex-editor .cm-content.latex-word .latex-env-head, .latex-editor .cm-content.latex-word span.latex-abstract-head,
 .latex-editor .cm-content.latex-word span.latex-math-display { display: inline-block; width: 100%; vertical-align: top; }
 .latex-editor .cm-content.latex-word .latex-env-head { padding-top: .3rem; font-size: .84rem; color: var(--ink); }

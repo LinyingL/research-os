@@ -503,6 +503,9 @@ def test_a_live_engine_started_by_serve_refuses_a_write_without_the_session(tmp_
 #:   tidies    reads, and also writes -- but only for a request that carries the session (the space panel's start of
 #:             the conversion of an old run store, in the engine's background, and its keeping the store's limit,
 #:             DESIGN.md 19.8)
+#:   draws     reads a project figure and runs a converter (pdftoppm, Ghostscript or sips: no shell, 10 s) for a PNG of
+#:             its first page, kept in the engine's own home (`<home>/latex-thumbs/`, derived, DESIGN.md 22.12 M);
+#:             never writes into the project
 #:   none      the 404 for an unknown /api/ path
 #: The sample is a request that reaches the route. No route opens an application, changes a setting, writes into
 #: the project or starts a scan; those are POSTs, which need the session.
@@ -537,6 +540,7 @@ GET_ROUTES: dict[str, tuple[str, str]] = {
     "/api/latex/drafts": ("read", "/api/latex/drafts"),   # 22.10: 正文's list of drafts
     "/api/latex/export": ("read", "/api/latex/export?path=paper/main.tex"),   # 22.4: the export's settings line
     "/api/latex/insert": ("read", "/api/latex/insert?path=paper/main.tex&what=images"),   # 22.12: 格式与插入's pickers
+    "/api/latex/thumb": ("draws", "/api/latex/thumb?path=figs/fig1.pdf"),   # 22.12 M: a PDF figure's first page
     "/api/workspace/asset": ("read", "/api/workspace/asset?path=figs/fig1.png"),
     "/api/summary": ("read", "/api/summary"),
     "/api/settings/llm": ("read", "/api/settings/llm"),
@@ -609,7 +613,8 @@ def test_the_get_audit_names_every_route_do_get_answers():
     (does it write, start something, open an application, change a setting?)."""
     declared = _routes_in_do_get()
     assert declared == set(GET_ROUTES), (sorted(declared - set(GET_ROUTES)), sorted(set(GET_ROUTES) - declared))
-    assert {kind for kind, _sample in GET_ROUTES.values()} == {"boot", "page", "read", "probe", "recovers", "tidies", "none"}
+    assert {kind for kind, _sample in GET_ROUTES.values()} == {"boot", "page", "read", "probe", "recovers", "tidies", "draws", "none"}
+    assert [r for r, (kind, _s) in GET_ROUTES.items() if kind == "draws"] == ["/api/latex/thumb"]
     assert [r for r, (kind, _s) in GET_ROUTES.items() if kind == "recovers"] == ["/api/agents/runs"]
     assert [r for r, (kind, _s) in GET_ROUTES.items() if kind == "tidies"] == ["/api/agents/store"]
 
@@ -631,11 +636,18 @@ def _tree_state(*roots: Path) -> dict[str, tuple[int, str]]:
     return state
 
 
+#: the smallest PDF a converter draws: one empty page
+_PDF = (b"%PDF-1.1\n1 0 obj <</Type/Catalog/Pages 2 0 R>> endobj\n2 0 obj <</Type/Pages/Kids[3 0 R]/Count 1>> endobj\n"
+        b"3 0 obj <</Type/Page/Parent 2 0 R/MediaBox[0 0 100 50]>> endobj\ntrailer <</Root 1 0 R>>\n%%EOF\n")
+
+
 @pytest.fixture
 def audited(tmp_path, monkeypatch):
     """A project with a map, scripts, a figure, research files and a git history, served by an engine that asks for
     its session; the agent programs are stubs, so no real `claude` or `opencode` is ever run."""
     root = _project(tmp_path / "proj")
+    (root / "figs").mkdir(exist_ok=True)
+    (root / "figs" / "fig1.pdf").write_bytes(_PDF)   # 22.12 M: a PDF figure the thumbnail route draws
     (root / "research").mkdir()
     (root / "research" / "overview.md").write_text("# Overview\n")
     (root / "research" / "results").mkdir()
@@ -676,6 +688,13 @@ def test_no_get_route_writes_or_starts_anything_but_a_read_probe(audited):
         started.clear()
         status, _headers, raw = eng.call("GET", sample)
         after = _tree_state(root, paths.researchos_home())
+        if kind == "draws":   # its picture, in the engine's own home only; a converter, nothing else
+            changed = {k for k, _v in set(before.items()) ^ set(after.items())}
+            assert changed and all(os.sep + "latex-thumbs" in k for k in changed), (route, sorted(changed)[:4])
+            assert set(started) <= {"pdftoppm", "gs", "sips"} and started, (route, started)
+            assert status == 200, (route, status, raw[:200])
+            results[route] = status
+            continue
         assert before == after, (route, sorted(set(before.items()) ^ set(after.items()))[:4])
         assert set(started) <= {"git", "mdfind"}, (route, started)
         if kind in ("page", "read"):

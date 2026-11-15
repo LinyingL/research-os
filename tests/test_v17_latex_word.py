@@ -338,7 +338,7 @@ def test_cite_and_ref_are_quiet_chips_and_unknown_commands_a_chip_of_their_words
     d = run["away"]
     cite = _find(d, "\\citep[p.~3]{a, b}")[0]["widget"]
     assert cite == {"cls": "latex-chip latex-chip-cite", "text": "a；b，p. 3", "html": ""}   # no .bib read: the keys; review: its note too
-    assert [x["widget"]["text"] for x in _find(d, "\\ref{sec:i}")] == ["第 1 节"]   # the number the PDF prints, known here
+    assert [x["widget"]["text"] for x in _find(d, "\\ref{sec:i}")] == ["1"]   # the number the PDF prints, known here (22.12 M: alone, as printed)
     assert [x["widget"] for x in _find(d, "\\label{sec:i}")] == [None]              # hidden
     assert _find(d, "\\newcommand{\\R}{\\mathbb{R}}")[0]["widget"]["text"] == "LaTeX 内容"
     assert _find(d, "\\unknown{x}")[0]["widget"]["text"] == "x"                     # its plain words, never its name
@@ -378,7 +378,7 @@ def test_a_selection_move_keeps_the_decorations(run):
 
 RETURNS = {
     "running": "Some \n\n|text here.",
-    "runningEnd": "Some text.\n\n|\nMore of it.",
+    "runningEnd": "Some text.\n|\nMore of it.",                      # 22.12 M: inside a paragraph, split there (no empty one)
     "blankLine": "a\n\n\n|",
     "heading": "\\section{Int}\\label{s}\n\n|ro\n\nNext",           # the words after the cursor leave the heading
     "headingEnd": "\\section{Intro}\\label{s}\n\n|\n\nNext",
@@ -392,8 +392,8 @@ RETURNS = {
     "emptyItemEnd": "\\begin{itemize}\n  \\item one\n\\end{itemize}\n\n|",
     "beforeItem": "\\begin{itemize}\n  \\item \n  \\item |one\n\\end{itemize}",   # typed at \begin's end: the first item
     "afterMath": "a $xy$\n\n| b",
-    "preambleEdge": "\\documentclass{x}\n\\usepackage{y}\n\\begin{document}\n\n|\nz\n\\end{document}",
-    "inDocument": "\\documentclass{x}\n\\begin{document}\nz\n\n|\n\\end{document}",
+    "preambleEdge": "\\documentclass{x}\n\\usepackage{y}\n\\begin{document}\n\n\n\n|z\n\\end{document}",   # 22.12 M: an empty paragraph above z, shown
+    "inDocument": "\\documentclass{x}\n\\begin{document}\nz\n\n|\n\n\\end{document}",   # 22.12 M: a blank line each side, shown
     "afterComment": "a % note\n\n|b",                                # the comment and its line break are one, never cut
 }
 
@@ -434,7 +434,7 @@ def test_return_leaves_an_input_methods_composition_and_a_read_only_file_alone(r
 def test_a_draft_edited_by_return_in_a_heading_a_textbf_and_a_list_still_typesets(run, tmp_path):
     text = run["exported"]
     assert text == ("\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\section{Intro}\n\n"
-                    "Body of the introduction.\n\nSome text here. \\textbf{bold}\n\n\\textbf{ words} end.\n\n\n\\begin{itemize}\n"
+                    "Body of the introduction.\n\nSome text here. \\textbf{bold}\n\n\\textbf{ words} end.\n\n\n\n\\begin{itemize}\n"
                     "  \\item one\n  \\item two\n\\end{itemize}\n\nAfter the list.\n\n\\begin{equation}\na = b\n"
                     "\\end{equation}\n\\end{document}\n")
     (tmp_path / "home").mkdir()
@@ -561,7 +561,7 @@ def test_what_katex_refuses_with_trust_off_is_a_quiet_word_and_never_in_red(revi
 def test_return_makes_a_paragraph_in_environments_of_running_text_and_after_one_the_edit_view_does_not_open(review):
     e = review["envs"]
     for env in ("doublespace", "onehalfspace", "spacing", "proof", "theorem", "lemma*", "appendices", "frame", "hyp"):
-        assert e[env].endswith("So it holds.\n\n|\n\\end{" + env + "}"), env    # hyp: declared by \newtheorem in the file
+        assert e[env].endswith("So it holds.\n\n|\n\n\\end{" + env + "}"), env    # hyp: declared by \newtheorem in the file; 22.12 M: shown
     for env in ("tabular", "tikzpicture", "eqnarray", "figure"):                      # one unit: the cursor is never inside
         assert e[env].endswith("So it holds.\n\\end{" + env + "}\n\n|"), env
 

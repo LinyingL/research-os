@@ -126,7 +126,7 @@ def test_a_table_is_a_grid_of_its_own_words_with_no_markup_and_every_stop_in_a_c
 def test_the_tables_words_are_shown_as_the_pdf_prints_them(shown):
     hand = shown["shown"]["hand"]
     assert (hand["rows"], hand["cols"]) == (3, 3)
-    for words in ("表 1：", "Prices, ", "2020", "50%", "Name", "Total", "A\u00a0B", "k", "3.5%", "C & D", "e", "naïve"):
+    for words in ("Table 1: ", "Prices, ", "2020", "50%", "Name", "Total", "A\u00a0B", "k", "3.5%", "C & D", "e", "naïve"):
         assert words in hand["text"], words
     assert "a comment" not in hand["text"]                            # a comment between rows is hidden
     assert (shown["shown"]["tool"]["rows"], shown["shown"]["tool"]["cols"]) == (3, 3)

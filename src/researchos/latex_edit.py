@@ -211,8 +211,59 @@ def format_facts(root: Path, rel: str, mains: list[str]) -> dict[str, Any]:
             facts["cut"] = True   # 版式 cannot read all of it: the page says so rather than show defaults
         if main != rel:
             facts["preamble"] = preamble
+            # 22.12 M (F6): a chapter file's headings, figures and notes are numbered on from what the main file reads before it
+            facts["before"] = text_before(main, rel, text_of)
         facts["local"] = local_styles(root, main, preamble)
     return facts
+
+
+#: The most text `text_before` gives (22.12 M): beyond it the page shows no numbers in a chapter file.
+BEFORE_LIMIT = 1024 * 1024
+
+
+def _masked(text: str) -> str:
+    """`text` with every comment turned into spaces, line by line, so each position stays where it was."""
+    return "\n".join(line if (cut := uncommented(line)) == line else cut + " " * (len(line) - len(cut)) for line in text.split("\n"))
+
+
+def text_before(main: str, rel: str, text_of: Any) -> str | None:
+    """What TeX reads of the main file's body before the chapter file `rel` (22.12 M, F6), so the page numbers its
+    headings, figures and footnotes on from there: the body from `\\begin{document}` to the `\\input` or `\\include` that
+    brings `rel` in, each file an earlier one brings in put in its place. None when that is not cheap or not sure -- `rel`
+    not brought in by the main file itself, or more than once; an earlier file that brings in others or is not a
+    readable project `.tex`; more than `BEFORE_LIMIT` -- and the page then shows no number rather than a wrong one."""
+    text = text_of(main)
+    code = _masked(text)
+    at = code.find("\\begin{document}")
+    if at < 0:
+        return None
+    pos = at + len("\\begin{document}")
+    pieces: list[str] = []
+    found = None
+    for m in _INCLUDE_RE.finditer(code, pos):
+        if m.group(1):
+            command, args = m.group(1), (m.group(2),)
+        elif m.group(3):
+            command, args = "input", (m.group(4),)
+        else:
+            return None   # \import and \subimport: not read here
+        target = resolve_include(command, args, posixpath.dirname(main), posixpath.dirname(main))
+        if target == rel:
+            if found is not None:
+                return None   # brought in twice: which place it is numbered from is not sure
+            pieces.append(text[pos:m.start()])
+            found = "".join(pieces)
+            continue
+        if found is not None:
+            continue
+        sub = text_of(target) if target else ""
+        if not sub or includes(sub):
+            return None
+        pieces.extend([text[pos:m.start()], "\n", sub, "\n"])
+        pos = m.end()
+        if sum(len(p) for p in pieces) > BEFORE_LIMIT:
+            return None
+    return found if found is not None and len(found) <= BEFORE_LIMIT else None
 
 
 _CLASS_RE = re.compile(r"\\documentclass\s*(?:\[[^\]]*\])?\s*\{([^{}]*)\}")
@@ -1077,6 +1128,129 @@ def _own_paper(root: Path, draft: str) -> set[str]:
     return {files_ingest.fold(rel) for rel in own}
 
 
+def _exported_pdfs(root: Path, walked: list[str]) -> set[str]:
+    """The PDFs any paper of the project was exported to (folded), never offered as an image (22.12 M, F8 -- browser
+    acceptance 2026-11-14: 图片 listed paper/english.pdf and paper/main.pdf): each export recorded in papers.toml, and
+    a `.pdf` beside a `.tex` of the same name that is a document (`\\documentclass`), as TeX writes `<main>.pdf` --
+    not a `standalone` one, whose PDF is a figure made to be included."""
+    found = {e["pdf"] for e in papers.exports(root) if isinstance(e.get("pdf"), str)}
+    present = {files_ingest.fold(p) for p in walked if p.lower().endswith(".pdf")}
+    beside = [p for p in walked if p.lower().endswith(".tex") and files_ingest.fold(p[:-4] + ".pdf") in present]
+    _known, text_of = tex_reader(root, beside)
+    for tex in beside:
+        m = _CLASS_RE.search(uncommented(text_of(tex)))
+        if m and m.group(1).strip() != "standalone":
+            found.add(tex[:-4] + ".pdf")
+    return {files_ingest.fold(p) for p in found}
+
+
+#: A PDF or EPS figure's first page as a small PNG (22.12 M, F9): what is drawn, its longest side in pixels, the largest
+#: file read, the longest a converter may run and the largest picture kept.
+THUMB_SUFFIXES = (".pdf", ".eps")
+THUMB_PIXELS = 480
+THUMB_SOURCE_LIMIT = 50 * 1024 * 1024
+THUMB_SECONDS = 10
+THUMB_LIMIT = 2 * 1024 * 1024
+_TOOL_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", "/Library/TeX/texbin", "/usr/bin")
+
+
+def _tool(name: str) -> str | None:
+    """A converter by name, found where macOS and its package managers put it (the app's own PATH is short)."""
+    import shutil
+
+    found = shutil.which(name)
+    if found:
+        return found
+    for folder in _TOOL_DIRS:
+        candidate = os.path.join(folder, name)
+        if os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def _thumb_commands(source: Path, out: Path) -> list[list[str]]:
+    """The ways to draw `source`'s first page into the PNG `out`, best first: poppler's pdftoppm for a PDF, Ghostscript
+    (safe mode, the figure's own bounding box) for an EPS, and macOS's `sips`, which draws a PDF, for either."""
+    tools = []
+    if source.suffix.lower() == ".pdf" and (pdftoppm := _tool("pdftoppm")):
+        tools.append([pdftoppm, "-png", "-f", "1", "-l", "1", "-singlefile", "-scale-to", str(THUMB_PIXELS), str(source), str(out)[:-4]])
+    if source.suffix.lower() == ".eps" and (gs := _tool("gs")):
+        tools.append([gs, "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-dEPSCrop", "-sDEVICE=png16m", "-r96", "-dFirstPage=1", "-dLastPage=1",
+                      f"-sOutputFile={out}", str(source)])
+    if sips := _tool("sips"):
+        tools.append([sips, "-s", "format", "png", "-Z", str(THUMB_PIXELS), str(source), "--out", str(out)])
+    return tools
+
+
+def _drawable(root: Path, rel: str) -> bool:
+    """Whether `figure_thumbnail` may draw `rel`: a PDF or EPS of at most `THUMB_SOURCE_LIMIT`."""
+    if not rel.lower().endswith(THUMB_SUFFIXES):
+        return False
+    try:
+        return os.stat(root / rel).st_size <= THUMB_SOURCE_LIMIT
+    except OSError:
+        return False
+
+
+def figure_thumbnail(root: str | Path, rel: Any, project_id: str) -> bytes:
+    """A small PNG of the first page of the project's PDF or EPS figure `rel` (22.12 M, F9 -- browser acceptance
+    2026-11-14: a PDF figure showed only its file name, while most papers' figures are PDFs). Made on demand into the
+    engine's own cache, `<home>/latex-thumbs/<project id>/<24 hex of the file's path, size and time>.png` (mode 0700),
+    never into the project, and kept while the file is unchanged. The path is guarded as the editor's are: project-
+    relative, no hidden component, no symbolic link, not only in the cloud (409 `cloud`, nothing is downloaded), a
+    regular file of at most 50 MB; the converter runs at most 10 s with no shell, in a folder of the cache, and its
+    picture is taken only when it is a PNG of at most 2 MB. Refused with 404 `no_thumbnail` when none can be made: the
+    page then shows the file's name alone."""
+    import subprocess
+    import tempfile
+
+    root = workspace._root(root)  # noqa: SLF001
+    refused = _refuse("path", f"{rel!r} is not a figure the editor can draw", "只能显示项目里的 PDF 或 EPS 图片", 400)
+    if not isinstance(rel, str) or not rel.lower().endswith(THUMB_SUFFIXES):
+        raise refused
+    try:
+        if papers.clean_draft(rel) != rel:
+            raise refused
+    except ValueError as exc:
+        raise refused from exc
+    if any(part.startswith(".") or not part for part in rel.split("/")):
+        raise refused
+    full = workspace._confined(root, rel)  # noqa: SLF001 -- symbolic links and the cloud
+    try:
+        info = os.lstat(full)
+    except OSError as exc:
+        raise _refuse("not_found", f"{rel} does not exist", "这个文件已不存在，请刷新后重试", 404) from exc
+    if not stat.S_ISREG(info.st_mode):
+        raise refused
+    none = _refuse("no_thumbnail", f"No picture of {rel} can be made here", "这张图片在这里画不出预览", 404)
+    if info.st_size > THUMB_SOURCE_LIMIT:
+        raise none
+    folder = paths.researchos_home() / "latex-thumbs" / re.sub(r"[^A-Za-z0-9_-]", "_", project_id or "project")
+    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(folder, 0o700)
+    key = hashlib.sha256(f"{full.resolve()}\0{info.st_size}\0{info.st_mtime_ns}".encode()).hexdigest()[:24]
+    kept = folder / f"{key}.png"
+    if kept.is_file():
+        return kept.read_bytes()
+    with tempfile.TemporaryDirectory(dir=folder) as work:
+        out = Path(work) / "thumb.png"
+        for command in _thumb_commands(full, out):
+            try:
+                subprocess.run(command, cwd=work, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               timeout=THUMB_SECONDS, check=False)
+            except (OSError, subprocess.SubprocessError):
+                continue
+            try:
+                made = out.read_bytes() if out.is_file() and out.stat().st_size <= THUMB_LIMIT else b""
+            except OSError:
+                made = b""
+            if made.startswith(b"\x89PNG\r\n\x1a\n"):
+                os.replace(out, kept)
+                return made
+            out.unlink(missing_ok=True)
+    raise none
+
+
 #: What 格式与插入's 图片 offers (22.12): the files `\includegraphics` takes in the engines of 22.4.
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".pdf", ".eps")
 #: The most images or bibliography entries one answer lists, and the most `.bib` files read for it.
@@ -1092,7 +1266,8 @@ def _bib_text(value: Any, limit: int) -> str:
 def insertables(root: str | Path, rel: Any, what: Any) -> dict[str, Any]:
     """What 格式与插入's pickers offer for the draft `rel` (22.12), read without writing: `what` = `images`, the
     project's image files as the scan walks it (no hidden folder, no symlink), never a PDF exported from the draft's
-    paper (`_own_paper`), each with `thumb` when the asset route can show it (21.5); `bib`, the entries of the
+    paper (`_own_paper`) or any paper's exported PDF (`_exported_pdfs`), each with `thumb` when the asset route can
+    show it (21.5) or it is a PDF or EPS the engine draws (`figure_thumbnail`); `bib`, the entries of the
     project's `.bib` files (key, author, year, title, the file), each file read as `tex_reader` reads a draft (a
     regular file, not only in the cloud, at most 2 MB), the first entry of a key kept; `labels` (A2's 交叉引用), the
     `\\label{}` keys of the other files of the paper -- the main file the export would compile `rel` in and the files it
@@ -1108,15 +1283,18 @@ def insertables(root: str | Path, rel: Any, what: Any) -> dict[str, Any]:
             own = _own_paper(root, rel)
         except (WorkspaceError, OSError, ValueError):
             own = {files_ingest.fold(rel)}
+        walk = list(itertools.islice(files_ingest.iter_files(root), _FILE_WALK_LIMIT + 1))
+        own |= _exported_pdfs(root, [path for path, _c in walk[:_FILE_WALK_LIMIT]])
         images, walked, cut = [], 0, False
-        for path, _category in files_ingest.iter_files(root):
+        for path, _category in walk:
             walked += 1
             if walked > _FILE_WALK_LIMIT or len(images) > INSERT_LIMIT:
                 cut = True   # the list is not the whole project: `more` says so, and the page says to search
                 break
             if path.lower().endswith(IMAGE_SUFFIXES) and files_ingest.fold(path) not in own:
-                # a file only in the cloud has no thumbnail: the asset route refuses it (409) and nothing is downloaded
-                thumb = kind_rows.thumbnail(root, path) and not paths.is_dataless(root / path)
+                # a file only in the cloud has no thumbnail: the asset route refuses it (409) and nothing is downloaded;
+                # a PDF or EPS figure's is its first page, drawn by the engine (22.12 M, F9)
+                thumb = (kind_rows.thumbnail(root, path) or _drawable(root, path)) and not paths.is_dataless(root / path)
                 images.append({"path": path, "thumb": bool(thumb)})
         return {"images": images[:INSERT_LIMIT], "more": cut or len(images) > INSERT_LIMIT}
     if what == "bib":

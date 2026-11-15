@@ -309,12 +309,12 @@ def test_each_construct_is_shown_as_words_never_its_command(shown):
     assert [x["shown"] for x in p["verb"] if x["kind"] in ("verb", "verbatim")] == ["a_b", "x_1 = {y}"]
     assert [(x["text"], x["shown"]) for x in p["comment"] if x["kind"] == "comment"] == [("% gone", None), ("% whole line\n", None)]   # its line break too
     chips = {x["text"]: x["shown"] for x in p["chips"] if x["shown"] is not None}
-    assert chips["\\ref{sec:s}"] == "第 1 节" and chips["\\eqref{eq:x}"] == "引用：eq:x" and chips["\\pageref{sec:s}"] == "引用：sec:s"
+    assert chips["\\ref{sec:s}"] == "1" and chips["\\eqref{eq:x}"] == "引用：eq:x" and chips["\\pageref{sec:s}"] == "引用：sec:s"
     assert chips["\\cite{k1,k2}"] == "k1；k2" and chips["\\footnote{note}"] == "1"
     assert chips["\\url{https://a.b}"] == "https://a.b" and chips["\\href{https://a.b}{site}"] == "site"
     assert [x for x in p["chips"] if x["text"] == "\\label{sec:s}"][0]["shown"] is None   # hidden
     lines = [x["shown"] for x in p["lines"] if x["kind"] == "line"]
-    assert lines == ["目录（导出时生成）", "分页", "附录"]
+    assert lines == ["Contents（导出时生成）", "分页", "附录"]          # 22.12 M (F4): the article's own word for its contents
     esc = [(x["text"], x["shown"]) for x in p["escapes"] if x["kind"] in ("text", "break")]
     assert esc == [("\\%", "%"), ("\\&", "&"), ("\\$", "$"), ("\\#", "#"), ("\\_", "_"), ("\\{", "{"), ("\\}", "}"), ("~", "\u00a0"),
                    ("\\textasciitilde{}", "~"), ("\\\"i", "ï"), ("\\'e", "é"), ("\\LaTeX{}", "LaTeX"), ("\\\\", "")]   # \\ mid-line: a line break
@@ -327,21 +327,21 @@ def test_each_construct_is_shown_as_words_never_its_command(shown):
 def test_a_figure_shows_its_images_and_numbered_caption_and_only_the_caption_is_editable(shown):
     f = shown["figure"]
     figure = [x for x in f if x["kind"] == "figure"]
-    assert len(figure) == 2 and figure[0]["shown"].endswith("图 1：") and "a.png" in figure[0]["shown"]
+    assert len(figure) == 2 and figure[0]["shown"].endswith("Figure 1: ") and "a.png" in figure[0]["shown"]   # 22.12 M: as the PDF prints it
     assert figure[0]["text"].startswith("\\begin{figure}") and figure[0]["text"].endswith("\\caption{")
     assert figure[1]["text"].startswith("}\n\\label{fig:a}") and figure[1]["text"].endswith("\\end{figure}")
-    assert [x["shown"] for x in f if x["kind"] == "ref"] == ["图 1"]
+    assert [x["shown"] for x in f if x["kind"] == "ref"] == ["1"]      # 22.12 M: \\ref prints the number alone
     # 22.12 T: a table the grid reader is sure of is its caption's words after 「表 1：」 and its cells, typed in place; only
     # its markup is hidden, in pieces of its own
     t = [x for x in shown["table"] if x["kind"] == "grid"]
     assert [x["text"] for x in t] == ["\\begin{table}\n\\caption{", "}\n\\begin{tabular}{ll}", "&", "\\\\\n\\end{tabular}\n\\end{table}"]
-    assert t[0]["shown"] == "表 1：" and [x["shown"] for x in t[1:]] == [None, None, None]
+    assert t[0]["shown"] == "Table 1: " and [x["shown"] for x in t[1:]] == [None, None, None]
 
 
 @needs_node
 def test_citations_say_author_and_year_once_the_bib_is_read_and_refs_the_number_where_it_is_known(shown):
     assert shown["cites"] == {"before": ["smith2020；lee2019"], "after": ["Smith 2020；Lee 等 2019"]}
-    assert shown["refs"] == ["第 2 节", "表 1", "图 1"]
+    assert shown["refs"] == ["2", "1", "1"]                             # 22.12 M: \\ref prints the number alone
     assert shown["notes"] == ["1"]
     assert shown["chapterRefs"] == ["引用：a", "注"]                    # a chapter file: its numbers are the main file's
 

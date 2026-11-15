@@ -714,8 +714,9 @@ def _project(tmp_path: Path) -> Path:
 def test_the_file_read_carries_the_main_files_facts_for_a_writable_chapter_and_nothing_for_a_read_only_one(tmp_path):
     root = _project(tmp_path)
     got = latex_edit.read_tex(root, "paper/chapters/one.tex")
+    # 22.12 M (F6): and what the main file reads before the chapter, its headings numbered on from there
     assert got["format"] == {"main": "paper/main.tex", "engine": "xelatex", "folder": "paper",
-                             "preamble": "\\documentclass{ctexrep}\n\\usepackage{booktabs}\n", "local": []}
+                             "preamble": "\\documentclass{ctexrep}\n\\usepackage{booktabs}\n", "local": [], "before": "\n"}
     main = latex_edit.read_tex(root, "paper/main.tex")
     assert main["format"] == {"main": "paper/main.tex", "engine": "xelatex", "folder": "paper", "preamble": None, "local": []}
     assert "format" not in latex_edit.read_tex(root, "paper/main.tex", links=False)
@@ -729,7 +730,8 @@ def test_the_pickers_list_the_projects_images_and_bib_entries_and_write_nothing(
     root = _project(tmp_path)
     before = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if ".researchos" not in p.parts)
     images = latex_edit.insertables(root, "paper/chapters/one.tex", "images")
-    assert images == {"images": [{"path": "figures/plot.png", "thumb": True}, {"path": "figures/scan.pdf", "thumb": False}], "more": False}
+    # 22.12 M (F9): a PDF has a picture too, its first page drawn by the engine
+    assert images == {"images": [{"path": "figures/plot.png", "thumb": True}, {"path": "figures/scan.pdf", "thumb": True}], "more": False}
     bib = latex_edit.insertables(root, "paper/chapters/one.tex", "bib")
     assert bib["files"] == ["paper/refs.bib"]
     assert bib["entries"] == [{"key": "smith2020", "author": "Smith, John", "year": "2020", "title": "A Study", "file": "paper/refs.bib"},

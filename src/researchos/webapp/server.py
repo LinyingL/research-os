@@ -517,6 +517,12 @@ Endpoints (all GET unless noted):
                             or the \\label keys of the paper's other .tex files
                             (交叉引用). Reads directory listings and those files
                             only.
+    GET  /api/latex/thumb -- `?path=<.pdf or .eps>`: a figure's first page
+                            as a small PNG (DESIGN.md 22.12 M), made on demand
+                            by pdftoppm, Ghostscript or sips (no shell, 10 s)
+                            into `<home>/latex-thumbs/<project id>/`, never into
+                            the project; 404 `no_thumbnail` when none can be
+                            made. Reads the figure only.
     POST /api/latex/evidence/<link|reanchor|withdraw|undo> -- `{project, …}`:
                             one entry in `.researchos/evidence.toml`, the PI or
                             a single researcher only (a member's links wait
@@ -4313,6 +4319,21 @@ class RceRequestHandler(BaseHTTPRequestHandler):
                 rel, what = (query.get("path") or [""])[0], (query.get("what") or [""])[0]
                 payload = self._workspace_api(lambda: latex_edit.insertables(served.root, rel, what))
                 self._send_json(200, {**payload, "project": str(served.root), "id": served.project_id})
+            elif path == "/api/latex/thumb":
+                # 22.12 M (F9): a PDF or EPS figure's first page as a small PNG, made into the engine's own cache
+                # (never into the project). Reads the figure; runs a converter with no shell for at most 10 s.
+                served = self._require_unblocked()
+                if "project" in query:
+                    self._workspace_target({"project": query["project"][0]})
+                rel = (query.get("path") or [""])[0]
+                raw = self._workspace_api(lambda: latex_edit.figure_thumbnail(served.root, rel, served.project_id))
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(raw)))
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(raw)
             elif path == "/api/workspace/exists":
                 # Which of the paths a document names are files it may link to: the page's list of files stops at
                 # `workspace.FILE_LIMIT`, and a link to an existing file beyond it is still a link (DESIGN.md 18.3).

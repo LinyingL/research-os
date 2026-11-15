@@ -887,7 +887,8 @@ def test_heading_numbers_and_captions_on_the_page_say_what_a_document_cannot_tak
     assert before["options"] == ["", "zh", "none"] and before["off"] == ["zh"] and before["disabled"] is False
     assert before["labels"] == ["1 / 1.1 / 1.1.1", "一、（一）1.：中文编号需要中文文档类", "不编号"] and before["note"] == []
     assert n["names"]["labels"] == ["图 / 表：中文图表名需要中文文档类", "Figure / Table"] and n["names"]["value"] == "en"
-    assert n["capnum"]["labels"] == ["连续编号（图 1）", "按章或节编号（图 2-3）"] and n["capnum"]["options"] == ["", "within"]
+    # 22.12 M (F4): an article's figures are "Figure": the options say so
+    assert n["capnum"]["labels"] == ["连续编号（Figure 1）", "按章或节编号（Figure 2-3）"] and n["capnum"]["options"] == ["", "within"]
     assert n["refused"] == {"note": ["中文编号需要中文文档类"], "same": True, "shown": ""}
     within = n["within"]
     assert "\\counterwithin{figure}{section}\n" in within["pre"] and within["secnum"]["off"] == ["zh", "none"]
@@ -895,7 +896,7 @@ def test_heading_numbers_and_captions_on_the_page_say_what_a_document_cannot_tak
     after = n["after"]
     assert "\\setcounter{secnumdepth}{0}\n" in after["pre"] and "counterwithin" not in after["pre"]
     assert after["secnum"]["value"] == "none" and after["secnum"]["note"] == ["不编号时，交叉引用章节印不出编号。"]
-    assert after["capnum"]["off"] == ["within"] and after["capnum"]["labels"][1] == "按章或节编号（图 2-3）：章节不编号时不能选"
+    assert after["capnum"]["off"] == ["within"] and after["capnum"]["labels"][1] == "按章或节编号（Figure 2-3）：章节不编号时不能选"
     assert after["steps"] == 3                                                       # one undo step each
     c = panel["ctex"]
     assert c["secnum"]["off"] == [] and c["names"]["value"] == "zh" and c["names"]["off"] == []
@@ -955,7 +956,7 @@ def test_every_new_word_has_its_english_and_none_is_a_glyph():
                    ("页边距", "Margins"), ("两端对齐", "Justified"), ("交叉引用", "Cross-reference"),
                    ("1.5 倍", "1.5 lines"), ("看这一行", "Show the line"), ("章节编号", "Heading numbers"),
                    ("图表名称", "Figure and table names"), ("图表编号", "Figure and table numbers"), ("不编号", "Unnumbered"),
-                   ("连续编号（图 1）", "Continuous (Figure 1)"), ("按章或节编号（图 2-3）", "By chapter or section (Figure 2-3)")):
+                   ("连续编号（{fig} 1）", "Continuous ({fig} 1)"), ("按章或节编号（{fig} 2-3）", "By chapter or section ({fig} 2-3)")):
         assert table[zh] == en
     assert "（下一步加入）" not in table                                          # 版式 is filled
     assert "纸张" not in table and '"纸张"' not in LATEX_JS.read_text(encoding="utf-8")   # A3: taken out

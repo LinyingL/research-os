@@ -244,7 +244,8 @@ def test_the_new_english_paper_reads_as_a_page_with_its_title_block_abstract_hea
         'div.latex-titleblock[div.latex-title[span"My Paper"],div.latex-title-date"日期：导出当天"]',   # \\author{} left out
         'div.latex-doc-mark"正文结束"',
     ]
-    assert [d["shape"] for d in away if d["shape"] and "摘要" in d["shape"]] == ['span.latex-abstract-head"摘要"']
+    # 22.12 M (F4): the abstract's heading is the document's own word, as its PDF prints it
+    assert [d["shape"] for d in away if d["shape"] and "latex-abstract-head" in d["shape"]] == ['span.latex-abstract-head"Abstract"']
     abstract = [d for d in away if d["cls"] == "latex-abstract-line"]
     assert len(abstract) == 1                                         # "Write the abstract here." indented
     assert [d["text"] for d in away if d["cls"] == "latex-hline"] == [""]   # space above \\section{Introduction}
@@ -292,7 +293,7 @@ def test_a_table_is_its_cells_typed_in_place_under_its_numbered_caption_or_a_rea
     # the rules as the PDF draws them, a formula, a style or a chip in a cell drawn as in the text
     g = look["grids"]
     W = "width:min(100%,"
-    assert g["booktabs"][:3] == ["latex-tcap-line", 'span.latex-caption-word"表 1："', "latex-i"]
+    assert g["booktabs"][:3] == ["latex-tcap-line", 'span.latex-caption-word"Table 1: "', "latex-i"]   # 22.12 M: as the PDF prints it
     rows = [x for x in g["booktabs"] if x.startswith("latex-trow")]
     assert rows == ["latex-trow latex-trule-heavy", "latex-trow latex-trule-light latex-trule-below-heavy"]
     cells = [x for x in g["booktabs"] if "=latex-cell" in x]
@@ -314,7 +315,8 @@ def test_a_table_is_its_cells_typed_in_place_under_its_numbered_caption_or_a_rea
 @pytest.mark.parametrize("case", ["unbalanced", "nested", "tooManyCells", "partialRule", "oddSpec", "tooManyColumns", "extraInFloat", "twoCaptions"])
 def test_a_table_the_reader_doubts_is_a_quiet_chip_never_guessed_and_never_its_code(look, case):
     shown = look["tables"][case]
-    assert shown.startswith('div.latex-chip.latex-chip-unit.latex-chip-block"表格'), shown
+    # a bare tabular says 表格; a table float, in a document whose words are known, the PDF's own name (22.12 M, F4)
+    assert re.match(r'div\.latex-chip\.latex-chip-unit\.latex-chip-block"(?:表格|Table(?:: |"))', shown), shown
     assert "\\" not in shown
 
 
@@ -333,11 +335,11 @@ def test_a_table_is_drawn_the_same_wherever_the_cursor_is_and_the_grid_reader_ke
 def test_a_figure_is_its_files_and_its_editable_caption_and_a_bare_includegraphics_a_line_with_its_name(look):
     f = look["figures"]
     assert f["one"] == ["=latex-figure-line",
-                        'span.latex-figure-part[span.latex-graphic[span.latex-graphic-name"figs/plot.png"],span.latex-caption-word"图 1："]',
+                        'span.latex-figure-part[span.latex-graphic[span.latex-graphic-name"figs/plot.png"],span.latex-caption-word"Figure 1: "]',   # 22.12 M
                         "hidden", "plot=latex-i", "hidden", "hidden"]       # the caption's words in between, editable
     assert f["two"][1] == ('span.latex-figure-part[span.latex-graphic[span.latex-graphic-name"a.png"],'
-                           'span.latex-graphic[span.latex-graphic-name"b.pdf"],span.latex-caption-word"图 1："]')
-    assert f["sub"] == ['div.latex-chip.latex-chip-unit.latex-chip-block"图：Sub"']   # subfigures: a chip with the caption's words
+                           'span.latex-graphic[span.latex-graphic-name"b.pdf"],span.latex-caption-word"Figure 1: "]')
+    assert f["sub"] == ['div.latex-chip.latex-chip-unit.latex-chip-block"Figure: Sub"']   # subfigures: a chip with the caption's words (22.12 M: the article's word, no number)
     assert f["none"] == ['div.latex-figure-preview[div.latex-graphic[span.latex-graphic-name"a.png"]]']   # no caption: one block
     g = look["graphic"]
     assert g["away"] == [['span.latex-graphic[span.latex-graphic-name"figs/a.png"]', False]]
@@ -614,16 +616,18 @@ def test_a_paragraphs_first_line_is_marked_where_tex_starts_a_paragraph(paras):
     """After \\begin{document}, a blank line (comments and labels between passed over), \\maketitle: latex-para. Right
     after a heading, a blank line between or not: latex-para-first. A paragraph's second line, \\noindent, what follows a
     list or a formula without a blank line, a list's and a quote's lines, the preamble and after \\end{document}: none."""
+    # 22.12 M (F5): a blank line takes no room -- it is joined to the line of words after it, so the page's line, and its
+    # mark, starts at the blank line
     assert paras["main"] == [
         ["First words of the body.", "latex-para"],
-        ["A new paragraph after a blank line.", "latex-para"],
+        ["", "latex-para"],                         # 'A new paragraph after a blank line.', from the blank line before it
         ["", "latex-para"],                         # the blank line the hidden comment and label join to 'After quiet lines.'
         ["% note", "latex-para-first"],             # the visual line of 'Right after a heading.' starts at the hidden note
         ["After the title.", "latex-para"],
-        ["A blank after a heading.", "latex-para-first"],   # first after \subsection, across a blank line
-        ["$x$ starts this one.", "latex-para"],     # after a table and a blank line
+        ["", "latex-para-first"],                   # 'A blank after a heading.': first after \subsection, across a blank line
+        ["", "latex-para"],                         # '$x$ starts this one.': after a table and a blank line
     ]
-    assert paras["chapter"] == [["Chapter text.", "latex-para"], ["Second.", "latex-para"], ["Third.", "latex-para-first"]]
+    assert paras["chapter"] == [["Chapter text.", "latex-para"], ["", "latex-para"], ["Third.", "latex-para-first"]]
 
 
 @needs_node
@@ -690,12 +694,12 @@ def test_the_pages_indent_and_line_height_follow_版式_on_the_page():
     done = subprocess.run([NODE, "-"], input=script, capture_output=True, text=True, timeout=60)
     out = json.loads(done.stdout.strip().splitlines()[-1])
     assert "error" not in out, out.get("error")
-    assert out["opened"] == {"--latex-stretch": "1", "--latex-indent": "1.5em", "--latex-indent-first": "0"}
+    assert out["opened"] == {"--latex-stretch": "1", "--latex-indent": "1.5em", "--latex-indent-first": "0", "--latex-parskip": "0"}   # 22.12 M: 段间距 too
     assert out["noneText"] is True and out["none"]["--latex-indent"] == "0"
     assert out["two"]["--latex-indent"] == "2em" and out["two"]["--latex-indent-first"] == "0"
     assert out["double"]["--latex-stretch"] == "2" and out["double"]["--latex-indent"] == "2em"
     assert out["primaries"] == []                                       # 版式 has no primary (22.7)
-    assert out["ctex"] == {"--latex-stretch": "1", "--latex-indent": "2em", "--latex-indent-first": "2em"}
+    assert out["ctex"] == {"--latex-stretch": "1", "--latex-indent": "2em", "--latex-indent-first": "2em", "--latex-parskip": "0"}
 
 
 def test_the_style_sheet_indents_a_paragraphs_first_line_and_keeps_the_lines_whole():
